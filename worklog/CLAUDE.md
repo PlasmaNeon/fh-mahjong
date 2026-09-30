@@ -11,7 +11,7 @@
 | How does the Fenghua ruleset work? | `docs/rules/` |
 | Where does shared tile logic live? | `docs/refactoring-notes.md` |
 | What does the RL literature say? | `docs/rl-papers/` |
-| Why was this built this way, and in what order? | `worklog/specs/`, `worklog/plans/` |
+| Why was this built this way? | `worklog/specs/` (and git history for the implementation plans) |
 | What happened in experiment N? | `worklog/rl-experiment/` |
 
 Nothing here is required to build, test, or run the project. When a worklog document and
@@ -21,8 +21,8 @@ the code disagree, the code wins — these are point-in-time records, not live s
 
 | Directory | Contents |
 |---|---|
-| `specs/` | Approved design documents, one per feature or campaign. Written before implementation. |
-| `plans/` | Implementation plans and operational runbooks derived from a spec. |
+| `specs/` | Design documents for major features and every RL campaign. Written before implementation. |
+| `plans/` | Operational runbooks for the training box, cited from `ai/MODULES.md`. |
 | `rl-experiment/` | Running experiment notebooks and closed lap records. |
 
 | `rl-experiment/` file | What it is |
@@ -30,8 +30,10 @@ the code disagree, the code wins — these are point-in-time records, not live s
 | `chongci-rl-experiment-progress.md` | The running RL notebook. Append here. |
 | `20260825-chongci-iql-era-experiment-ledger.md` | Archive of the 2026-03..06 offline-IQL ledger. Search before proposing any risk, auxiliary, or counterfactual-supervision scheme. |
 | `chongci-risk-target-design.md` | Superseded design note from that era. |
-| `placement-reshape-experiment.md` | The one open experiment thread. |
+| `placement-reshape-experiment.md` | Closed record: placement-reshape, Stage 1 NULL (2026-08-27). |
 | `data-scale-960-lap-status.md` | Closed lap record. |
+| `20260825-mortal-scale-scratch-status.md` | Closed record: mortal-scale-scratch, control recipe gate failed (2026-09-17). |
+| `20260926-big-arm-status.md` | Closed record: 192×24 big arm, confirmation failed vs anchor075, level with the control (2026-09-28). |
 
 ## Conventions
 
@@ -39,6 +41,9 @@ the code disagree, the code wins — these are point-in-time records, not live s
   from before 2026-08-21 use a dashed `YYYY-MM-DD-` prefix and keep their names; both sort
   correctly. The `rl-experiment/` notebooks are exempt — they are long-lived records with
   stable names that other documents and memories cite.
+- **Delete an implementation plan once its work ships**; the spec stays as the milestone record
+  and git history keeps the plan. Small UI-polish specs go too once the directory `CLAUDE.md`
+  documents the result.
 - **Specs before plans.** A plan opens with a `**Spec:**` line pointing at the spec it
   implements; specs and plans are siblings, so `../specs/…` resolves.
 - **One file per effort.** Append to the existing notebook rather than starting a parallel

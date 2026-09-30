@@ -26,6 +26,7 @@ retention, which is why RSS/PSS/cgroup are the primary accounting.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 import time
@@ -139,9 +140,17 @@ def run_profile(*, champion: Path, model_config, growth_blocks: int, workers: in
         _record("field_accounting_done", {"rows": len(batch)})
 
         if full_cycle is not None:
+            # `_run_full_cycle_update` updates the CALLER's model and
+            # optimizer: `collect_bench --full-cycle` measures three
+            # consecutive cycles against one persistent pair, so the pair is
+            # the caller's to own. This profile measures a SINGLE cycle, so it
+            # constructs the fresh pair here, which is what it always
+            # effectively did.
+            update_model = copy.deepcopy(warm_started).to(full_cycle.device)
+            update_optimizer = torch.optim.AdamW(update_model.parameters(), lr=full_cycle.lr)
             fc = _run_full_cycle_update(
-                warm_started, batch, matches, collect_seconds, full_cycle,
-                match_mode, max_steps_per_episode)
+                update_model, update_optimizer, batch, matches, collect_seconds,
+                full_cycle, match_mode, max_steps_per_episode)
             report["full_cycle"] = fc
         _record("profile_end", {})
     finally:

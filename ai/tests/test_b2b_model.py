@@ -139,3 +139,36 @@ def test_greedy_policy_threads_events():
     assert received["events"] is not None
     assert received["event_lengths"] is not None
     assert 0 <= choice.action_id < 4
+
+
+def test_ragged_gru_batched_matches_per_row_with_poisoned_padding():
+    # G0.5 (batched-b2b-collector): rows with lengths {0, 1, W-1, W}, padding
+    # slots filled with garbage ids. Batched forward == each row alone, and
+    # the length-0 row == the no-history forward (events=None).
+    window = 8
+    config = ModelConfig(event_window=window, privileged_critic=True, aux_heads=True)
+    torch.manual_seed(0)
+    model = PolicyValueNet(ENV39, config)
+    model.eval()
+    lengths_list = [0, 1, window - 1, window]
+    planes, scalars, mask = _rand_obs(len(lengths_list), channels=51, seed=3)
+    rng = np.random.default_rng(5)
+    events = torch.from_numpy(rng.integers(1, 0x10000, size=(4, window), dtype=np.uint32)
+                              .astype(np.int64))
+    lengths = torch.tensor(lengths_list, dtype=torch.int64)
+    with torch.no_grad():
+        logits_b, values_b = model(planes, scalars, mask, events=events, event_lengths=lengths)
+        for i, n in enumerate(lengths_list):
+            poisoned = events[i : i + 1].clone()
+            poisoned[0, n:] = 0xFFFF  # padding must be inert
+            logits_1, value_1 = model(planes[i : i + 1], scalars[i : i + 1], mask[i : i + 1],
+                                      events=poisoned, event_lengths=lengths[i : i + 1])
+            assert torch.allclose(logits_b[i], logits_1[0], atol=1e-6, rtol=1e-5), n
+            assert torch.allclose(values_b[i], value_1[0], atol=1e-6, rtol=1e-5), n
+        logits_none, value_none = model(planes[:1], scalars[:1], mask[:1])
+        logits_none3, value_none3 = model(planes[3:4], scalars[3:4], mask[3:4])
+    assert torch.allclose(logits_b[0], logits_none[0], atol=1e-6, rtol=1e-5)
+    assert torch.allclose(values_b[0], value_none[0], atol=1e-6, rtol=1e-5)
+    # sanity: a full-length history actually changes the output
+    assert not (torch.allclose(logits_b[3], logits_none3[0]) and
+                torch.allclose(values_b[3], value_none3[0]))

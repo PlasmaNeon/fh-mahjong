@@ -354,27 +354,52 @@ _RESUME_IGNORED_FIELDS = {
     ("ppo_config", "iterations"),
 }
 
-# "num_workers" changes are logged rather than rejected: it only controls how
-# collection work is sharded across worker processes, not the recipe itself.
-# Per-match seeding makes trajectories worker-count-invariant -- proven by
-# fh-mj-collect-bench's digest equality across 5/10/20 workers, which is that
-# tool's entire purpose. So resuming a run at a different worker count (e.g.
-# dropping from 20 to 10 to fit a smaller box after an OOM) is a legitimate
-# operational adjustment, not a silent recipe drift, and must not block
+# Resource-shaped fields are logged rather than rejected: they control how
+# collection work is sharded across processes or slots, not the recipe
+# itself, so resuming at a different count (e.g. dropping from 20 workers to
+# 10 to fit a smaller box after an OOM) is a legitimate operational
+# adjustment, not a silent recipe drift, and must not block
 # --resume-from-state the way every other field does.
+#
+# Maps each logged-not-rejected field to the reason it is safe to change on
+# resume; the reason goes into the notice so a lap's log says WHY it was
+# allowed through. `collector` is deliberately absent: switching collectors
+# changes the action-RNG mapping (the process collector samples from the
+# global torch RNG seeded per match, the batched one from a per-match numpy
+# RNG), so it is rejected like any other recipe field.
+#
+# `pool_slots` is deliberately absent too, and is NOT the batched analogue of
+# `num_workers`. A spawn worker always runs a batch-1 forward, so the floats
+# a decision sees do not depend on how many workers there are. The batched
+# collector's production mode (`inference_mode="batched"`, the default and
+# what `train_b2b` passes) runs ONE forward over every pending row in the
+# round, so a row's logits depend on which other rows shared its batch;
+# `sample_masked_action` consumes those logits, so changing the slot count
+# changes the sampled trajectories. Slot-count invariance holds only in
+# `per_row` mode, which is the mode gate G0.2 proves it in and is not the
+# mode a lap runs. The slot count is therefore part of a batched lineage and
+# is rejected on change, like `collector`.
 _RESUME_LOGGED_FIELDS = {
-    ("ppo_config", "num_workers"),
+    ("ppo_config", "num_workers"):
+        "worker count is semantics-neutral for collection (per-match seeding "
+        "makes trajectories worker-count-invariant, proven by "
+        "fh-mj-collect-bench's digest equality across 5/10/20 workers)",
     # Same category as num_workers: collect_dispatch_chunk only bounds how
     # many matches are in flight per dispatch round, and chunk-parity digest
     # tests prove trajectories are chunk-invariant. Lowering it on resume
     # after an OOM is a legitimate operational adjustment, not recipe drift.
-    ("ppo_config", "collect_dispatch_chunk"),
+    ("ppo_config", "collect_dispatch_chunk"):
+        "dispatch chunking only bounds how many matches are in flight per "
+        "round; trajectories are chunk-invariant (fh-mj-collect-bench "
+        "--dispatch-chunk digest equality)",
     # Amendment 5: minibatch_device_transfer changes only WHERE rollout
     # tensors live between optimizer steps (host vs update device), not any
     # value, permutation, or update — bit-parity pinned by test_ppo's
     # path-equivalence tests and the on-box gauntlet. Toggling it on resume
     # (e.g. to fit a card) is operational, not recipe drift.
-    ("ppo_config", "minibatch_device_transfer"),
+    ("ppo_config", "minibatch_device_transfer"):
+        "minibatch device transfer changes only where rollout tensors live "
+        "between optimizer steps, not any value, permutation, or update",
 }
 
 # Adversarial round 1 (high): a new field with a dataclass default (e.g.
@@ -414,6 +439,7 @@ _LEGACY_ECHO_ADDITIONS = {
     "model_config": {
         "growth_blocks",       # absent from every train_state.pt saved before deep16-rezero
         "event_output_dim",    # absent from every train_state.pt saved before gru-width
+        "trunk_rezero",        # absent before mortal-scale-scratch Amendment 3 (2026-08-27)
     },
     "ppo_config": {
         "collect_dispatch_chunk",  # absent from every train_state.pt saved before data-scale-960 Amendment 2
@@ -421,6 +447,33 @@ _LEGACY_ECHO_ADDITIONS = {
         "placement_bonus_values",             # absent before placement-reshape Stage 0 (2026-08-22)
         "placement_bonus_lambda",             # idem
         "placement_bonus_calibration_digest", # idem
+        "head_lr",                            # absent before mortal-scale-scratch Amendment 1 §6 (2026-08-25)
+        "head_lr_iters",                      # idem
+        # absent from every train_state.pt saved before batched-b2b-collector
+        # (2026-08-26); a legacy echo therefore reads as collector="process"
+        # with the slot count those runs had, which is exactly what they were.
+        "collector",
+        "pool_slots",
+        "trunk_dtype",  # absent before the bf16-trunk option (2026-09-27)
+        "pool_pipeline_groups",  # absent before the pipelined batched collector (2026-09-27)
+    },
+}
+
+# Historical literals for whitelisted legacy additions whose meaning is a
+# claim about what the saved run actually DID, not "whatever this build
+# defaults to". Back-filling `collector` from `PPOConfig.collector` would mean
+# that the day that default becomes "batched", every pre-merge train_state.pt
+# is silently reinterpreted as a batched lineage -- and a batched resume of a
+# process run would then be admitted instead of rejected. Pinning the literal
+# makes the back-fill say "this run used what existed then". A field listed
+# here takes its value from here; anything else whitelisted above still falls
+# back to the dataclass default.
+_LEGACY_ECHO_PINNED_VALUES = {
+    "ppo_config": {
+        "collector": "process",   # the only collector that existed before 2026-08-26
+        "pool_slots": 128,        # PPOConfig.pool_slots as shipped when the field landed
+        "trunk_dtype": "float32",  # every run before the field existed trained in float32
+        "pool_pipeline_groups": 1,  # every batched run before the field existed used one group
     },
 }
 
@@ -444,29 +497,36 @@ def _dataclass_field_defaults(cls: type) -> dict:
 def _fill_legacy_echo_defaults(section: str, current_section: dict, saved_section: dict) -> dict:
     """Return a copy of `saved_section` with any key that's WHITELISTED in
     `_LEGACY_ECHO_ADDITIONS` for this section, present in `current_section`,
-    but ABSENT from `saved_section`, filled in with that field's dataclass
-    default -- i.e. treat a pre-upgrade echo's silence about a *proven*
-    legacy addition as "this run used the default", not as a mismatch.
+    but ABSENT from `saved_section`, filled in with the value that run must
+    have had -- i.e. treat a pre-upgrade echo's silence about a *proven*
+    legacy addition as "this run used what existed then", not as a mismatch.
 
-    A key that IS present in `saved_section` (even if equal to the default)
-    is left untouched and still compares strictly against the current value.
-    A key missing from `saved_section` that is NOT in the whitelist is left
-    missing here -- `_validate_resume_config_echo` then raises naming it,
-    since there's no proof a legacy echo could ever have lacked it."""
+    The fill value is the field's `_LEGACY_ECHO_PINNED_VALUES` literal when
+    one is registered, otherwise the field's current dataclass default. The
+    literal is what makes the back-fill a statement about the past: a later
+    change to a dataclass default must not retroactively reinterpret every
+    state file saved before the field existed.
+
+    A key that IS present in `saved_section` (even if equal to the fill
+    value) is left untouched and still compares strictly against the current
+    value. A key missing from `saved_section` that is NOT in the whitelist is
+    left missing here -- `_validate_resume_config_echo` then raises naming
+    it, since there's no proof a legacy echo could ever have lacked it."""
     defaults = _dataclass_field_defaults(_RESUME_SECTION_DATACLASSES[section])
+    pinned = _LEGACY_ECHO_PINNED_VALUES.get(section, {})
     whitelisted = _LEGACY_ECHO_ADDITIONS.get(section, frozenset())
     filled = {}
     normalized = dict(saved_section)
     for key in current_section:
-        if key not in normalized and key in defaults and key in whitelisted:
-            normalized[key] = defaults[key]
-            filled[key] = defaults[key]
+        if key not in normalized and key in whitelisted and (key in pinned or key in defaults):
+            normalized[key] = pinned[key] if key in pinned else defaults[key]
+            filled[key] = normalized[key]
     if filled:
         logger.info(
             "--resume-from-state: %s echo predates field(s) %s -- filling each "
-            "with its current dataclass default for the resume comparison "
+            "with the value that run had (%s) for the resume comparison "
             "(state file was saved before these fields existed)",
-            section, sorted(filled),
+            section, sorted(filled), {k: filled[k] for k in sorted(filled)},
         )
     return normalized
 
@@ -477,9 +537,13 @@ def _validate_resume_config_echo(current: dict, saved: dict) -> None:
     was saved under. Resuming under a different recipe (a changed lr, event
     window, ...) silently corrupts the run (e.g. an optimizer whose momentum
     was tuned for a different lr), so any drift is an error, not a warning —
-    except `ppo_config.iterations` (see `_RESUME_IGNORED_FIELDS`) and
-    `ppo_config.num_workers` (see `_RESUME_LOGGED_FIELDS`), which is logged
-    instead of raised."""
+    except `ppo_config.iterations` (see `_RESUME_IGNORED_FIELDS`) and the
+    resource-shaped fields in `_RESUME_LOGGED_FIELDS` (num_workers,
+    collect_dispatch_chunk, minibatch_device_transfer), which are logged with
+    their reason instead of raised. `pool_slots` is NOT among them: under
+    `inference_mode="batched"` the slot count decides which rows share a
+    forward and therefore the sampled trajectories, so it is part of the
+    lineage and rejected on change."""
     for section in ("ppo_config", "model_config", "env_config"):
         current_section = current[section]
         saved_section = _fill_legacy_echo_defaults(section, current_section, saved[section])
@@ -493,12 +557,9 @@ def _validate_resume_config_echo(current: dict, saved: dict) -> None:
                 if (section, key) in _RESUME_LOGGED_FIELDS:
                     logger.info(
                         "--resume-from-state: %s.%s changed (state file has %r, "
-                        "currently-supplied config has %r) -- proceeding: "
-                        "worker count is semantics-neutral for collection "
-                        "(per-match seeding makes trajectories worker-count-"
-                        "invariant, proven by fh-mj-collect-bench's digest "
-                        "equality across 5/10/20 workers)",
+                        "currently-supplied config has %r) -- proceeding: %s",
                         section, key, saved_value, current_value,
+                        _RESUME_LOGGED_FIELDS[(section, key)],
                     )
                     continue
                 raise ValueError(
@@ -946,7 +1007,8 @@ def _load_resume_history(path: Path, state_run_id: Optional[str], checkpoint_dir
 def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim.Optimizer,
                       next_iteration: int, config: PPOConfig, model_config: ModelConfig,
                       env_config: EnvConfig, base_seed: int, run_id: Optional[str],
-                      pinned_bridge_sha256: Optional[str], pinned_bridge_path: Optional[str]) -> None:
+                      pinned_bridge_sha256: Optional[str], pinned_bridge_path: Optional[str],
+                      init: Optional[dict] = None) -> None:
     # Adversarial round 14, high finding: round 13's fix recomputed the
     # bridge fingerprint HERE, on every save -- so a .so rebuilt mid-run
     # (same path, new bytes) silently became the new saved baseline on the
@@ -984,6 +1046,16 @@ def _save_train_state(path: Path, model: torch.nn.Module, optimizer: torch.optim
         # current one; see the drift-detection block above.
         "bridge_sha256": pinned_bridge_sha256,
         "bridge_library_path": pinned_bridge_path,
+        # mortal-scale-scratch: the lineage's construction provenance
+        # (`{"kind": "scratch"|"champion", "bc_checkpoint_sha256": ...}`),
+        # threaded in from `train_b2b` so a `--resume-from-state` can carry it
+        # forward into the checkpoints it goes on to write instead of
+        # degrading them to `{"kind": "resumed"}`. Purely additive and
+        # deliberately NOT part of `_train_b2b_config_echo`: it is a record of
+        # how the run STARTED, not a config the resume must match, so it must
+        # never make a legacy state (which has no `init` at all) fail the
+        # resume mismatch check.
+        "init": init,
     }
     _atomic_torch_save(payload, path)
 
@@ -1005,6 +1077,186 @@ def _growth_alpha_mean_abs(model: torch.nn.Module) -> Optional[float]:
     if not alphas:
         return None
     return float(sum(alphas) / len(alphas))
+
+
+class EventPathTelemetry:
+    """mortal-scale-scratch Amendment 4: per-iteration readouts of the event
+    pathway's read-in weights and of the event encoder itself.
+
+    `build_scratch_model` zeroes the trailing `event_encoder.output_dim`
+    columns of `trunk.0.weight` so a `--init-from-bc` run starts exactly at the
+    BC policy. Those columns are the ONLY thing connecting the event GRU to the
+    logits, and they sit inside `trunk.` -- so `split_bc_parameter_groups` puts
+    them in the slow `bc` group (`--lr`, 2e-5) while the encoder that feeds them
+    trains in the fast `heads` group (`--head-lr`, 2e-4) for iterations
+    1..`head_lr_iters`. Amendment 4 ratified that split unchanged and forbade
+    explaining a flat iteration-25/50 screening delta as "the event head has
+    not engaged yet" unless these numbers support it (and forbade the excuse
+    outright from iteration 50 on). Hence: measure it, don't argue about it.
+
+    Two different rules govern these numbers, and the distinction is the whole
+    point. The *magnitudes* are non-load-bearing: no observed norm, ratio, or
+    engagement reading may change stopping, selection, budget, or learning
+    rates. The *integrity gate* is separate and fails closed -- a non-finite
+    readout, an iteration-0 slice that is not exactly zero on a fresh
+    `--init-from-bc` lap, or a slice that did not move at all across a
+    completed iteration means the run is not measuring what the protocol
+    thinks it is. `train_b2b` persists that iteration's history row, checkpoint
+    and train_state first, then halts before the next collection and returns to
+    the consult thread. (The 2026-08-27 clarification of Amendment 4 clause 4:
+    "cannot change stopping" governs magnitudes, not this gate.)
+
+    Snapshots the model at construction, so build this right after the model is
+    created or restored: a resumed run then reports true update norms from its
+    first iteration instead of a hole. Returns `None` from every method for a
+    model with no event encoder (`event_window == 0`), the same
+    "omit rather than report a misleading 0.0" convention as
+    `_growth_alpha_mean_abs`."""
+
+    def __init__(self, model: torch.nn.Module, expect_zero_init: bool = False) -> None:
+        """`expect_zero_init` for a fresh `--init-from-bc` lap, whose step-zero
+        slice `build_scratch_model` zeroed. A non-zero slice there means the net
+        did NOT start at the BC policy, so it raises immediately -- before the
+        first collection, with nothing yet written to mislead a later reader.
+        False for a champion warm start and for every resume, whose slices are
+        legitimately non-zero."""
+        encoder = getattr(model, "event_encoder", None)
+        self.event_columns = int(encoder.output_dim) if encoder is not None else 0
+        self.enabled = self.event_columns > 0
+        self._prev_slice: Optional[torch.Tensor] = None
+        self._prev_encoder: Optional[torch.Tensor] = None
+        self.halt_reason: Optional[str] = None
+        if not self.enabled:
+            return
+        self._prev_slice, _ = self._trunk_columns(model)
+        self._prev_encoder = self._encoder_vector(model)
+        initial_fro = float(torch.linalg.vector_norm(self._prev_slice).item())
+        if expect_zero_init and initial_fro != 0.0:
+            raise RuntimeError(
+                "Amendment 4 integrity gate: this run initialises from BC, so the event-input "
+                f"columns of trunk.0.weight must be exactly zero at iteration 0, but their "
+                f"Frobenius norm is {initial_fro!r}. The net did not start at the BC policy -- "
+                "halting before the first collection; return to the consult thread.")
+
+    def _trunk_columns(self, model: torch.nn.Module) -> tuple[torch.Tensor, torch.Tensor]:
+        """(event columns, non-event columns) of `trunk.0.weight`, detached on
+        the CPU in float64 so the norms below are exact regardless of the
+        training dtype/device."""
+        weight = model.trunk[0].weight.detach().to("cpu", torch.float64)
+        return weight[:, -self.event_columns:].clone(), weight[:, : -self.event_columns].clone()
+
+    def _encoder_vector(self, model: torch.nn.Module) -> torch.Tensor:
+        parts = [p.detach().to("cpu", torch.float64).reshape(-1)
+                 for p in model.event_encoder.parameters()]
+        return torch.cat(parts) if parts else torch.zeros(0, dtype=torch.float64)
+
+    def initial_metrics(self) -> Optional[dict]:
+        """The iteration-0 snapshot taken at construction. `event_slice_fro`
+        must be exactly 0.0 for a fresh `--init-from-bc` scratch run; it is
+        legitimately non-zero on a resume, which snapshots a partly trained
+        model."""
+        if not self.enabled:
+            return None
+        assert self._prev_slice is not None and self._prev_encoder is not None
+        return {
+            "event_slice_fro": float(torch.linalg.vector_norm(self._prev_slice).item()),
+            "event_slice_max_abs": float(self._prev_slice.abs().max().item()),
+            "event_encoder_param_norm": float(torch.linalg.vector_norm(self._prev_encoder).item()),
+            "event_columns": self.event_columns,
+        }
+
+    def record(self, model: torch.nn.Module, iteration: int) -> Optional[dict]:
+        """Measure the current model and advance the baseline. Call once per
+        completed iteration, after the optimizer step."""
+        if not self.enabled:
+            return None
+        event, other = self._trunk_columns(model)
+        encoder = self._encoder_vector(model)
+        slice_fro = float(torch.linalg.vector_norm(event).item())
+        update = event - self._prev_slice
+        update_fro = float(torch.linalg.vector_norm(update).item())
+        encoder_update_fro = float(torch.linalg.vector_norm(encoder - self._prev_encoder).item())
+        # Per-element RMS on both sides, so the ratio compares like with like
+        # even though the two column blocks have very different widths.
+        event_rms = float(event.pow(2).mean().sqrt().item())
+        other_rms = float(other.pow(2).mean().sqrt().item()) if other.numel() else 0.0
+        metrics = {
+            "event_slice_fro": slice_fro,
+            "event_slice_rms": event_rms,
+            "event_slice_max_abs": float(event.abs().max().item()),
+            "event_slice_update_fro": update_fro,
+            "event_slice_rms_ratio": (event_rms / other_rms) if other_rms > 0.0 else float("inf"),
+            "event_encoder_param_norm": float(torch.linalg.vector_norm(encoder).item()),
+            "event_encoder_update_fro": encoder_update_fro,
+        }
+        reasons = []
+        nonfinite = sorted(k for k, v in metrics.items() if not np.isfinite(v))
+        if nonfinite:
+            metrics["event_path_nonfinite"] = True
+            reasons.append(f"non-finite readouts ({', '.join(nonfinite)})")
+        if update_fro == 0.0:
+            metrics["event_slice_integrity_failure"] = True
+            reasons.append("the event-input columns of trunk.0.weight did not move at all "
+                           "(update Frobenius norm exactly 0)")
+        if reasons:
+            self.halt_reason = (
+                f"iter {iteration}: Amendment 4 integrity gate -- " + "; ".join(reasons)
+                + ". This iteration's history row, checkpoint and train_state are written; "
+                  "the run halts before the next collection. Return to the consult thread.")
+            logger.error("%s", self.halt_reason)
+        self._prev_slice = event
+        self._prev_encoder = encoder
+        return metrics
+
+    def raise_if_halted(self) -> None:
+        """Called by `train_b2b` once this iteration's evidence is durable."""
+        if self.halt_reason is not None:
+            raise RuntimeError(self.halt_reason)
+
+
+class TrunkAlphaTelemetry:
+    """mortal-scale-scratch, Stage 3 terminal ruling (2026-08-27): per-iteration
+    ReZero alpha readouts for the MAIN trunk (`plane_blocks`), carried into both
+    laps.
+
+    BC left the big arm's 24 alphas an order of magnitude smaller than the
+    control's 4 (median 0.0049 vs 0.0505) and concentrated in the deepest
+    blocks -- imitation used little of that depth. Whether PPO does is one of
+    the things these laps are for, so the aggregate is recorded every iteration
+    and the full per-block vector stays recoverable from any checkpoint.
+
+    Diagnostic only, with no integrity gate: unlike the event path there is no
+    protocol invariant an alpha can violate. `None` for a plain-block trunk
+    (`trunk_rezero=False`), which has no alphas to report."""
+
+    def __init__(self, model: torch.nn.Module) -> None:
+        self.enabled = any(hasattr(block, "alpha") for block in model.plane_blocks)
+        self._prev: Optional[torch.Tensor] = None
+        if self.enabled:
+            self._prev = self._vector(model)
+
+    @staticmethod
+    def _vector(model: torch.nn.Module) -> torch.Tensor:
+        return torch.stack([block.alpha.detach().to("cpu", torch.float64).reshape(-1)[0]
+                            for block in model.plane_blocks if hasattr(block, "alpha")])
+
+    def record(self, model: torch.nn.Module) -> Optional[dict]:
+        if not self.enabled:
+            return None
+        alphas = self._vector(model)
+        magnitudes = alphas.abs()
+        finite = magnitudes[torch.isfinite(magnitudes)]
+        metrics = {
+            "trunk_alpha_count": int(alphas.numel()),
+            "trunk_alpha_finite_count": int(finite.numel()),
+            "trunk_alpha_abs_min": float(finite.min().item()) if finite.numel() else float("nan"),
+            "trunk_alpha_abs_median": float(finite.median().item()) if finite.numel() else float("nan"),
+            "trunk_alpha_abs_max": float(finite.max().item()) if finite.numel() else float("nan"),
+            "trunk_alpha_l2": float(torch.linalg.vector_norm(alphas).item()),
+            "trunk_alpha_update_l2": float(torch.linalg.vector_norm(alphas - self._prev).item()),
+        }
+        self._prev = alphas
+        return metrics
 
 
 def _find_fresh_run_managed_artifacts(checkpoint_dir: Path) -> list[Path]:

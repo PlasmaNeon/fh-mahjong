@@ -11,7 +11,7 @@
 
 - **`calcHelpers.ts` is a thin adapter over `utils/tileModel.ts`.** Do not re-implement `TILE_LIBRARY`, tile parsing, or suit ordering here — `suitOrder(suit)` in the shared model is the single suit-ordering function for the whole app.
 - `Calc.tsx` is intentionally self-contained and shares no state with gameplay pages; it is a rules-debugging tool, not part of the live match flow.
-- Sends `POST /api/v1/calc`. A `GET` on that path returns 404 — the endpoint is POST-only.
+- Sends `POST /api/v1/tools/calc`. A `GET` on that path returns 404 — the endpoint is POST-only.
 - Uses the utility classes from `theme/base.css` directly rather than composing typed primitives; it and `Shanten.tsx` are the deliberate "advanced consumer" exceptions for dense tool layouts.
 - UI spec: `worklog/specs/2026-05-15-shanten-calc-ledger-redesign.md`.
 

@@ -1,0 +1,308 @@
+# Mortal-scale from-scratch experiment — design
+
+**Date:** 2026-08-25 · **Branch:** `experiment/mortal-scale-scratch` ·
+**Status:** Amendments 1–3 ratified; dataset + Gate 2a done; BC re-running under `trunk_rezero` (Amendment 3) — see runbook + status file.
+
+
+## 1. Question
+
+Does network scale still help under this pipeline when the net is **trained from scratch at
+Mortal-like size with proportionally more data**, rather than grown out of the champion?
+
+Every prior capacity lap warm-started from `anchor075` (96 ch × 4 blocks, 2.26 M params) and
+nulled or failed confirmation: deep8, deep4+12 ReZero (alphas never engaged), gru-width
+(+0.0170 → collapsed), ds960 3× data (+0.0175, CI crosses 0). The 2026-08-20 ruling closed the
+scale campaign and listed *scratch training* as the one untried lever (priority 5). This spec is
+the fresh authorization for exactly that lever, granted by the user on 2026-08-25.
+
+Suphx (256 ch × 50 blocks) and Mortal (192 ch × ~40 1-D blocks) both reached their size through a
+**supervised stage on human logs** before RL. Fenghua has no human logs; the lineage's own root was
+BC on heuristic-bot trajectories → IQL → PPO. This design reproduces that shape: BC on heuristic
+data as the supervised stage, then PPO self-play.
+
+## 2. Two findings that shape the design
+
+1. **3×3 convs on a 42×1 plane waste two-thirds of every kernel.** Measured with
+   `PolicyValueNet(EnvConfig(), ModelConfig(channels, residual_blocks))`:
+
+   | channels × blocks | params (3×3 kernels) |
+   |---|---|
+   | 96 × 4 (champion) | 2.26 M |
+   | 192 × 24 | 18.60 M |
+   | 192 × 40 | 29.22 M |
+   | 256 × 50 | 62.38 M |
+
+   Mortal uses 1-D convs. With `(3,1)` kernels, 192 × 24 ≈ 6.3 M (~2.8× champion), which is the
+   size point the user chose ("Mortal-like, ~5 M"). The kernel shape becomes a config field.
+2. **There is no scratch path.** `fh-mj-train-b2b` errors without `--champion` (or a resume
+   state); `fh-mj-train-bc` hard-codes `ModelConfig()` and a plain `PolicyValueNet` with no
+   event/privileged/aux modules. Both need small, additive changes.
+
+## 3. Arms
+
+| arm | trunk | init | purpose |
+|---|---|---|---|
+| **big** | 192 ch × 24 blocks, kernel (3,1), channel_attention as champion | scratch: BC → PPO | the hypothesis |
+| **control** | 96 ch × 4 blocks, kernel (3,1) | scratch: BC → PPO, identical recipe | attributes any delta to *scale* rather than to the scratch/BC recipe |
+| comparator | `anchor075` (existing) | — | current champion; the bar to beat |
+
+Both arms keep every B2b module (event GRU 128, privileged critic, aux heads) at the champion's
+dims — only the plane trunk changes. The control uses `(3,1)` kernels too so the *only* difference
+between arms is width/depth. (`(3,1)` vs `(3,3)` at 96 × 4 is a recipe change relative to the
+champion; it is deliberately absorbed by the control, not by the hypothesis arm.)
+
+GPU-serial: **control runs first** (cheap, ~1/3 the compute) so its curve is in hand before the
+big lap is committed. If the control from scratch cannot get within −0.06 of `anchor075` by the
+end of its budget, the *recipe* is the problem — stop and consult before spending the big lap.
+
+## 4. Code changes (three, all additive, all default-preserving)
+
+### 4.1 `ModelConfig.kernel_width: int = 3`
+- `ai/src/fh_mahjong_ai/config.py`: new field, validated ∈ {1, 3}. Default 3 ⇒ every existing
+  checkpoint and every existing test constructs byte-identical modules.
+- `model.py`: `build_plane_scalar_encoders` stem, `ResidualBlock`, `ReZeroResidualBlock` take
+  `kernel_size=(3, kernel_width), padding=(1, kernel_width // 2)`.
+- `_shape_inferred_fields`: `kernel_width = state_dict["plane_stem.0.weight"].shape[3]` — so
+  `infer_model_config`, serving (`fh-mj-serve-policy`), `fh-mj-evaluate`, and `fh-mj-compare` load
+  the new nets with no further change. Also add to `model_config_args.py` (`--model-kernel-width`)
+  and to `model_config_params()` per the `ai/CLAUDE.md` rule.
+- Tests: default config state_dict keys+shapes unchanged; `kernel_width=1` forward shape; round-trip
+  through `infer_model_config`; validation rejects 2.
+
+### 4.2 `fh-mj-train-b2b --scratch [--init-from-bc <ckpt>]`
+- `--scratch` is mutually exclusive with `--champion`, `--model-growth-blocks`,
+  `--widen-event-hidden`; `--resume-from-state` still wins over both.
+- Builds `PolicyValueNet(env, model_config)` with default PyTorch init. With `--init-from-bc`,
+  the BC prefixes are copied and `trunk.0`'s event-input columns are zeroed so step-0 logits equal
+  the BC policy (the untrained GRU contributes nothing until PPO moves it); a parity test enforces
+  this. `metadata["init"]` is persisted in `train_state.pt` and survives resume.
+- `--init-from-bc`: strict-by-name load of the BC checkpoint's `plane_stem.*`, `plane_blocks.*`,
+  `plane_head.*`, `scalar_encoder.*`, `trunk.*`, `policy_head.*`; every other module (event
+  encoder, privileged critic, value/aux/risk heads, q_head) stays at random init. Any BC key that
+  does not match a model key by name+shape is a hard error, not a warning — silent partial loads
+  are this lane's known failure mode.
+- Resume/train-state lineage, telemetry, `--train-state-every`: unchanged code paths.
+- Tests: scratch build metadata; flag exclusivity; init-from-bc loads exactly the listed prefixes
+  (and nothing else) and errors on a shape mismatch.
+
+### 4.3 `fh-mj-train-bc` accepts model-config flags
+- Add `add_model_config_args` / `model_config_from_args` (already used by train-b2b) so the BC
+  stage can build the same trunk the PPO stage will load. Event/privileged/aux modules are
+  constructed but receive **no gradient** in BC (policy cross-entropy only, empty event window
+  — verify at implementation time that the B2b forward accepts an empty event batch; if not, BC
+  builds the net with those flags off and 4.2's loader ignores their absence).
+- Tests: BC on a tiny heuristic dataset with `--model-kernel-width 1 --model-residual-blocks 2`
+  writes a checkpoint that 4.2's `--init-from-bc` accepts.
+
+Nothing in `internal/`, the proto, or the Go bridge changes. Serving needs no code change
+(config is inferred from shapes + metadata).
+
+## 5. Protocol (to be ratified in the consult; numbers are the proposal)
+
+### 5.1 Stage 1 — BC (both arms)
+- Data: `fh-mj-generate-data` heuristic trajectories, one dataset shared by both arms
+  (size: match the lineage's original BC dataset; exact count fixed at consult after measuring
+  generation throughput). Seed range fresh and recorded.
+- Train to validation-loss plateau with the existing `--validation-fraction`; report top-1 policy
+  accuracy per arm. The big net is *expected* to fit heuristic play better; that is not the result,
+  just the starting point.
+
+### 5.2 Stage 2 — PPO self-play (per arm, sequential)
+- Launch = the ds960 runbook command with `--scratch --init-from-bc`, `--model-*` flags for the
+  arm, **and matches/iter scaled by measured parameter ratio** relative to the champion's 320
+  (control: 320 × ratio(control/champion); big: 320 × ratio(big/champion), rounded to a multiple
+  of the dispatch chunk). Minibatch scales with matches/iter so optimizer steps/iter stay ≈ equal
+  (the ds960 coupling rule).
+- Everything else frozen at the champion recipe: lr 2e-5, entropy 0, ppo_epochs 2, gamma 0.99,
+  chongci, 10 workers, cgroup guards from the ds960 runbook.
+- Iterations: 150 nominal. Scratch curves start far below the anchor, so the kill rule is
+  **slope-based**, not level-based: kill at iter 100 iff the iter-75→100 screening delta is ≤ 0
+  *and* iter 100 < −0.20 vs `anchor075`. (Ratify at consult.)
+- Screenings at 25/50/75/100/125/150 vs regenerated `anchor075` on a fresh window; confirmation of
+  the pre-registered best on a second fresh window, 1500 paired seeds × 4 duplicate seats,
+  `fh-mj-compare` mandatory, gate = clustered CI95 > 0 AND large_loss ≤ comparator + 0.015.
+- Seed ranges: everything ≥ 1,300,000 (used so far: 400000–700000 bases, 910000+, 1070000+,
+  1110000+, 1150000+, 1190000+ windows). Exact allocation in the runbook.
+
+### 5.3 Readouts
+- Primary: big-arm confirmation delta vs `anchor075`.
+- Secondary (the scale question proper): big-arm vs control-arm at matched *optimizer steps*, and
+  the two screening curves overlaid. "Scale works" = big beats control with CI clear of 0; "scale
+  is not the lever" = both arms land together.
+- Memory/throughput: bench the big arm's full collect+PPO cycle before the lap (ds960 Amendment 2
+  procedure); if it does not fit the 36 GiB gate at 10 workers, stop and consult — do not shrink
+  the net silently.
+
+## 6. Risks and known traps
+- Scratch PPO was called infeasible in the 2026-06-24 spec; the BC stage is the mitigation, and the
+  control arm is the detector if it is not enough.
+- Throughput: collection inference is per-step; a ~3× net on the 4090 may push a 27-min iteration
+  (ds960 at 960 matches) well past an hour. Bench first; the budget is set from the bench.
+- `infer_model_config` must never guess `kernel_width` from anything but the stem weight shape.
+- Pool wrapper drops `round_outcome`; gamma/truncation/loader invariants untouched — nothing here
+  goes near them, keep it that way.
+- Two Codex threads exist (`019f49e8` user-designated, `01a0147d` holds the ds960 lineage). Use
+  **one**; this spec proposes `01a0147d` since it ruled the closure this experiment reopens.
+
+## 7. Out of scope
+- Suphx-scale (256 × 50): infeasible on the box; revisit only if the big arm confirms.
+- Transformer/attention trunks, oracle-guided scratch, human data groundwork, any change to the
+  reward, observation, or action catalog.
+- Promoting or deploying either arm — a confirmed win returns to consult for a promotion decision
+  under the existing B2c serving protocol.
+
+## 8. Deliverables
+1. This spec (reviewed) → implementation plan via `writing-plans`.
+2. PR: code changes §4 with tests, CI gates green, `ai/CLAUDE.md` updated.
+3. Runbook `worklog/plans/20260825-mortal-scale-scratch-runbook.md` + live status file
+   `worklog/rl-experiment/20260825-mortal-scale-scratch-status.md`.
+4. Consult ruling recorded as Amendment 1 here before anything trains.
+
+## Amendment 1 (ratified 2026-08-25, Codex thread `01a0147d`) — supersedes §5 where they differ
+
+Measured B2b parameter counts: champion 96×4 k=3 = 2.74 M; control 96×4 k=1 = 2.28 M (0.83×); big 192×24 k=1 = 8.42 M (3.07×).
+
+1. **Authorization and hypothesis.** Authorize one sequential two-arm scratch BC→PPO experiment: control `96×4, kernel_width=1, 2.28M` followed conditionally by big `192×24, kernel_width=1, 8.42M`. Both use identical initialization, optimization, evaluation, and provenance procedures. `anchor075` remains the external comparator. This tests the combined **scratch + model-scale + proportional-data package**, not model size in isolation.
+
+2. **Control arm.** The control is mandatory: without it, failure could not distinguish an inadequate scratch recipe from failure of scale. Run it first. Its catastrophic kill rule is the same as the big arm. After its full budget, authorize the big arm only if the iteration-200 screening delta versus `anchor075` is `>=−0.0600`, telemetry is healthy, and all integrity gates passed. Failure stops before the big arm and returns to consultation; it is a recipe failure, not a scale null. Control results may not tune BC, learning rates, schedules, budgets, or big-arm configuration.
+
+3. **BC dataset and stopping.** Generate exactly **10,000 heuristic matches**, seeds `1,300,000–1,309,999`, and persist dataset/config/bridge digests. Split 90/10 by whole-match seed, never by transition; both arms use identical train/validation membership and shuffle seed. Use existing BC optimizer and batch defaults unchanged. Train at least 5 and at most 30 epochs; stop after 5 consecutive epochs without an absolute validation-cross-entropy improvement of `1e-4`, selecting the lowest-validation-loss checkpoint. Report validation cross-entropy and legal-action-masked top-1 accuracy under the actual zero-event condition. Non-finite loss, loader mismatch, or absent improvement is a prerequisite failure requiring consultation.
+
+4. **BC transfer gate.** Before PPO, prove exact step-zero equality between each BC checkpoint and its B2b initialization for legal-action logits, probabilities, greedy actions, and loaded tensor bytes under zeroed events. Record BC SHA, B2b initialization SHA/provenance, model configuration, and the exact loaded/unloaded key sets. Resume must preserve them.
+
+5. **PPO data and minibatches.** Floor the control at **320 matches/iteration with minibatch 256**; reducing it to 266 would weaken the recipe control merely because its 1-D kernel has fewer parameters. Run the big arm at **960 matches/iteration with minibatch 768**. Both therefore execute approximately equal optimizer steps per iteration while the big arm receives the pre-registered proportional-data treatment. Freeze `ppo_epochs=2`, `gamma=0.99`, entropy coefficient 0, chongci, chunk 320, workers 10, reward/auxiliary recipe, observation/action contracts, and bridge bytes.
+
+6. **Optimization schedule.** Reject both a critic-only warm-up and `lr=2e-5` for every parameter from step 1. Shared-trunk freezing would not cleanly train the event path, while the all-fine-tuning rate makes random-head undertraining a dominant alternative explanation. Use two Adam parameter groups: BC-loaded parameters at `2e-5` throughout; parameters absent from BC—event encoder, value/Q, privileged-critic, auxiliary and risk heads—at `2e-4` for iterations 1–25, then `2e-5` for iterations 26–200, retaining optimizer moments. No tuning follows control results.
+
+7. **Budget, screening, and kill.** Each arm has **200 iterations**, fixed before launch. Screen at `25/50/75/100/125/150/175/200` on one fixed fresh 120-seed duplicate-seat window. The sole early kill is at iteration 100 iff `delta100−delta75 <= 0` and `delta100 <−0.20`. This is a conservative catastrophic-futility rule; no later slope-based stopping or adaptive extension is allowed.
+
+8. **Seeds.** Reserve control training seeds `1,400,000–1,463,999`, big training seeds `1,500,000–1,691,999`, bench seeds `1,700,000–1,700,959`, screening seeds `1,710,000+`, and confirmation seeds `1,720,000+`. No reuse or overlap is permitted.
+
+9. **Evaluation and selection.** Select each arm’s best healthy registered milestone by screening delta, with an exact tie going to the later milestone. Confirm the selected big checkpoint versus regenerated `anchor075`, and secondarily versus the selected control, on the same fresh **1,500 paired seeds × 4 duplicate seats**. Each claim requires clustered CI95 lower bound `>0` and `large_loss_rate(candidate) <= comparator+0.015`. No second window, enlarged N, or reselection is allowed.
+
+10. **Interpretation.** Big-versus-anchor is the primary practical gate. Big-versus-control identifies superiority of the **larger-model/proportional-data package**, not architecture scale alone, because data volumes differ. “Scratch scale confirms” requires both primary and secondary gates. If control passes its recipe gate but big fails confirmation, close this exact scratch-scale package as null. If control fails, scale remains untested.
+
+11. **Infrastructure gate.** Before the big lap, run the full production collect+PPO bench at 960/768. Use Amendment 9’s gates: cgroup peak `<=38.00 GiB`, tree RSS `<=40.00 GiB`, CUDA allocated `<=20.00 GiB`, `memory.high=44GiB`, `memory.max=48GiB`, swap 0, and `oom.group=1`. Record throughput and projected wall time. Any breach, monitoring gap, OOM, or integrity failure stops and returns to consultation; do not shrink the model, data, workers, or budget silently.
+
+12. **Governance.** Infrastructure failures are not scientific nulls. Neither arm may be promoted or deployed automatically. Every terminal result returns to this consultation thread, with checkpoints, histories, dataset and bridge hashes, initialization provenance, guard telemetry, screening reports, and confirmation comparisons preserved.
+
+
+## Amendment 2 (ratified 2026-08-25, Codex thread `01a0147d`) — BC dataset feasibility and bench checkpoint
+
+Preflight measurement: one chongci heuristic match emits 2,079 transitions (all four seats); `fh-mj-train-bc` holds the dataset in host RAM at ≈7,018 B/transition, so Amendment 1 §3's 10,000 all-seat matches ≈ 136 GiB against a 52 GiB box. Ruling:
+
+1. **Disposition.** Amendment 1 §3’s 10,000-match/all-seat dataset is infeasible on this box. This is a prerequisite infrastructure finding, not a scientific result. Authorize deterministic single-seat generation with a reduced **8,000 matches**, seeds `1,300,000–1,307,999`; seeds `1,308,000–1,309,999` remain unused.
+
+2. **Sampling rule.** Retain exactly one learning seat per match, selected as `(match_seed − 1,300,000) mod 4`. Filtering occurs during generation, before dataset serialization; transition subsampling or post-load truncation is forbidden. This yields exactly 2,000 matches per seat and approximately **4.16M transitions**, still roughly 10× the upper lineage precedent while reducing within-match correlation.
+
+3. **Memory gate.** Before BC, record manifest transition count, per-seat counts, calculated resident bytes at 7,018 B/transition, shard bytes, dataset/config/bridge digests, and a loader-only measured cgroup peak. Require calculated array bytes `<=30.00 GiB` and loader-only cgroup peak `<=32.00 GiB`; BC training remains under cgroup `memory.peak <=38.00 GiB`. Any breach stops and returns to consultation—no further sampling reduction, streaming rewrite, swap, or retry is automatic.
+
+4. **Split and readout.** Preserve Amendment 1’s whole-match 90/10 split, shared membership/shuffle seed, batch 64, 5–30 epochs, patience 5, and best-validation-cross-entropy selection. The zero-event legal-action-masked top-1 accuracy remains the required Stage-1 readout, but report it both overall and separately for all four selected seats. It measures held-out imitation quality, not PPO strength or campaign success.
+
+5. **Big-arm bench.** The proposed raw `--champion bc-big/best.pt` bench is **not sufficient as written**: nonzero random event columns can alter actions, trajectory lengths, rows, and therefore memory. Authorize the existing bench path only with a digest-pinned bench checkpoint whose `trunk.0` event columns are zeroed exactly as `--init-from-bc`, and whose seeded legal-action logits, probabilities, and greedy actions pass the same step-zero equality gate. Shapes, parameter count, rollout size, minibatch transfer, optimizer-state allocation, and all Amendment 1 §11 memory/CUDA/containment gates remain unchanged.
+
+6. **Bench evidence.** At the single frozen worker count, `all_digests_equal` and `rows_and_labels_equal` are recorded but explicitly non-load-bearing. Load-bearing evidence is complete seed coverage, rollout digest, rows, expected optimizer-step arithmetic including the ragged tail, labels, truncation, telemetry, memory/CUDA peaks, and clean monitoring.
+
+7. **Governance.** All other Amendment 1 controls remain frozen. No BC or PPO execution begins until these amended dataset and bench prerequisites pass; every failure returns to consultation.
+
+## Amendment 3 (ratified 2026-08-27, Codex thread `01a0147d`) — ReZero trunk for both arms
+
+**Ruling:** A is the only defensible repair; B (BC-only lower lr + clipping) is an unproven fallback and C (block normalization) is rejected. Lower LR and clipping may suppress symptoms without fixing the unstable 24-block forward path, leaving PPO exposed to the same architecture. ReZero directly addresses depth-at-initialization and already exists in the model family.
+
+
+
+1. **Disposition.** The plain-block big BC attempt is a registered prerequisite failure caused by the unnormalized, unscaled 24-block trunk; it is neither a scientific null nor evidence against model scale. Preserve its artifacts as immutable failure evidence.
+
+2. **Authorized repair.** Authorize `ModelConfig.trunk_rezero: bool = False`. When true, every main `plane_blocks` entry uses the existing `ReZeroResidualBlock`: `x + αF(x)`, scalar `α` initialized to zero, without the plain block’s trailing GELU. Default false must preserve all existing models byte-for-byte. Checkpoint inference must derive the setting from plane-block alpha keys; metadata, evaluation, serving, export, transfer provenance, and resume must agree or fail closed.
+
+3. **Control parity.** Both experimental arms must use `trunk_rezero=true`. Re-run the control BC from the same initial seed, dataset, split, and flags; its previous plain-block checkpoint is diagnostic only and is inadmissible for PPO. Using ReZero only for big would confound block type with width/depth and invalidate the secondary comparison. No PPO work has been spent, so no lap is discarded.
+
+4. **BC optimization.** Freeze BC optimization unchanged for both arms: AdamW, LR `3e-4`, weight decay `1e-4`, batch 64, no warm-up, no gradient clipping, and the registered 5–30 epoch/patience-5 rule. Do not combine the architectural repair with candidate B. If ReZero fails, stop and consult; lower LR, clipping, normalization, or another retry is not automatic.
+
+5. **Acceptance gate.** The canonical ReZero control must achieve zero-event validation top-1 `>=0.9400`, validation CE `<=0.2000`, finite telemetry, and at least one finite plane-block alpha changed exactly from zero. The ReZero big arm must achieve top-1 `>=0.9400` and no more than `0.0050` below the canonical control, validation CE `<=0.2000` and no more than `0.0200` above control, with every per-seat top-1 `>=0.9300`. Report per-action accuracy and the alpha min/median/max diagnostically. Failure of either gate stops before PPO as a recipe/optimization failure, not a scale null.
+
+6. **Downstream protocol.** Recompute and record exact ReZero parameter counts, but retain 320/256 control and 960/768 big allocations. The exported bench initialization, step-zero transfer gate, PPO checkpoints, and both laps must all carry `trunk_rezero=true`. Amendment 1’s PPO learning-rate groups, budgets, seeds, screenings, confirmation gates, and Amendment 2’s memory gates remain unchanged.
+
+7. **Implementation gate.** Before execution, require default-preservation, construction, checkpoint-inference, BC-transfer, export/evaluation/serving, and resume tests plus normal review and CI. Any mismatch returns to consultation.
+
+
+## Amendment 4 (ratified 2026-08-27, thread 01a0147d) — event-path warm-phase interpretation
+
+1. **Parameter groups ratified unchanged.** Keep `trunk.0.weight`, including its zeroed event-input columns, in the BC-loaded group at `2e-5`; keep `event_encoder.*` in the heads group at `2e-4` through iteration 25. Apply this identically to both arms.
+
+2. **No slice-specific fast LR.** Splitting `trunk.0.weight` would change checkpoint structure, optimizer state, transfer provenance, and inference plumbing for a speculative benefit. Gradient multiplication is not reliably equivalent to a learning-rate multiplier under AdamW. Moving the entire trunk to `2e-4` risks destroying the transferred BC policy. Neither is authorized.
+
+3. **Mechanistic reading.** At the first optimizer step, the zero read-in makes the event encoder’s gradient zero, while the read-in slice itself can receive a gradient. Once that slice moves, encoder gradients begin. Because each iteration contains thousands of optimizer steps, the 10× LR difference alone does not establish dormancy through iteration 25.
+
+4. **No default excuse.** A flat or negative iteration-25/50 screening delta must **not** be attributed by default to “the event head has not engaged.” Through iteration 25, delayed engagement is an admissible mechanistic diagnosis only when supported by the mandatory telemetry below. At iteration 50 and later it ceases to be an excuse: persistent non-engagement is then a property or failure of the registered recipe, not grounds for extension, retuning, or rerun.
+
+5. **Mandatory telemetry for both arms.** Record at initialization and after every iteration:
+
+   - event-column slice Frobenius norm, RMS, and max-absolute value;
+   - per-iteration Frobenius update norm of that slice;
+   - its per-element RMS ratio to the non-event columns of `trunk.0.weight`;
+   - event-encoder parameter norm and per-iteration update norm.
+
+   All values must be finite. The iteration-0 slice must be exactly zero. These are diagnostic, non-load-bearing readouts: they cannot change stopping, selection, budget, or learning rates. An exactly unchanged event slice across a completed iteration is an integrity failure and returns to consultation.
+
+6. **Confirmation unchanged.** Event-path engagement does not modify either confirmation claim or gate. A final null with a weak event path remains a null for this exact scratch/ReZero/optimization package; a confirm still requires the pre-registered primary and secondary CI and tail-risk gates.
+
+7. **Scope.** This amendment adds telemetry and fixes interpretation only. All Amendments 1–3 variables and gates remain frozen.
+
+
+## Stage 3 terminal ruling
+
+1. **Stage 3 passes.** Both canonical ReZero BC arms satisfy every Amendment 3 acceptance gate with clean containment. The plain-block failure remains diagnostic evidence; the ReZero checkpoints are the only admissible PPO initializations.
+
+2. **BC equality is not adverse evidence.** `0.9581` versus `0.9582` does not update the PPO scale hypothesis: both models reached the heuristic-policy imitation ceiling. It establishes unusually strong starting-policy parity and removes unequal BC quality as an alternative explanation for later PPO results. No registered prior, budget, or gate changes.
+
+3. **Alpha result is diagnostic only.** The big arm’s smaller, depth-concentrated alphas show that BC used little of its deep residual capacity; they neither justify shrinking/changing the model nor predict PPO failure. Carry alpha telemetry into both laps: per iteration record finite alpha count, absolute min/median/max, L2 norm, and per-iteration alpha-vector update norm. Full per-block values remain recoverable from checkpoints. These measurements are non-load-bearing and cannot change stopping or selection.
+
+4. **Amendment 4 must fail closed.** Warnings-only does **not** satisfy the ruling. “Cannot change stopping” applies to observed magnitudes and engagement interpretations; it does not override the explicit integrity gate. If any event-path value is non-finite, iteration-0 is not exactly zero, or the event slice is exactly unchanged across a completed iteration, write the history/checkpoint evidence and then halt before the next collection, returning to consultation. PR #233 must enforce and test that behavior before either lap.
+
+5. **Next steps confirmed with one ordering correction.** First merge the corrected PR #233, sync and pin that exact checkout on the box, then:
+
+   1. export `bc-big/best.pt` to the ReZero `big-init.pt` and record its SHA and transfer proof;
+   2. run the registered 960/768 bench under every Amendment 2 gate;
+   3. launch the 200-iteration control lap at 320/256;
+   4. apply the iteration-200 `>=−0.0600` control gate before authorizing the big lap.
+
+6. **No other amendment.** Dataset, BC checkpoints, PPO learning-rate groups, seeds, budgets, memory limits, screening/kill rules, confirmation gates, and no-optional-stopping governance remain frozen.
+
+
+## Terminal ruling — 2026-09-17 (Codex thread `01a0147d`, GPT-5.6-Sol, medium effort)
+
+1. **The registered gate stands: FAIL.** The rule was explicitly `iter_200 mean_delta >= −0.0600` on the point estimate. The observed `−0.0722` fails by `0.0122`; proximity to the threshold or CI width does not create a tolerance band. The CI crossing zero establishes only non-significance—not equivalence to `anchor075`—and cannot retroactively replace the registered spend gate. Re-reading, rounding, enlarging the window, or changing the statistic would be optional stopping.
+
+2. **Close as a recipe-gate failure, not a scale NULL.** Do not extend beyond 200 and do not rerun the gate on more seeds. The control showed substantial, monotone improvement and encouraging tail-risk diagnostics, but its primary curve decelerated and missed the exact prerequisite. Under Amendment 1, control failure means the scratch/ReZero recipe did not establish sufficient anchor proximity within its frozen budget; therefore the 192×24 arm remains untested and unauthorized. No confirmation evaluation is due. Archive the completed control, BC, bench, screening, guard, and provenance artifacts; close this protocol branch without promotion or deployment.
+
+3. **Collector throughput does not affect this disposition.** The possible batched-collector speedup cannot rescue a failed scientific authorization gate, and G1 remains unauthorized for training. If a future, separately authorized protocol ever includes the big arm, the collector must first pass its own parity, seed/order, label, lifetime, resume, memory, and full-cycle gauntlets; then the exact 192×24 960/768 bench and wall-time projection must be re-measured **before launch and before final compute-spend approval**. The old 9.4-day estimate should not be presented as current after such a change, but no remeasurement is needed now.
+
+4. **The resume is admissible but must be registered as a deviation.** The user-directed 12-day pause was not a registered scientific stop, yet it did not select a checkpoint, alter the recipe, expose a terminal gate, or truncate the final budget. Resuming from the iteration-100 state with unchanged checkout, bridge, configuration, seeds, and comparator preserves the scientific lineage; reworked iteration 101 is canonical and the superseded copy is non-scoring. Record the pause/resume explicitly as an operational deviation. If retained evidence permits, also record the runbook-required comparison of the first resumed collection's rows, optimizer steps, labels, and truncation; the smooth screening slope is supporting context, not a substitute for that audit.
+
+**Final disposition:** the control recipe gate failed exactly as registered, the big arm is not authorized, scale remains untested under this scratch package, and mortal-scale-scratch closes without extension, rescreening, confirmation, promotion, or deployment.
+
+## Second terminal ruling — 2026-09-17 (Codex thread `01a0147d`, GPT-6 Astra, medium effort)
+
+Requested as an independent second ruling on the same terminal result. It upholds the closure and corrects the ruling above on questions 3 and 4.
+
+1. **The −0.0600 gate stands: FAIL.** Amendment 1 §2 specifies the iteration-200 point estimate, and `−0.0722 < −0.0600`. It provides no uncertainty allowance or discretionary extension. The approximate CI is `[−0.1449, +0.0005]`; that interval cannot establish equivalence to the anchor, nor that the true deficit exceeds −0.0600. The authorization decision is definite while the underlying performance difference remains uncertain. Changing the threshold would be a post-hoc rule change; adding samples until it passes would introduce optional stopping.
+
+2. **Close for failure of the registered control prerequisite; scale remains untested.** Amendment 1 §§2 and 10 prescribe this distinction explicitly. Neither extending training nor enlarging screening is authorized. The improving curve supports the narrower observation that this recipe was still learning at its budget boundary; it does not establish that additional training would cross the gate. The secondary estimates are encouraging, but their intervals establish neither superiority nor equivalence. "Tail gate FAIL because it tests the primary" is misleading terminology: the registered large-loss point-estimate condition **passes** at iteration 200; what fails is the control recipe gate. No confirmation, big lap, promotion, or deployment follows.
+
+3. **Remeasure before approving expenditure on a changed collector; the existing estimate remains evidence for the process collector.** A merged implementation does not invalidate measurements of the still-frozen process path. The 9.4-day estimate remains its historical measured projection, subject to ordinary hardware/software drift. The proposed ~16× ceiling supplies no measured replacement. If future authorization proposes the batched collector, require its equivalence and operational gates plus the actual big-model full-cycle benchmark before final training-spend approval. **Adopting the batched collector is not mandatory, and its mere existence does not make the process estimate obsolete.** Neither throughput outcome changes today's failed gate.
+
+4. **Record the pause as an operational deviation; neighbour comparison does not prove exact replay.** The runbook requires the first resumed collection to reproduce its **original iteration's** rows, steps, labels, and truncation. Comparing resumed iteration 101 with iterations 100 and 102 verifies plausible counts and correct step arithmetic; it does not compare original iteration 101 with resumed iteration 101. One run ID supports lineage continuity; it does not prove restoration of optimizer/RNG state or replay equality. The required comparison is against archived pre-pause iteration-101 evidence; if unavailable, record "resume replay equality unverified; structural checks passed". This limitation cannot turn the failed gate into permission to rerun or launch big.
+
+**Disposition:** closure at the control recipe gate, `anchor075` retained, the big-arm hypothesis unresolved.
+
+### Evidence recorded against ruling 4
+
+The archived pre-pause evidence exists. `logs/control-lap.log` is append-mode and retains both iteration-101 emissions:
+
+```
+line 102  iter 101: policy_loss=-0.0010 value_loss=0.0186 entropy=0.0962 mean_reward=-0.0000   (original, pre-pause)
+line 109  iter 101: policy_loss=-0.0010 value_loss=0.0186 entropy=0.0962 mean_reward=-0.0000   (resumed)
+```
+
+Identical on all four logged metrics: replay equality to logged precision (4 dp). `history.json`'s original row 101 was overwritten by the resume, so no higher-precision pre-pause record survives and this is not a bitwise proof.

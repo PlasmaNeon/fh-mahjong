@@ -17,9 +17,10 @@ services:
   # `docker compose --profile full up` (policy + Go backend). The default
   # `docker compose up` still brings up only db.
   #
-  # The model checkpoint is NOT in the repo — provide a real .pt file:
-  #   RL_CHECKPOINT_DIR=/abs/path/to/checkpoints RL_CHECKPOINT_FILE=epoch_006.pt \
+  # The deployed champion ships in ai/checkpoints/deploy/:
+  #   RL_CHECKPOINT_FILE=deploy/selfplay-deep4-student-iter275-39ch.pt \
   #   docker compose --profile full up
+  # To serve another checkpoint, set RL_CHECKPOINT_DIR to its host directory.
   policy:
     build:
       context: .

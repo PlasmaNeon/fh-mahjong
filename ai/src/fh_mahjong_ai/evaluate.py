@@ -563,10 +563,15 @@ def compute_action_agreement(
     transitions: List[Transition],
     device: str = "cpu",
     batch_size: int = 1024,
+    allow_zero_events: bool = False,
 ) -> Dict[str, Any]:
     """Compute how often the model's argmax action matches the expert's action.
 
     Returns dict with aggregate and action-family agreement metrics.
+
+    `allow_zero_events` is forwarded to `compute_action_agreement_from_batches`
+    -- see that function's docstring for what it means and when it is (and is
+    not) a valid metric.
     """
     model.eval()
     exact_matches = 0
@@ -581,6 +586,7 @@ def compute_action_agreement(
             "total_transitions": 0,
             "action_family_counts": {},
             "family_agreement": {},
+            "mean_cross_entropy": 0.0,
         }
 
     batches = (
@@ -603,25 +609,51 @@ def compute_action_agreement(
         }
         for start in range(0, total, max(1, batch_size))
     )
-    return compute_action_agreement_from_batches(model, batches, device=device)
+    return compute_action_agreement_from_batches(
+        model, batches, device=device, allow_zero_events=allow_zero_events
+    )
 
 
 def compute_action_agreement_from_batches(
     model: nn.Module,
     batches: Iterator[dict[str, np.ndarray]],
     device: str = "cpu",
+    allow_zero_events: bool = False,
 ) -> Dict[str, Any]:
-    """Compute action agreement from pre-batched observation/action arrays."""
-    if getattr(model, "wants_events", False):
+    """Compute action agreement from pre-batched observation/action arrays.
+
+    By default this refuses to evaluate an event-enabled model (`model.wants_events`)
+    because offline datasets carry no event histories, and silently running the
+    model with zeroed event features would produce a misleading metric for a
+    checkpoint whose event encoder was actually trained on live event history
+    (e.g. Spec B2b PPO). Pass `allow_zero_events=True` to opt into that
+    zeroed-event forward pass anyway.
+
+    `allow_zero_events=True` is valid ONLY for a model whose event encoder was
+    itself trained with `events=None` (zeroed event features) throughout --
+    e.g. behavior cloning (BC), where `PolicyValueNet.encode` already
+    substitutes zeros when no events are supplied (spec B2b/4.3), so
+    evaluating under the same zeroed condition faithfully measures what BC
+    learned. It is NOT a valid accuracy metric for an event-trained (PPO)
+    checkpoint, whose event encoder expects real event history at inference
+    time -- passing True there would silently evaluate a materially different
+    (degraded) input distribution than the one the checkpoint was trained and
+    is meant to run under.
+    """
+    if getattr(model, "wants_events", False) and not allow_zero_events:
         raise ValueError(
             "offline action agreement cannot evaluate an event-enabled model: "
             "offline datasets carry no event histories (the model would silently "
-            "run with zeroed event features)"
+            "run with zeroed event features); pass allow_zero_events=True only if "
+            "this model's event encoder was itself trained with events=None "
+            "throughout (e.g. behavior cloning), never for an event-trained "
+            "(PPO) checkpoint"
         )
     model.eval()
     exact_matches = 0
     top3_matches = 0
     total = 0
+    nll_sum = 0.0
     families: dict[str, dict[str, int]] = {}
 
     with torch.inference_mode():
@@ -635,6 +667,12 @@ def compute_action_agreement_from_batches(
             mask = torch.from_numpy(np.asarray(batch["action_mask"], dtype=np.int8)).to(device)
 
             logits, _ = model(planes, scalars, mask)
+            log_probs = torch.log_softmax(logits.float(), dim=1)
+            nll_sum += float(
+                -log_probs[torch.arange(logits.shape[0]), torch.from_numpy(action_ids).to(logits.device)]
+                .sum()
+                .item()
+            )
             top_actions_tensor = torch.topk(logits, k=min(3, logits.shape[1]), dim=1).indices.cpu()
             top_actions = top_actions_tensor.numpy()
             predicted_actions = top_actions[:, 0]
@@ -661,6 +699,7 @@ def compute_action_agreement_from_batches(
             "total_transitions": 0,
             "action_family_counts": {},
             "family_agreement": {},
+            "mean_cross_entropy": 0.0,
         }
 
     family_agreement = {
@@ -681,7 +720,207 @@ def compute_action_agreement_from_batches(
             for family, counts in sorted(families.items())
         },
         "family_agreement": family_agreement,
+        "mean_cross_entropy": nll_sum / total,
     }
+
+
+class _SeatEvalAccumulator:
+    """One learning seat's evaluation accounting: every per-episode metric and the report.
+
+    Shared by the sequential evaluator (`evaluate_policy_online`) and the batched pool
+    evaluator (`batched_eval`), so both produce the same report from the same episodes.
+    Episodes must be recorded in seed order: the per-episode arrays are positional.
+    """
+
+    def __init__(self, learning_seat: int, normalized_match_mode: str,
+                 resolved_large_loss_threshold: float, chongci_starting_score: int,
+                 chongci_bust_threshold: int, chongci_max_hands: int) -> None:
+        self.learning_seat = learning_seat
+        self.normalized_match_mode = normalized_match_mode
+        self.resolved_large_loss_threshold = resolved_large_loss_threshold
+        self.chongci_starting_score = chongci_starting_score
+        self.chongci_bust_threshold = chongci_bust_threshold
+        self.chongci_max_hands = chongci_max_hands
+        self.seat_rewards = []
+        self.seat_placements = []
+        self.seat_fourth = []
+        self.seat_large_loss = []
+        self.seat_utility = []
+        self.occupancy_sum = np.zeros(4)
+        self.rank_parity_mismatches = 0
+        self.action_counts = Counter()
+        self.outcome_counts = Counter()
+        self.choice_source_counts = Counter()
+        self.q_margins = []
+        self.policy_episode_summaries = []
+        self.episode_summaries = []
+        self.wins = 0
+        self.large_losses = 0
+        self.truncations = 0
+        self.per_match_hand_records = []
+        self.unknown_hands = 0
+
+    def note_choice(self, choice_info: dict[str, Any]) -> None:
+        """Tally one learner decision's policy-choice diagnostics."""
+        source = choice_info.get("source")
+        if source is not None:
+            self.choice_source_counts[str(source)] += 1
+        q_margin = choice_info.get("q_margin")
+        if q_margin is not None:
+            self.q_margins.append(float(q_margin))
+
+    def record_episode(
+        self,
+        seed: int,
+        rewards: np.ndarray,
+        episode: list[Transition],
+        choice_infos: Sequence[dict[str, Any]],
+        outcome: Optional[dict[str, Any]],
+        truncated: bool = False,
+        reset_rewards=None,
+        learner_action_ids: Optional[Sequence[int]] = None,
+    ) -> None:
+        reward = float(episode_reward_vector(episode, rewards, reset_rewards=reset_rewards)[self.learning_seat])
+        self.seat_rewards.append(reward)
+        # A truncated (step-limit) episode has no final standings. Score it as the
+        # WORST placement value — matching the training reward for truncations
+        # (collect_rollouts) — rather than excluding it. Excluding would let a policy
+        # improve mean_placement (the gate metric vs the anchor) by driving losing
+        # matches into the step limit, censoring those losses from the comparison.
+        if truncated:
+            self.truncations += 1
+            placement = float(min(_EVAL_PLACEMENT_VALUES))
+        else:
+            placement = episode_placement(episode, rewards, self.learning_seat,
+                                          _EVAL_PLACEMENT_VALUES,
+                                          reset_rewards=reset_rewards)
+        self.seat_placements.append(placement)
+        net_vec = episode_reward_vector(episode, rewards, num_seats=4, reset_rewards=reset_rewards)
+        tail = eval_episode_tail(net_vec, self.learning_seat,
+                                 float(self.chongci_starting_score) if self.normalized_match_mode == "chongci" else 0.0,
+                                 truncated)
+        self.seat_fourth.append(tail["fourth_share"])
+        self.seat_utility.append(tail["utility"])
+        self.seat_large_loss.append(1.0 if reward <= self.resolved_large_loss_threshold else 0.0)
+        self.occupancy_sum += tail["occupancy"]
+        if not tail["parity_ok"]:
+            self.rank_parity_mismatches += 1
+        if reward > 0:
+            self.wins += 1
+        if reward <= self.resolved_large_loss_threshold:
+            self.large_losses += 1
+        if learner_action_ids is None:
+            learner_action_ids = [t.action_id for t in episode]
+        learner_families = Counter(action_family(a) for a in learner_action_ids)
+        self.action_counts.update(learner_families)
+        if outcome is None and self.normalized_match_mode == "chongci":
+            self.outcome_counts["match_truncated" if truncated else "match_end"] += 1
+        else:
+            update_outcome_counts(self.outcome_counts, outcome, self.learning_seat)
+        policy_summary = summarize_policy_choices(choice_infos)
+        policy_summary.update(
+            {
+                "seed": int(seed),
+                "seat": int(self.learning_seat),
+                "reward": reward,
+                "large_loss": reward <= self.resolved_large_loss_threshold,
+                "truncated": bool(truncated),
+            }
+        )
+        self.policy_episode_summaries.append(policy_summary)
+        self.episode_summaries.append(
+            {
+                "seed": int(seed),
+                "seat": int(self.learning_seat),
+                "reward": reward,
+                "large_loss": reward <= self.resolved_large_loss_threshold,
+                "action_family_counts": dict(sorted(learner_families.items())),
+                "decision_count": len(learner_action_ids),
+                "truncated": bool(truncated),
+            }
+        )
+        hand_outcomes = _episode_round_outcomes(episode, outcome)
+        self.per_match_hand_records.append(
+            [hand_record(ro, self.learning_seat) for ro in hand_outcomes]
+        )
+        if not truncated and not hand_outcomes:
+            # A completed match that delivered no outcome at all: count the
+            # terminal boundary as unknown rather than silently shrinking
+            # the denominator. (Truncations are already tallied separately.)
+            self.unknown_hands += 1
+
+    def report(self) -> Dict[str, Any]:
+        completed = len(self.seat_rewards)
+        rewards = reward_summary(self.seat_rewards)
+        placement_summary = reward_summary(self.seat_placements)
+        positive_reward_count = int(rewards["positive_count"])
+        zero_reward_count = int(rewards["zero_count"])
+        negative_reward_count = int(rewards["negative_count"])
+        return {
+            "match_mode": self.normalized_match_mode,
+            "chongci_config": _chongci_report_config(
+                self.normalized_match_mode,
+                self.chongci_starting_score,
+                self.chongci_bust_threshold,
+                self.chongci_max_hands,
+            ),
+            "seat": self.learning_seat,
+            "avg_reward": round(float(rewards["mean"]), 2),
+            "mean_reward": rewards["mean"],
+            "mean_reward_sem": rewards["sem"],
+            "mean_reward_ci95": rewards["ci95"],
+            "reward_sum": rewards["sum"],
+            "reward_summary": rewards,
+            "win_count": self.wins,
+            "win_rate": self.wins / completed if completed else 0.0,
+            "win_metric_note": (
+                "Backward-compatible reward-positive count; for chongci this is final match net-positive rate, "
+                "not single-hand win rate."
+                if self.normalized_match_mode == "chongci"
+                else "Reward-positive single-round result."
+            ),
+            "positive_reward_count": positive_reward_count,
+            "positive_reward_rate": rewards["positive_rate"],
+            "zero_reward_count": zero_reward_count,
+            "zero_reward_rate": rewards["zero_rate"],
+            "negative_reward_count": negative_reward_count,
+            "negative_reward_rate": rewards["negative_rate"],
+            "large_loss_count": self.large_losses,
+            "large_loss_rate": self.large_losses / completed if completed else 0.0,
+            "large_loss_threshold": self.resolved_large_loss_threshold,
+            "episodes": completed,
+            "per_episode_rewards": self.seat_rewards,
+            "per_episode_placements": self.seat_placements,
+            "mean_placement": placement_summary["mean"],
+            "mean_placement_ci95": placement_summary["ci95"],
+            # Placement now scores every completed episode (truncations as worst), so the
+            # sample equals `episodes`; surfaced explicitly alongside the truncation rate
+            # so any step-limit stalling is visible rather than silently censored.
+            "placement_count": len(self.seat_placements),
+            "per_episode_fourth_share": self.seat_fourth,
+            "per_episode_large_loss": self.seat_large_loss,
+            "per_episode_training_utility": self.seat_utility,
+            "placement_rank_shares": (self.occupancy_sum / completed).tolist() if completed else [0.0] * 4,
+            "fourth_place_rate": float(np.mean(self.seat_fourth)) if self.seat_fourth else 0.0,
+            "training_utility_mean": float(np.mean(self.seat_utility)) if self.seat_utility else 0.0,
+            "rank_parity_mismatches": int(self.rank_parity_mismatches),
+            "truncation_count": self.truncations,
+            "truncation_rate": self.truncations / completed if completed else 0.0,
+            "action_family_counts": dict(sorted(self.action_counts.items())),
+            "action_family_rates": action_family_rates(self.action_counts),
+            "round_outcome_counts": dict(sorted(self.outcome_counts.items())),
+            "round_outcome_rates": outcome_rates(self.outcome_counts),
+            "hand_stats": summarize_hand_stats(self.per_match_hand_records, self.unknown_hands),
+            "per_match_hand_records": self.per_match_hand_records,
+            "policy_choice_counts": dict(sorted(self.choice_source_counts.items())),
+            "policy_choice_rates": action_family_rates(self.choice_source_counts),
+            "policy_q_margins": self.q_margins,
+            "policy_q_margin_summary": reward_summary(self.q_margins),
+            "policy_episode_summaries": self.policy_episode_summaries,
+            "policy_episode_outcome_summary": summarize_policy_episode_outcomes(self.policy_episode_summaries),
+            "episode_summaries": self.episode_summaries,
+            "large_loss_episodes": summarize_large_loss_episodes(self.episode_summaries, self.resolved_large_loss_threshold),
+        }
 
 
 def evaluate_policy_online(
@@ -700,8 +939,14 @@ def evaluate_policy_online(
     oracle_observation: bool = False,
     event_history_window: int = 0,
     policy_factory: Optional[Any] = None,
+    opponent_policy: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Run a policy for one seat against heuristic opponents.
+
+    With ``opponent_policy`` set, the other three seats are played by that
+    policy instead of the Go heuristic bots (a strong table). The episode then
+    records every seat's transition so rewards and hand outcomes stay complete,
+    while action counts and policy summaries cover the learning seat only.
 
     ``policy`` is used as-is when given. Pass ``policy=None`` with
     ``policy_factory`` (called as ``policy_factory(bridge)``) when the policy
@@ -721,8 +966,8 @@ def evaluate_policy_online(
     config = EnvConfig(
         bridge_kind=bridge_kind,
         bridge_library_path=bridge_library_path,
-        learning_seats=(learning_seat,),
-        auto_play_heuristics=True,
+        learning_seats=(0, 1, 2, 3) if opponent_policy is not None else (learning_seat,),
+        auto_play_heuristics=opponent_policy is None,
         match_mode=normalized_match_mode,
         chongci_starting_score=chongci_starting_score,
         chongci_bust_threshold=chongci_bust_threshold,
@@ -739,106 +984,17 @@ def evaluate_policy_online(
             raise ValueError("evaluate_policy_online requires either policy or policy_factory")
         policy = policy_factory(bridge)
 
-    seat_rewards: List[float] = []
-    seat_placements: list[float] = []
-    seat_fourth: list[float] = []
-    seat_large_loss: list[float] = []
-    seat_utility: list[float] = []
-    occupancy_sum = np.zeros(4)
-    rank_parity_mismatches = 0
-    action_counts: Counter[str] = Counter()
-    outcome_counts: Counter[str] = Counter()
-    choice_source_counts: Counter[str] = Counter()
-    q_margins: list[float] = []
-    policy_episode_summaries: list[dict[str, Any]] = []
-    episode_summaries: list[dict[str, Any]] = []
-    wins = 0
-    large_losses = 0
-    truncations = 0
-    per_match_hand_records: list[list[dict[str, Any]]] = []
-    unknown_hands = 0
-
-    def record_episode(
-        seed: int,
-        rewards: np.ndarray,
-        episode: list[Transition],
-        choice_infos: Sequence[dict[str, Any]],
-        outcome: Optional[dict[str, Any]],
-        truncated: bool = False,
-        reset_rewards=None,
-    ) -> None:
-        nonlocal wins, large_losses, truncations, unknown_hands, rank_parity_mismatches, occupancy_sum
-        reward = float(episode_reward_vector(episode, rewards, reset_rewards=reset_rewards)[learning_seat])
-        seat_rewards.append(reward)
-        # A truncated (step-limit) episode has no final standings. Score it as the
-        # WORST placement value — matching the training reward for truncations
-        # (collect_rollouts) — rather than excluding it. Excluding would let a policy
-        # improve mean_placement (the gate metric vs the anchor) by driving losing
-        # matches into the step limit, censoring those losses from the comparison.
-        if truncated:
-            truncations += 1
-            placement = float(min(_EVAL_PLACEMENT_VALUES))
-        else:
-            placement = episode_placement(episode, rewards, learning_seat,
-                                          _EVAL_PLACEMENT_VALUES,
-                                          reset_rewards=reset_rewards)
-        seat_placements.append(placement)
-        net_vec = episode_reward_vector(episode, rewards, num_seats=4, reset_rewards=reset_rewards)
-        tail = eval_episode_tail(net_vec, learning_seat,
-                                 float(chongci_starting_score) if normalized_match_mode == "chongci" else 0.0,
-                                 truncated)
-        seat_fourth.append(tail["fourth_share"])
-        seat_utility.append(tail["utility"])
-        seat_large_loss.append(1.0 if reward <= resolved_large_loss_threshold else 0.0)
-        occupancy_sum += tail["occupancy"]
-        if not tail["parity_ok"]:
-            rank_parity_mismatches += 1
-        if reward > 0:
-            wins += 1
-        if reward <= resolved_large_loss_threshold:
-            large_losses += 1
-        action_counts.update(action_family(t.action_id) for t in episode)
-        if outcome is None and normalized_match_mode == "chongci":
-            outcome_counts["match_truncated" if truncated else "match_end"] += 1
-        else:
-            update_outcome_counts(outcome_counts, outcome, learning_seat)
-        policy_summary = summarize_policy_choices(choice_infos)
-        policy_summary.update(
-            {
-                "seed": int(seed),
-                "seat": int(learning_seat),
-                "reward": reward,
-                "large_loss": reward <= resolved_large_loss_threshold,
-                "truncated": bool(truncated),
-            }
-        )
-        policy_episode_summaries.append(policy_summary)
-        episode_summaries.append(
-            {
-                "seed": int(seed),
-                "seat": int(learning_seat),
-                "reward": reward,
-                "large_loss": reward <= resolved_large_loss_threshold,
-                "action_family_counts": dict(sorted(Counter(action_family(t.action_id) for t in episode).items())),
-                "decision_count": len(episode),
-                "truncated": bool(truncated),
-            }
-        )
-        hand_outcomes = _episode_round_outcomes(episode, outcome)
-        per_match_hand_records.append(
-            [hand_record(ro, learning_seat) for ro in hand_outcomes]
-        )
-        if not truncated and not hand_outcomes:
-            # A completed match that delivered no outcome at all: count the
-            # terminal boundary as unknown rather than silently shrinking
-            # the denominator. (Truncations are already tallied separately.)
-            unknown_hands += 1
+    acc = _SeatEvalAccumulator(learning_seat, normalized_match_mode,
+                               resolved_large_loss_threshold, chongci_starting_score,
+                               chongci_bust_threshold, chongci_max_hands)
+    record_episode = acc.record_episode
 
     try:
         for i in range(episodes):
             seed = seeds[i] if i < len(seeds) else seeds[-1] + i
             episode: list[Transition] = []
             episode_choice_infos: list[dict[str, Any]] = []
+            learner_action_ids: list[int] = []
             observation = env.reset(seed=seed)
             reset_result = env.last_reset_result
             episode_reset_rewards = (
@@ -859,20 +1015,20 @@ def evaluate_policy_online(
                 continue
 
             while True:
-                choice = policy.choose(observation)
-                choice_info = choice.info or {}
-                source = choice_info.get("source")
-                if source is not None:
-                    choice_source_counts[str(source)] += 1
-                q_margin = choice_info.get("q_margin")
-                if q_margin is not None:
-                    q_margins.append(float(q_margin))
-                episode_choice_infos.append(choice_info)
-                step_result = env.step(choice.action_id)
+                if opponent_policy is not None and int(observation.seat) != learning_seat:
+                    action_id = opponent_policy.choose(observation).action_id
+                else:
+                    choice = policy.choose(observation)
+                    choice_info = choice.info or {}
+                    acc.note_choice(choice_info)
+                    episode_choice_infos.append(choice_info)
+                    action_id = choice.action_id
+                    learner_action_ids.append(action_id)
+                step_result = env.step(action_id)
                 episode.append(
                     Transition(
                         observation=observation,
-                        action_id=choice.action_id,
+                        action_id=action_id,
                         rewards=step_result.rewards,
                         next_observation=step_result.observation,
                         terminated=step_result.terminated,
@@ -891,6 +1047,7 @@ def evaluate_policy_online(
                         step_result.info.get("round_outcome"),
                         truncated=step_result.truncated,
                         reset_rewards=episode_reset_rewards,
+                        learner_action_ids=learner_action_ids,
                     )
                     break
                 if not observation.legal_actions:
@@ -898,77 +1055,7 @@ def evaluate_policy_online(
     finally:
         env.close()
 
-    completed = len(seat_rewards)
-    rewards = reward_summary(seat_rewards)
-    placement_summary = reward_summary(seat_placements)
-    positive_reward_count = int(rewards["positive_count"])
-    zero_reward_count = int(rewards["zero_count"])
-    negative_reward_count = int(rewards["negative_count"])
-    return {
-        "match_mode": normalized_match_mode,
-        "chongci_config": _chongci_report_config(
-            normalized_match_mode,
-            chongci_starting_score,
-            chongci_bust_threshold,
-            chongci_max_hands,
-        ),
-        "seat": learning_seat,
-        "avg_reward": round(float(rewards["mean"]), 2),
-        "mean_reward": rewards["mean"],
-        "mean_reward_sem": rewards["sem"],
-        "mean_reward_ci95": rewards["ci95"],
-        "reward_sum": rewards["sum"],
-        "reward_summary": rewards,
-        "win_count": wins,
-        "win_rate": wins / completed if completed else 0.0,
-        "win_metric_note": (
-            "Backward-compatible reward-positive count; for chongci this is final match net-positive rate, "
-            "not single-hand win rate."
-            if normalized_match_mode == "chongci"
-            else "Reward-positive single-round result."
-        ),
-        "positive_reward_count": positive_reward_count,
-        "positive_reward_rate": rewards["positive_rate"],
-        "zero_reward_count": zero_reward_count,
-        "zero_reward_rate": rewards["zero_rate"],
-        "negative_reward_count": negative_reward_count,
-        "negative_reward_rate": rewards["negative_rate"],
-        "large_loss_count": large_losses,
-        "large_loss_rate": large_losses / completed if completed else 0.0,
-        "large_loss_threshold": resolved_large_loss_threshold,
-        "episodes": completed,
-        "per_episode_rewards": seat_rewards,
-        "per_episode_placements": seat_placements,
-        "mean_placement": placement_summary["mean"],
-        "mean_placement_ci95": placement_summary["ci95"],
-        # Placement now scores every completed episode (truncations as worst), so the
-        # sample equals `episodes`; surfaced explicitly alongside the truncation rate
-        # so any step-limit stalling is visible rather than silently censored.
-        "placement_count": len(seat_placements),
-        "per_episode_fourth_share": seat_fourth,
-        "per_episode_large_loss": seat_large_loss,
-        "per_episode_training_utility": seat_utility,
-        "placement_rank_shares": (occupancy_sum / completed).tolist() if completed else [0.0] * 4,
-        "fourth_place_rate": float(np.mean(seat_fourth)) if seat_fourth else 0.0,
-        "training_utility_mean": float(np.mean(seat_utility)) if seat_utility else 0.0,
-        "rank_parity_mismatches": int(rank_parity_mismatches),
-        "truncation_count": truncations,
-        "truncation_rate": truncations / completed if completed else 0.0,
-        "action_family_counts": dict(sorted(action_counts.items())),
-        "action_family_rates": action_family_rates(action_counts),
-        "round_outcome_counts": dict(sorted(outcome_counts.items())),
-        "round_outcome_rates": outcome_rates(outcome_counts),
-        "hand_stats": summarize_hand_stats(per_match_hand_records, unknown_hands),
-        "per_match_hand_records": per_match_hand_records,
-        "policy_choice_counts": dict(sorted(choice_source_counts.items())),
-        "policy_choice_rates": action_family_rates(choice_source_counts),
-        "policy_q_margins": q_margins,
-        "policy_q_margin_summary": reward_summary(q_margins),
-        "policy_episode_summaries": policy_episode_summaries,
-        "policy_episode_outcome_summary": summarize_policy_episode_outcomes(policy_episode_summaries),
-        "episode_summaries": episode_summaries,
-        "large_loss_episodes": summarize_large_loss_episodes(episode_summaries, resolved_large_loss_threshold),
-    }
+    return acc.report()
 
 
 def evaluate_online(
@@ -1054,8 +1141,18 @@ def evaluate_duplicate_seats_policy(
     max_steps_per_episode: Optional[int] = None,
     oracle_observation: bool = False,
     event_history_window: int = 0,
+    opponent_policy: Optional[Any] = None,
+    opponents: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Evaluate a policy factory with the learning agent rotated through seats."""
+    """Evaluate a policy factory with the learning agent rotated through seats.
+
+    ``opponent_policy`` replaces the heuristic bots in the three other seats
+    (see ``evaluate_policy_online``); ``opponents`` is its identity record,
+    required with it and persisted as the report's ``opponents`` field so
+    fh-mj-compare refuses to pair reports from different tables.
+    """
+    if (opponent_policy is None) != (opponents is None):
+        raise ValueError("opponent_policy and opponents must be given together")
     normalized_match_mode = _normalize_match_mode(match_mode)
     # Snapshot the bridge library BEFORE the eval loop: the digest and every
     # bridge dlopen refer to the same immutable copy (see
@@ -1097,6 +1194,7 @@ def evaluate_duplicate_seats_policy(
                 max_steps_per_episode=max_steps_per_episode,
                 oracle_observation=oracle_observation,
                 event_history_window=event_history_window,
+                opponent_policy=opponent_policy,
             )
             seat_reports.append(report)
             all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
@@ -1135,7 +1233,11 @@ def evaluate_duplicate_seats_policy(
     agg_hand_stats = summarize_hand_stats(
         [m for r in seat_reports for m in r.get("per_match_hand_records", [])],
         sum(int(r.get("hand_stats", {}).get("unknown_hands", 0)) for r in seat_reports))
+    # Present only for a strong table, so heuristic-table reports stay
+    # byte-identical to their pre-opponent form.
+    opponents_field = {"opponents": opponents} if opponents is not None else {}
     return {
+        **opponents_field,
         "match_mode": normalized_match_mode,
         "chongci_config": _chongci_report_config(
             normalized_match_mode,
@@ -1233,15 +1335,6 @@ def evaluate_duplicate_seats(
     )
     seat_list = list(seats)
     seat_reports = []
-    all_rewards: list[float] = []
-    all_placements: list[float] = []
-    action_counts: Counter[str] = Counter()
-    outcome_counts: Counter[str] = Counter()
-    wins = 0
-    large_losses = 0
-    completed = 0
-    truncations = 0
-    episode_summaries: list[dict[str, Any]] = []
 
     try:
         for seat in seat_list:
@@ -1263,19 +1356,57 @@ def evaluate_duplicate_seats(
                 event_history_window=event_history_window,
             )
             seat_reports.append(report)
-            all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
-            all_placements.extend(float(p) for p in report.get("per_episode_placements", []))
-            action_counts.update(report["action_family_counts"])
-            outcome_counts.update(report.get("round_outcome_counts", {}))
-            episode_summaries.extend(report.get("episode_summaries", []))
-            wins += int(report["win_count"])
-            large_losses += int(report["large_loss_count"])
-            completed += int(report["episodes"])
-            truncations += int(report.get("truncation_count", 0))
 
     finally:
         if _bridge_snapshot is not None:
             _bridge_snapshot.cleanup()
+    return aggregate_duplicate_seat_reports(
+        seat_reports, seeds=seeds, seat_list=seat_list, normalized_match_mode=normalized_match_mode,
+        chongci_starting_score=chongci_starting_score, chongci_bust_threshold=chongci_bust_threshold,
+        chongci_max_hands=chongci_max_hands, max_steps_per_episode=max_steps_per_episode,
+        oracle_observation=oracle_observation, event_history_window=event_history_window,
+        bridge_lib_sha256=bridge_lib_sha256)
+
+
+def aggregate_duplicate_seat_reports(
+    seat_reports: Sequence[Dict[str, Any]],
+    *,
+    seeds: Sequence[int],
+    seat_list: Sequence[int],
+    normalized_match_mode: str,
+    chongci_starting_score: int,
+    chongci_bust_threshold: int,
+    chongci_max_hands: int,
+    max_steps_per_episode: Optional[int],
+    oracle_observation: bool,
+    event_history_window: int,
+    bridge_lib_sha256: Optional[str],
+) -> Dict[str, Any]:
+    """The duplicate-seat report from per-seat reports (one per rotation, same seeds).
+
+    Shared by `evaluate_duplicate_seats` and the batched pool evaluator, so both
+    emit the same report shape and `fh-mj-compare` reads either.
+    """
+    seat_list = list(seat_list)
+    all_rewards: list[float] = []
+    all_placements: list[float] = []
+    action_counts: Counter[str] = Counter()
+    outcome_counts: Counter[str] = Counter()
+    wins = 0
+    large_losses = 0
+    completed = 0
+    truncations = 0
+    episode_summaries: list[dict[str, Any]] = []
+    for report in seat_reports:
+        all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
+        all_placements.extend(float(p) for p in report.get("per_episode_placements", []))
+        action_counts.update(report["action_family_counts"])
+        outcome_counts.update(report.get("round_outcome_counts", {}))
+        episode_summaries.extend(report.get("episode_summaries", []))
+        wins += int(report["win_count"])
+        large_losses += int(report["large_loss_count"])
+        completed += int(report["episodes"])
+        truncations += int(report.get("truncation_count", 0))
     rewards = reward_summary(all_rewards)
     placements = reward_summary(all_placements)
     seat_summary = {

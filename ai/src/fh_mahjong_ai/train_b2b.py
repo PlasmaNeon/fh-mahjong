@@ -7,6 +7,8 @@ lines of this. The crash-resume machinery this loop drives lives in
 target then covers both this module's calls and train_state's internal ones."""
 from __future__ import annotations
 
+import hashlib
+import io
 import logging
 import multiprocessing as mp
 import os
@@ -15,12 +17,13 @@ import random
 import shutil
 import traceback
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
 import torch
+from torch import nn
 
 from . import memprobe
 from . import train_state
@@ -29,6 +32,7 @@ from .config import EnvConfig, ModelConfig
 from .env import MahjongEnv
 from .model import (
     PolicyValueNet,
+    infer_model_config,
     _derive_growth_blocks,
     _reconstruct_env_config,
     _shape_inferred_fields,
@@ -37,7 +41,7 @@ from .parallel_rollouts import _split_counts
 from .placement_bonus import exact_final_scores, placement_utilities, rank_occupancy
 from .ppo import (
     RolloutBatch, PPOConfig, compute_gae, concat_rollout_batches, ppo_update,
-    masked_policy_distribution, _seat_step_reward,
+    masked_policy_distribution, masked_logprob,
     cpu_state_snapshot, _write_history_atomic,
 )
 from .storage import load_compatible_checkpoint, model_config_metadata, save_checkpoint
@@ -107,6 +111,296 @@ def build_b2b_model(env_config: EnvConfig, model_config: ModelConfig,
             model.value_head[0].bias.copy_(payload["model"]["value_head.0.bias"].to(vw.device))
     model.eval()
     return model
+
+
+SCRATCH_BC_PREFIXES = ("plane_stem.", "plane_blocks.", "plane_head.",
+                       "scalar_encoder.", "trunk.", "policy_head.")
+
+
+def build_scratch_model(env_config: EnvConfig, model_config: ModelConfig, device: str = "cpu",
+                        bc_checkpoint: Optional[Path] = None) -> PolicyValueNet:
+    """mortal-scale-scratch: a freshly initialised B2b net (no anchor, no
+    surgery). With `bc_checkpoint`, the BC-stage weights for exactly
+    `SCRATCH_BC_PREFIXES` are copied by name+shape; every other module (event
+    encoder, privileged critic, value/aux/risk/q heads) keeps its random
+    init. Any BC key under those prefixes that is absent from the model, or any
+    model key under those prefixes absent from the BC checkpoint, or any shape
+    mismatch, is a hard error -- a silent partial load is this lane's known
+    failure mode. `env_config` must be the 39ch config (see `_b2b_model_env_config`).
+
+    step-0 policy == BC policy: the event columns are zeroed so the untrained
+    GRU contributes nothing until PPO moves them. BC trains with `events=None`,
+    which makes `encode` feed the trunk a ZERO event vector, so the trailing
+    `event_encoder.output_dim` columns of `trunk.0.weight` come out of the BC
+    stage exactly as randomly initialised -- never once touched by a gradient.
+    Copying them verbatim on top of this net's OWN brand-new event encoder
+    (whose outputs are not zero) would inject pure noise into step-0 logits and
+    silently make the run start somewhere other than the BC policy. Zeroing
+    them is the same trick `build_b2b_model` uses for its 39ch-champion warm
+    start, sized off the model's own encoder rather than a literal.
+
+    `model_config.growth_blocks > 0` is rejected outright: ReZero growth
+    tensors live under `growth.`, outside `SCRATCH_BC_PREFIXES`, so a BC load
+    would leave them silently random -- exactly the partial load the strict
+    prefix check above exists to prevent. `train_b2b`/the CLI reject
+    `--scratch` with the growth surgery upstream of this too.
+
+    The returned model carries `init_from_bc_sha256`: the sha256 of the BC
+    checkpoint's bytes as actually loaded (None without `bc_checkpoint`).
+    `train_b2b` records that digest in `metadata["init"]` rather than hashing
+    the path a second time."""
+    if model_config.growth_blocks > 0:
+        raise ValueError(
+            f"build_scratch_model: growth_blocks ({model_config.growth_blocks}) must be 0 -- "
+            "the scratch path has no anchor to grow, and `growth.` tensors fall outside "
+            "SCRATCH_BC_PREFIXES, so an --init-from-bc load would leave them silently random"
+        )
+    model = PolicyValueNet(env_config, model_config).to(device)
+    # M4: `train_b2b` reads this instead of re-hashing the file itself, so the
+    # provenance digest and the loaded weights are guaranteed to come from the
+    # same bytes. None when this net is pure random init.
+    model.init_from_bc_sha256 = None
+    if bc_checkpoint is None:
+        model.eval()
+        return model
+    bc_path = Path(bc_checkpoint)
+    # Checked before torch.load so a mistyped path is a clear, actionable error
+    # naming the flag, not a bare FileNotFoundError from deep inside torch.
+    if not bc_path.is_file():
+        raise FileNotFoundError(
+            f"--init-from-bc: BC checkpoint {bc_path} does not exist (or is not a regular "
+            "file) -- pass the fh-mj-train-bc checkpoint this run should start its plane "
+            "trunk / scalar encoder / trunk / policy head from"
+        )
+    # M4: read the file exactly ONCE. `train_b2b` needs both the weights and a
+    # sha256 of the bytes those weights came from; reopening the path for the
+    # hash would let an atomic replacement land in between, so the recorded
+    # digest would name bytes this run never loaded (the same reason
+    # `storage.load_checkpoint_from_bytes` exists). The digest rides back on
+    # the returned model as `init_from_bc_sha256`.
+    data = bc_path.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    payload = torch.load(io.BytesIO(data), map_location="cpu")
+    bc_state = payload["model"]
+    target = model.state_dict()
+    wanted_model = {k for k in target if k.startswith(SCRATCH_BC_PREFIXES)}
+    wanted_bc = {k for k in bc_state if k.startswith(SCRATCH_BC_PREFIXES)}
+    missing = sorted(wanted_model - wanted_bc)
+    extra = sorted(wanted_bc - wanted_model)
+    mismatched = sorted(k for k in wanted_model & wanted_bc
+                        if tuple(bc_state[k].shape) != tuple(target[k].shape))
+    if missing or extra or mismatched:
+        raise RuntimeError(
+            "--init-from-bc: BC checkpoint does not match the scratch model on the "
+            f"loaded prefixes (missing={missing[:6]}, extra={extra[:6]}, "
+            f"shape_mismatch={mismatched[:6]}) -- the BC stage must be trained with "
+            "the model flags this run uses. fh-mj-train-bc's --model-event-window / "
+            "--model-privileged-critic / --model-aux-heads correspond to "
+            "fh-mj-train-b2b's --event-window / --privileged-critic / --aux-heads "
+            "(fh-mj-train-b2b IGNORES the --model-* forms of those three); every "
+            "other shared --model-* flag keeps the same name on both commands"
+        )
+    with torch.no_grad():
+        for key in wanted_model:
+            target[key].copy_(bc_state[key].to(target[key].device))
+        if model.wants_events:
+            # See the step-0 parity paragraph above. `event_encoder` exists
+            # exactly when `wants_events`, and `encode` appends its output
+            # LAST, so the event columns are the trailing `output_dim` of
+            # trunk.0's input -- sized off the encoder itself so an
+            # event_output_dim projection (the gru-width lap's shape) is
+            # handled without a second source of truth.
+            event_dim = model.event_encoder.output_dim
+            model.trunk[0].weight[:, -event_dim:].zero_()
+    model.init_from_bc_sha256 = digest
+    model.eval()
+    return model
+
+
+def verify_bc_transfer(model: PolicyValueNet, bc_checkpoint: Path, env_config: EnvConfig,
+                       probe_seed: int = 20260825, probe_batch: int = 64) -> dict:
+    """Amendment 1 §4: prove the scratch model IS the BC policy at step zero.
+
+    Rebuilds the BC net from the checkpoint, feeds both nets an identical
+    seeded synthetic probe (BC with events=None, scratch with random events),
+    and requires bit-equal masked logits, probabilities and greedy actions,
+    plus byte-identical tensors for every loaded key. Fail closed: any
+    difference raises, so a broken transfer aborts the launch before a single
+    rollout is collected rather than quietly training something that is not
+    the BC policy. The returned record rides into `metadata["init"]` as the
+    per-run evidence that the transfer held.
+
+    Bit-equality (not a tolerance) is the contract: BC runs with `events=None`,
+    which feeds its trunk an exactly-zero event vector, and this net's trunk
+    has exactly-zero event COLUMNS -- so on both sides the event term
+    contributes exact 0.0 into an otherwise identical dot product over
+    identical weights and identical inputs. Any nonzero diff is a real defect
+    (a mis-copied tensor, an unzeroed column), never float noise.
+
+    The claim is scoped to the POLICY path: logits, probabilities and greedy
+    actions. Values and the auxiliary heads are deliberately not compared --
+    the privileged critic, the value/aux/risk/q heads and the event encoder
+    have no BC counterpart at all (they are the `unloaded_keys`), so there is
+    nothing there for step 0 to be equal to.
+
+    The BC reference net is moved onto the model's own device before the probe:
+    comparing a CPU forward against a CUDA forward would differ in the last
+    ulp purely from kernel/reduction differences and would abort every GPU
+    launch. Same device, same shapes, same kernels => the same reduction order
+    on both sides, which is what makes exact equality the right assertion.
+
+    Single-read discipline (as in `build_scratch_model`, M4): the checkpoint
+    bytes are read ONCE here, hashed, and required to match the digest
+    `build_scratch_model` recorded on the model (`init_from_bc_sha256`). An
+    atomic replacement of the path between the two reads would otherwise have
+    this gate prove parity against bytes the model never loaded -- a passing
+    gate for a transfer that never happened. A mismatch is a gate failure."""
+    data = Path(bc_checkpoint).read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    expected_digest = getattr(model, "init_from_bc_sha256", None)
+    if digest != expected_digest:
+        raise RuntimeError(
+            "--init-from-bc transfer gate FAILED: BC checkpoint digest mismatch -- "
+            f"{bc_checkpoint} now hashes to sha256 {digest}, but this model was built "
+            f"from sha256 {expected_digest}. The file changed between "
+            "`build_scratch_model`'s read and this gate (or the model was not built "
+            "from it at all), so the probe below would prove parity against bytes this "
+            "run never loaded"
+        )
+    payload = torch.load(io.BytesIO(data), map_location="cpu")
+    bc_config = infer_model_config(payload["model"], payload.get("metadata"))
+    bc_model = PolicyValueNet(env_config, bc_config)
+    bc_model.load_state_dict(payload["model"], strict=True)
+    device = next(model.parameters()).device
+    bc_model = bc_model.to(device)
+    bc_model.eval()
+    model.eval()
+    sd = model.state_dict()
+    loaded = sorted(k for k in sd if k.startswith(SCRATCH_BC_PREFIXES))
+    unloaded = sorted(k for k in sd if not k.startswith(SCRATCH_BC_PREFIXES))
+    bc_sd = bc_model.state_dict()
+    # `trunk.0.weight` is the one loaded key that is deliberately NOT a verbatim
+    # copy: `build_scratch_model` zeroes its trailing event columns (BC never
+    # trained them, and this net's event encoder is brand new). Byte-equality is
+    # therefore asserted on the leading plane+scalar columns, and the trailing
+    # columns are required to be exactly zero -- the two halves of the same
+    # step-0 parity claim, both of which the probe below then exercises.
+    event_dim = model.event_encoder.output_dim if model.wants_events else 0
+    mismatched: list[str] = []
+    for key in loaded:
+        got_t, ref_t = sd[key].cpu(), bc_sd[key].cpu()
+        if event_dim and key == "trunk.0.weight":
+            if not torch.equal(got_t[:, :-event_dim], ref_t[:, :-event_dim]):
+                mismatched.append(key)
+            if not torch.equal(got_t[:, -event_dim:], torch.zeros_like(got_t[:, -event_dim:])):
+                mismatched.append("trunk.0.weight[event columns not zero]")
+            continue
+        if not torch.equal(got_t, ref_t):
+            mismatched.append(key)
+    # The probe is NOT redundant with the tensor check above. That check proves
+    # the loaded tensors are BC's; this proves nothing ELSE reaches the policy
+    # output. A future module added to `encode`/`policy_head` -- another
+    # embedding, a second fusion input, an unloaded normalisation -- would pass
+    # the tensor check untouched (it is not under SCRATCH_BC_PREFIXES) while
+    # silently moving step-0 logits away from BC. Only a forward pass catches
+    # that class of change.
+    gen = torch.Generator().manual_seed(probe_seed)
+    channels, height, width = env_config.plane_shape
+    planes = torch.rand((probe_batch, channels, height, width), generator=gen)
+    scalars = torch.rand((probe_batch, env_config.scalar_features), generator=gen)
+    mask = (torch.rand((probe_batch, env_config.action_space_size), generator=gen) > 0.3).to(torch.int8)
+    mask[:, 0] = 1  # at least one legal action per row
+    planes, scalars, mask = planes.to(device), scalars.to(device), mask.to(device)
+    with torch.no_grad():
+        ref, _ = bc_model(planes, scalars, mask)
+        if model.wants_events:
+            window = model.model_config.event_window
+            events = torch.randint(0, 0x10000, (probe_batch, window), generator=gen)
+            lengths = torch.full((probe_batch,), window, dtype=torch.int64)
+            got, _ = model(planes, scalars, mask, events=events.to(device),
+                           event_lengths=lengths.to(device))
+        else:
+            got, _ = model(planes, scalars, mask)
+    ref, got = ref.cpu(), got.cpu()
+    # Illegal actions are masked to `finfo.min` on BOTH sides, so a raw diff
+    # there is meaningless (it subtracts two identical sentinels); the claim
+    # under test is about the LEGAL action distribution.
+    legal = mask.cpu().bool()
+    logit_diff = float((ref - got).abs()[legal].max().item())
+    prob_diff = float((torch.softmax(ref, 1) - torch.softmax(got, 1)).abs().max().item())
+    greedy = float((ref.argmax(1) == got.argmax(1)).float().mean().item())
+    record = {"probe_seed": probe_seed, "probe_batch": probe_batch,
+              "bc_checkpoint_sha256": digest, "max_abs_logit_diff": logit_diff,
+              "max_abs_prob_diff": prob_diff, "greedy_match_rate": greedy,
+              "loaded_keys": loaded, "unloaded_keys": unloaded, "loaded_tensors_identical": not mismatched}
+    # All four quantities are GATED, not merely recorded: the probability diff
+    # covers the full row (including the masked sentinels), so it also catches a
+    # divergence confined to actions the probe happened to mark illegal, which
+    # `logit_diff` -- taken under `legal` only -- cannot see.
+    if mismatched or logit_diff != 0.0 or prob_diff != 0.0 or greedy != 1.0:
+        raise RuntimeError(f"--init-from-bc transfer gate FAILED: tensors_mismatched={mismatched[:6]}, "
+                           f"max_abs_logit_diff={logit_diff}, max_abs_prob_diff={prob_diff}, "
+                           f"greedy_match_rate={greedy}")
+    del bc_model, bc_sd, payload, data
+    return record
+
+
+def split_bc_parameter_groups(model: nn.Module) -> tuple[list[nn.Parameter], list[nn.Parameter]]:
+    """Partition parameters by name into (loaded-from-BC, heads) using
+    SCRATCH_BC_PREFIXES. Pure function of parameter names, so a resumed run
+    rebuilds identical groups and optimizer.load_state_dict matches."""
+    bc, heads = [], []
+    for name, param in model.named_parameters():
+        (bc if name.startswith(SCRATCH_BC_PREFIXES) else heads).append(param)
+    return bc, heads
+
+
+def trunk_autocast_dtype(config: PPOConfig) -> Optional[torch.dtype]:
+    """`PolicyValueNet.trunk_autocast` for `config.trunk_dtype`. A reduced trunk
+    needs the batched collector on CUDA: spawn workers run the net on CPU in
+    float32, so their `old_logprobs` would come from a different precision than
+    the update's."""
+    if config.trunk_dtype == "float32":
+        return None
+    if config.trunk_dtype != "bfloat16":
+        raise ValueError(f"unknown PPOConfig.trunk_dtype {config.trunk_dtype!r} "
+                         "(expected 'float32' or 'bfloat16')")
+    if config.collector != "batched" or torch.device(config.device).type != "cuda":
+        raise ValueError("trunk_dtype='bfloat16' requires collector='batched' on a CUDA device "
+                         f"(got collector={config.collector!r}, device={config.device!r})")
+    return torch.bfloat16
+
+
+def build_optimizer(model: nn.Module, config: PPOConfig) -> torch.optim.AdamW:
+    if config.head_lr is None:
+        return torch.optim.AdamW(model.parameters(), lr=config.lr)
+    bc, heads = split_bc_parameter_groups(model)
+    return torch.optim.AdamW([{"params": bc, "lr": config.lr, "name": "bc"},
+                              {"params": heads, "lr": config.head_lr, "name": "heads"}], lr=config.lr)
+
+
+def apply_lr_schedule(optimizer: torch.optim.AdamW, config: PPOConfig, iteration: int) -> dict[str, float]:
+    """Set each group's lr for `iteration` (1-based). Idempotent, so calling it
+    every iteration -- including the first after a resume -- is correct.
+
+    Invariant: the groups are looked up by the `name` `build_optimizer` stamped
+    on them, and whether to schedule at all is decided by the optimizer's own
+    shape rather than by `config.head_lr`. Keying off the config would let a
+    config/optimizer disagreement (a two-group optimizer under a head_lr-less
+    config) return early WITHOUT touching the optimizer, leaving the heads
+    group running at a head lr while the returned telemetry reported `lr`.
+    The returned dict always describes the lrs actually in force."""
+    groups = {group.get("name"): group for group in optimizer.param_groups}
+    if "bc" not in groups or "heads" not in groups:
+        # A single-group optimizer: every parameter is already at `config.lr`
+        # from construction, and there is no second group to schedule.
+        return {"lr_bc": config.lr, "lr_heads": config.lr}
+    heads_lr = (config.head_lr
+                if config.head_lr is not None and iteration <= config.head_lr_iters
+                else config.lr)
+    groups["bc"]["lr"] = config.lr
+    groups["heads"]["lr"] = heads_lr
+    return {"lr_bc": config.lr, "lr_heads": heads_lr}
 
 
 def _assert_b2b_anchor_matches_live_env(fn_name: str, anchor_env_config: EnvConfig,
@@ -487,8 +781,185 @@ def _assemble_hindsight_labels(rows: list[tuple[int, int]], hand_outcomes: dict[
     return dealin, rank
 
 
+@dataclass
+class _B2bMatchState:
+    """Per-match accumulator shared by the process collector
+    (`collect_b2b_rollouts`) and the batched collector (`batched_b2b.py`).
+
+    `seat_*` lists are indexed by seat (0-3) and hold one entry per decision
+    that seat made, in decision order. `seat_hand_ids[k][i]` is the hand
+    (0-based, incremented every time a step surfaces `round_outcome`) during
+    which that decision was made; `hand_outcomes` maps hand_id -> decoded
+    round-outcome dict. `match_net` is the per-seat match-level net reward
+    accumulated from EVERY step's rewards (reset rewards included), in the
+    bridge's units (score deltas / 1000). `truncated` is the env's truncation
+    flag at match end. `_finalize_b2b_match` consumes one of these."""
+    seat_planes: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_scalars: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_masks: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_actions: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_logprobs: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_values: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_rewards: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_events: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_lengths: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_hand_ids: list[list] = field(default_factory=lambda: [[], [], [], []])
+    hand_id: int = 0
+    hand_outcomes: dict[int, dict] = field(default_factory=dict)
+    match_net: np.ndarray = field(default_factory=lambda: np.zeros(4, dtype=np.float64))
+    truncated: bool = False
+
+    def credit_step_rewards(self, rewards) -> None:
+        """Add a step's (or the reset's) per-seat rewards to `match_net`
+        unconditionally, and to the last recorded transition of every seat
+        that has already acted (PPO telescoping credit)."""
+        sr = np.asarray(rewards, dtype=np.float64)
+        n = min(4, sr.shape[-1])
+        if not sr[:n].any():
+            # Most steps pay nothing. Adding +/-0.0 leaves every running sum
+            # bit-identical: they all start at +0.0 and a round-to-nearest
+            # sum is -0.0 only when both addends are.
+            return
+        self.match_net[:n] += sr[:n]
+        # Per seat, `_seat_step_reward(rewards, k)` (the float32 value, 0.0
+        # past the end), converted once for all four seats: this runs for
+        # every slot every round.
+        seat_rewards = sr[:n].astype(np.float32).tolist() + [0.0] * (4 - n)
+        for k in range(4):
+            if self.seat_rewards[k]:
+                self.seat_rewards[k][-1] += seat_rewards[k]
+
+    def record_outcome(self, outcome) -> bool:
+        """Close the current hand with `outcome` (a step's
+        `info["round_outcome"]`); no-op on a falsy outcome. Returns whether
+        an outcome was recorded."""
+        if not outcome:
+            return False
+        self.hand_outcomes[self.hand_id] = outcome
+        self.hand_id += 1
+        return True
+
+
+_B2B_ROW_KEYS = ("planes", "scalars", "masks", "actions", "logprobs", "values", "rewards",
+                 "dones", "events", "lengths", "dealin", "rank")
+
+
+def _finalize_b2b_match(ms: _B2bMatchState, config: PPOConfig, cfg: EnvConfig,
+                        seed: int) -> tuple[dict[str, list], dict]:
+    """Pure match-end tail shared by both B2b collectors.
+
+    `ms`: the finished match's `_B2bMatchState`. `config`: the PPOConfig
+    (placement bonus values/lambda, match_mode). `cfg`: the EnvConfig the
+    bridge actually simulated under (chongci starting score / bust threshold
+    are read from here so labels can never diverge from the played match).
+    `seed`: the match seed, for telemetry and error messages.
+
+    Returns `(rows, telemetry)`. `rows` maps each key in `_B2B_ROW_KEYS`
+    (planes, scalars, masks, actions, logprobs, values, rewards, dones,
+    events, lengths, dealin, rank) to a flat list in seat-contiguous emission
+    order (seats 0..3, seats with zero decisions skipped); `telemetry` is the
+    seed-keyed match-level dict. Applies the placement bonus to each seat's
+    last transition (mutates `ms.seat_rewards`). Every placement-bonus
+    fail-closed check (truncated match, zero-decision seat, nonzero bonus
+    sum) raises from here.
+
+    UNITS: the Go env emits chongci rewards as score deltas / 1000 in
+    float32. Labels are computed in EXACT integer points: the accumulated
+    float net is scaled back by 1000 and rounded (float32 drift over a match
+    is << 0.5 points), so exact-threshold busts and score ties cannot flip on
+    rounding order."""
+    chongci = config.match_mode == "chongci"
+    starting_score = float(cfg.chongci_starting_score) if chongci else 0.0
+    bust_threshold = float(cfg.chongci_bust_threshold) if chongci else float("-inf")
+    bonus_values = config.placement_bonus_values
+    bonus_on = bonus_values is not None
+    bonus_lambda = float(config.placement_bonus_lambda) if bonus_on else 0.0
+    is_truncated = bool(ms.truncated)
+    match_net = ms.match_net
+    seat_rewards = ms.seat_rewards
+    final_scores = {k: starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)}
+    int_scores = exact_final_scores(match_net, starting_score)
+    assert [starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)] == int_scores
+    if bonus_on:
+        if is_truncated:
+            raise RuntimeError(
+                f"placement bonus: match seed {seed} was truncated — no "
+                "terminal rank exists; fail closed (spec Amendment 1 item 4). Any "
+                "truncation under this objective is a protocol stop: raise "
+                "max_steps_per_episode and/or investigate a stalling policy before "
+                "retrying.")
+        empty = [k for k in range(4) if not seat_rewards[k]]
+        if empty:
+            raise RuntimeError(
+                f"placement bonus: match seed {seed} has zero-decision "
+                f"seat(s) {empty}; fail closed")
+    utilities = placement_utilities(int_scores, bonus_values) if bonus_on \
+        else placement_utilities(int_scores)
+    bonus = bonus_lambda * utilities if bonus_on else np.zeros(4)
+    if bonus_on:
+        if abs(float(bonus.sum())) > 1e-6:
+            raise RuntimeError(f"placement bonus: per-match bonus sum {bonus.sum()} != 0")
+        for k in range(4):
+            seat_rewards[k][-1] += float(bonus[k])
+    occ = rank_occupancy(int_scores)
+    telemetry = {
+        "seed": int(seed),
+        "truncated": bool(is_truncated),
+        "final_scores": [int(s) for s in int_scores],
+        "trajectory_returns": [float(sum(seat_rewards[k])) - float(bonus[k]) for k in range(4)],
+        "utilities": [float(u) for u in utilities],
+        "bonus": [float(b) for b in bonus],
+        "rank_occupancy": occ.tolist(),
+        "tied_seats_surplus": int(4 - len(set(int_scores))),
+        "busts": int(sum(1 for s in int_scores if s <= bust_threshold)),
+    }
+    label_rows: list[tuple[int, int]] = []
+    for k in range(4):
+        label_rows.extend((k, hid) for hid in ms.seat_hand_ids[k])
+    dealin_labels, rank_labels = _assemble_hindsight_labels(
+        label_rows, ms.hand_outcomes, final_scores, bust_threshold=bust_threshold,
+        truncated=is_truncated)
+    rows: dict[str, list] = {key: [] for key in _B2B_ROW_KEYS}
+    offset = 0
+    for k in range(4):
+        n = len(ms.seat_actions[k])
+        if n == 0:
+            continue
+        rows["planes"].extend(ms.seat_planes[k])
+        rows["scalars"].extend(ms.seat_scalars[k])
+        rows["masks"].extend(ms.seat_masks[k])
+        rows["actions"].extend(ms.seat_actions[k])
+        rows["logprobs"].extend(ms.seat_logprobs[k])
+        rows["values"].extend(ms.seat_values[k])
+        rows["rewards"].extend(seat_rewards[k])
+        rows["dones"].extend([0.0] * (n - 1) + [1.0])
+        rows["events"].extend(ms.seat_events[k])
+        rows["lengths"].extend(ms.seat_lengths[k])
+        rows["dealin"].extend(dealin_labels[offset : offset + n].tolist())
+        rows["rank"].extend(rank_labels[offset : offset + n].tolist())
+        offset += n
+    return rows, telemetry
+
+
+def _check_chongci_outcomes(chongci: bool, completed: int, outcomes_seen: int) -> None:
+    """A completed chongci match ALWAYS surfaces at least one round outcome
+    on the step path (internal/rl/env.go attaches boundary and terminal
+    outcomes). Zero outcomes across completed matches means the bridge
+    library predates that fix — deal-in supervision would silently degenerate
+    to all-negative labels for the whole run. Both collectors call this."""
+    if chongci and completed > 0 and outcomes_seen == 0:
+        raise RuntimeError(
+            "no round outcomes surfaced across "
+            f"{completed} completed chongci matches — the Go bridge library "
+            "predates chongci round-outcome delivery; rebuild it "
+            "(go build -buildmode=c-shared ./cmd/rlbridge)"
+        )
+
+
 def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
-                         config: PPOConfig, base_seed: int) -> RolloutBatch:
+                         config: PPOConfig, base_seed: int,
+                         action_selection: str = "sample",
+                         diagnostics: Optional[dict] = None) -> RolloutBatch:
     """Symmetric self-play PPO rollouts for Spec B2b: all four seats are the
     SAME `model`, each seat's transitions recorded seat-contiguously (mirrors
     `collect_selfplay_rollouts`). No feature-dropout (B2b's event/privileged
@@ -497,7 +968,17 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
     hindsight `dealin_labels`/`rank_labels` assembled by
     `_assemble_hindsight_labels` from the `round_outcome` entries seen in
     `StepResult.info` (a step whose info carries `round_outcome` closes the
-    CURRENT hand for all seats)."""
+    CURRENT hand for all seats). `action_selection`: `"sample"` (training)
+    draws from the temperature-scaled masked policy with the global torch
+    RNG seeded per match; `"greedy"` (parity tests only) takes the argmax of
+    the masked logits. Either way the logprob is `ppo.masked_logprob` of the
+    chosen action. `diagnostics` (parity tests / `fh-mj-collect-bench` only):
+    if the caller pre-creates `diagnostics["logits"]` as a list, every
+    decision's masked logits row is appended as `(match_seed, seat,
+    np.ndarray[A])` in decision order (gate G0.1b); output is unaffected."""
+    if action_selection not in ("sample", "greedy"):
+        raise ValueError(f"action_selection must be 'sample' or 'greedy', got {action_selection!r}")
+    logits_sink = diagnostics.get("logits") if diagnostics is not None else None
     device = config.device
     window = int(model.model_config.event_window)
     cfg = EnvConfig(
@@ -518,25 +999,12 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
     bridge = build_bridge(cfg)
     env = MahjongEnv(cfg, bridge=bridge)
     model.eval()
-    # Label parameters read from `cfg` — the SAME config the bridge simulates
-    # under — so hindsight ranks can never diverge from the played match.
-    # UNITS: the Go env emits chongci rewards as score deltas / 1000
-    # (internal/rl/env.go) in float32. Labels are computed in EXACT integer
-    # points: the accumulated float net is scaled back by 1000 and rounded
-    # (float32 drift over a match is << 0.5 points), so exact-threshold
-    # busts and score ties cannot flip on rounding order.
     chongci = config.match_mode == "chongci"
-    starting_score = float(cfg.chongci_starting_score) if chongci else 0.0
-    bust_threshold = float(cfg.chongci_bust_threshold) if chongci else float("-inf")
-    planes_l, scalars_l, mask_l, actions_l = [], [], [], []
-    logprobs_l, values_l, rewards_l, dones_l = [], [], [], []
-    events_l, lengths_l, dealin_l, rank_l = [], [], [], []
+    rows_l: dict[str, list] = {key: [] for key in _B2B_ROW_KEYS}
     truncated_matches = 0
     completed_matches = 0
     outcomes_seen = 0
-    bonus_values = config.placement_bonus_values
-    bonus_on = bonus_values is not None
-    bonus_lambda = float(config.placement_bonus_lambda) if bonus_on else 0.0
+    bonus_on = config.placement_bonus_values is not None
     match_telemetry: list[dict] = []
     try:
         for m in range(config.matches_per_iter):
@@ -549,27 +1017,14 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                         f"placement bonus: match seed {base_seed + m} ended at reset "
                         "(no four-seat terminal standing) — fail closed")
                 continue
-            # Match-level net per seat, accumulated UNCONDITIONALLY (incl.
+            # Match-level net per seat is accumulated UNCONDITIONALLY (incl.
             # reset-time autoplay rewards and payouts landing before a seat's
-            # first decision) — the transition-crediting buffers below only
-            # credit seats that have already acted, which is correct for PPO
+            # first decision) — the transition-crediting buffers only credit
+            # seats that have already acted, which is correct for PPO
             # telescoping but would corrupt final scores for rank labels.
-            match_net = np.zeros(4, dtype=np.float64)
+            ms = _B2bMatchState()
             if reset_result is not None:
-                rr = np.asarray(reset_result.rewards, dtype=np.float64)
-                match_net[: min(4, rr.shape[-1])] += rr[: min(4, rr.shape[-1])]
-            seat_planes:   list[list] = [[], [], [], []]
-            seat_scalars:  list[list] = [[], [], [], []]
-            seat_masks:    list[list] = [[], [], [], []]
-            seat_actions:  list[list] = [[], [], [], []]
-            seat_logprobs: list[list] = [[], [], [], []]
-            seat_values:   list[list] = [[], [], [], []]
-            seat_rewards:  list[list] = [[], [], [], []]
-            seat_events:   list[list] = [[], [], [], []]
-            seat_lengths:  list[list] = [[], [], [], []]
-            seat_hand_ids: list[list] = [[], [], [], []]
-            hand_id = 0
-            hand_outcomes: dict[int, dict] = {}
+                ms.credit_step_rewards(reset_result.rewards)
             step = None
             while True:
                 seat = int(obs.seat)
@@ -592,133 +1047,63 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
                 length_t = torch.tensor([ev_len], dtype=torch.int64, device=device)
                 with torch.no_grad():
                     logits, value = model(planes, scalars, amask, events=events_t, event_lengths=length_t)
-                    logits = logits / max(config.sample_temperature, 1e-6)
-                    dist = masked_policy_distribution(logits)
-                    action = int(dist.sample()[0].item())
-                    logprob = float(dist.log_prob(torch.tensor([action], device=device))[0])
+                    if action_selection == "greedy":
+                        action = int(torch.argmax(logits[0]).item())
+                    else:
+                        scaled = logits / max(config.sample_temperature, 1e-6)
+                        action = int(masked_policy_distribution(scaled).sample()[0].item())
+                    logprob = masked_logprob(logits[0], config.sample_temperature, action)
                     val = float(value[0].item())
-                seat_planes[seat].append(planes_np)
-                seat_scalars[seat].append(scalars_np)
-                seat_masks[seat].append(mask_np)
-                seat_actions[seat].append(action)
-                seat_logprobs[seat].append(logprob)
-                seat_values[seat].append(val)
-                seat_rewards[seat].append(0.0)
-                seat_events[seat].append(row_events)
-                seat_lengths[seat].append(ev_len)
-                seat_hand_ids[seat].append(hand_id)
+                if logits_sink is not None:
+                    logits_sink.append((int(base_seed + m), seat,
+                                        logits[0].detach().cpu().numpy().copy()))
+                ms.seat_planes[seat].append(planes_np)
+                ms.seat_scalars[seat].append(scalars_np)
+                ms.seat_masks[seat].append(mask_np)
+                ms.seat_actions[seat].append(action)
+                ms.seat_logprobs[seat].append(logprob)
+                ms.seat_values[seat].append(val)
+                ms.seat_rewards[seat].append(0.0)
+                ms.seat_events[seat].append(row_events)
+                ms.seat_lengths[seat].append(ev_len)
+                ms.seat_hand_ids[seat].append(ms.hand_id)
                 step = env.step(action)
-                sr = np.asarray(step.rewards, dtype=np.float64)
-                match_net[: min(4, sr.shape[-1])] += sr[: min(4, sr.shape[-1])]
-                for k in range(4):
-                    if seat_rewards[k]:
-                        seat_rewards[k][-1] += _seat_step_reward(step.rewards, k)
-                outcome = step.info.get("round_outcome")
-                if outcome:
+                ms.credit_step_rewards(step.rewards)
+                if ms.record_outcome(step.info.get("round_outcome")):
                     outcomes_seen += 1
-                if outcome:
-                    hand_outcomes[hand_id] = outcome
-                    hand_id += 1
                 if step.terminated or step.truncated:
                     break
                 obs = step.observation
-            is_truncated = bool(step.truncated) if step is not None else False
-            if not is_truncated:
-                completed_matches += 1
-            if is_truncated:
+            ms.truncated = bool(step.truncated) if step is not None else False
+            if ms.truncated:
                 truncated_matches += 1
-            final_scores = {k: starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)}
-            int_scores = exact_final_scores(match_net, starting_score)
-            assert [starting_score + round(float(match_net[k]) * 1000.0) for k in range(4)] == int_scores
-            if bonus_on:
-                if is_truncated:
-                    raise RuntimeError(
-                        f"placement bonus: match seed {base_seed + m} was truncated — no "
-                        "terminal rank exists; fail closed (spec Amendment 1 item 4). Any "
-                        "truncation under this objective is a protocol stop: raise "
-                        "max_steps_per_episode and/or investigate a stalling policy before "
-                        "retrying.")
-                empty = [k for k in range(4) if not seat_rewards[k]]
-                if empty:
-                    raise RuntimeError(
-                        f"placement bonus: match seed {base_seed + m} has zero-decision "
-                        f"seat(s) {empty}; fail closed")
-            utilities = placement_utilities(int_scores, bonus_values) if bonus_on \
-                else placement_utilities(int_scores)
-            bonus = bonus_lambda * utilities if bonus_on else np.zeros(4)
-            if bonus_on:
-                if abs(float(bonus.sum())) > 1e-6:
-                    raise RuntimeError(f"placement bonus: per-match bonus sum {bonus.sum()} != 0")
-                for k in range(4):
-                    seat_rewards[k][-1] += float(bonus[k])
-            occ = rank_occupancy(int_scores)
-            match_telemetry.append({
-                "seed": int(base_seed + m),
-                "truncated": bool(is_truncated),
-                "final_scores": [int(s) for s in int_scores],
-                "trajectory_returns": [float(sum(seat_rewards[k])) - float(bonus[k]) for k in range(4)],
-                "utilities": [float(u) for u in utilities],
-                "bonus": [float(b) for b in bonus],
-                "rank_occupancy": occ.tolist(),
-                "tied_seats_surplus": int(4 - len(set(int_scores))),
-                "busts": int(sum(1 for s in int_scores if s <= bust_threshold)),
-            })
-            rows: list[tuple[int, int]] = []
-            for k in range(4):
-                rows.extend((k, hid) for hid in seat_hand_ids[k])
-            dealin_labels, rank_labels = _assemble_hindsight_labels(
-                rows, hand_outcomes, final_scores, bust_threshold=bust_threshold,
-                truncated=is_truncated)
-            offset = 0
-            for k in range(4):
-                n = len(seat_actions[k])
-                if n == 0:
-                    continue
-                planes_l.extend(seat_planes[k])
-                scalars_l.extend(seat_scalars[k])
-                mask_l.extend(seat_masks[k])
-                actions_l.extend(seat_actions[k])
-                logprobs_l.extend(seat_logprobs[k])
-                values_l.extend(seat_values[k])
-                rewards_l.extend(seat_rewards[k])
-                dones_l.extend([0.0] * (n - 1) + [1.0])
-                events_l.extend(seat_events[k])
-                lengths_l.extend(seat_lengths[k])
-                dealin_l.extend(dealin_labels[offset : offset + n].tolist())
-                rank_l.extend(rank_labels[offset : offset + n].tolist())
-                offset += n
+            else:
+                completed_matches += 1
+            rows, telemetry = _finalize_b2b_match(ms, config, cfg, base_seed + m)
+            match_telemetry.append(telemetry)
+            for key in _B2B_ROW_KEYS:
+                rows_l[key].extend(rows[key])
     finally:
         close = getattr(bridge, "close", None)
         if callable(close):
             close()
-    if chongci and completed_matches > 0 and outcomes_seen == 0:
-        # A completed chongci match ALWAYS surfaces at least one round
-        # outcome on the step path (internal/rl/env.go attaches boundary and
-        # terminal outcomes). Zero outcomes across completed matches means
-        # the bridge library predates that fix — deal-in supervision would
-        # silently degenerate to all-negative labels for the whole run.
-        raise RuntimeError(
-            "no round outcomes surfaced across "
-            f"{completed_matches} completed chongci matches — the Go bridge library "
-            "predates chongci round-outcome delivery; rebuild it "
-            "(go build -buildmode=c-shared ./cmd/rlbridge)"
-        )
-    if not actions_l:
+    _check_chongci_outcomes(chongci, completed_matches, outcomes_seen)
+    if not rows_l["actions"]:
         raise RuntimeError("collect_b2b_rollouts produced no decisions")
     return RolloutBatch(
-        planes=np.stack(planes_l).astype(np.float32),
-        scalars=np.stack(scalars_l).astype(np.float32),
-        action_mask=np.stack(mask_l).astype(np.int8),
-        actions=np.asarray(actions_l, dtype=np.int64),
-        old_logprobs=np.asarray(logprobs_l, dtype=np.float32),
-        values=np.asarray(values_l, dtype=np.float32),
-        rewards=np.asarray(rewards_l, dtype=np.float32),
-        dones=np.asarray(dones_l, dtype=np.float32),
+        planes=np.stack(rows_l["planes"]).astype(np.float32),
+        scalars=np.stack(rows_l["scalars"]).astype(np.float32),
+        action_mask=np.stack(rows_l["masks"]).astype(np.int8),
+        actions=np.asarray(rows_l["actions"], dtype=np.int64),
+        old_logprobs=np.asarray(rows_l["logprobs"], dtype=np.float32),
+        values=np.asarray(rows_l["values"], dtype=np.float32),
+        rewards=np.asarray(rows_l["rewards"], dtype=np.float32),
+        dones=np.asarray(rows_l["dones"], dtype=np.float32),
         truncated_matches=truncated_matches,
-        events=np.stack(events_l).astype(np.uint32),
-        event_lengths=np.asarray(lengths_l, dtype=np.int32),
-        dealin_labels=np.asarray(dealin_l, dtype=np.float32),
-        rank_labels=np.asarray(rank_l, dtype=np.int64),
+        events=np.stack(rows_l["events"]).astype(np.uint32),
+        event_lengths=np.asarray(rows_l["lengths"], dtype=np.int32),
+        dealin_labels=np.asarray(rows_l["dealin"], dtype=np.float32),
+        rank_labels=np.asarray(rows_l["rank"], dtype=np.int64),
         match_telemetry=match_telemetry,
     )
 
@@ -898,7 +1283,9 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
              force_history_reset: bool = False,
              fresh_run_overwrite: bool = False,
              allow_bridge_mismatch: bool = False,
-             accept_legacy_unpinned_state: bool = False) -> list[dict]:
+             accept_legacy_unpinned_state: bool = False,
+             scratch: bool = False,
+             init_from_bc: Optional[Path] = None) -> list[dict]:
     """Spec B2b training: warm-start the event-GRU/privileged-critic/aux-head
     net from the 39ch champion, then run PPO with the aux losses folded in
     automatically by `ppo_update` (it reads `model.model_config.aux_heads` and
@@ -926,6 +1313,25 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
     by the grown model's own config (the anchor's saved architecture plus
     `growth_blocks` ReZero blocks) so every downstream checkpoint save below
     records the true architecture, including `growth_blocks`.
+
+    `scratch=True` (mortal-scale-scratch) routes model construction through
+    `build_scratch_model` instead: there is NO anchor at all, so
+    `champion_checkpoint` must be `None` and neither warm-start surgery may
+    be requested (both combinations raise below) — the net is built purely
+    from the caller's `model_config`, at random init, with no step-0 parity
+    to preserve. `init_from_bc`, when given, additionally copies the BC
+    stage's plane trunk / scalar encoder / trunk / policy head in by exact
+    name+shape (`SCRATCH_BC_PREFIXES`); it requires `scratch=True`. Every
+    `iter_*.pt` records which of the two construction paths produced this
+    run under `metadata["init"]` (`{"kind": "scratch"|"champion",
+    "bc_checkpoint_sha256": ..., "bc_checkpoint_path": ...}`) so a checkpoint's
+    provenance is readable without the launch command. `train_state.pt`
+    persists that same block, so a resume carries the original provenance
+    forward into every checkpoint it goes on to write; only a LEGACY state
+    predating that slot degrades to `{"kind": "resumed",
+    "bc_checkpoint_sha256": None, "bc_checkpoint_path": None}`. It is
+    deliberately not part of `config_echo` — a record of how the run started,
+    not a config the resume has to match.
 
     Resumable state (deep16-rezero capacity lap survives box restarts):
     every `train_state_every` iterations, and always at completion, writes
@@ -1076,6 +1482,46 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             "growth) and this function does not attempt to reconcile applying both to "
             "the same anchor in a single call"
         )
+    # mortal-scale-scratch: the construction paths are mutually exclusive and
+    # exactly one must be selectable. `resume_from_state` wins over all of
+    # them -- it never constructs from these flags at all (the model comes
+    # from the state file), so a resume is deliberately exempt from every
+    # check here rather than being made to carry a redundant --scratch.
+    # These run BEFORE checkpoint_dir is touched (mkdir/lock/artifact scan)
+    # so a mis-flagged launch cannot leave a directory or a lock behind.
+    if resume_from_state is None:
+        if scratch and champion_checkpoint is not None:
+            raise ValueError("scratch=True cannot be combined with a champion checkpoint")
+        if scratch and (growth_blocks > 0 or widen_event_hidden > 0):
+            raise ValueError("scratch=True cannot be combined with growth_blocks/widen_event_hidden surgery")
+        if not scratch and champion_checkpoint is None:
+            raise ValueError("champion_checkpoint is required unless scratch=True or resume_from_state is given")
+        if init_from_bc is not None and not scratch:
+            raise ValueError("init_from_bc requires scratch=True")
+        # Amendment 1 §6: the two lr groups are defined by which parameters the
+        # BC stage supplied (SCRATCH_BC_PREFIXES). Without a BC init there is
+        # no such split -- every parameter is random -- so a head_lr here would
+        # silently mean "train these arbitrary modules faster than those".
+        if config.head_lr is not None and init_from_bc is None:
+            raise ValueError(
+                "head_lr requires scratch=True with init_from_bc (groups are defined "
+                "relative to the BC-loaded prefixes)")
+        # Amendment 1 §6: each field is INERT without the other, and inertness is
+        # exactly what a mis-flagged launch cannot afford to discover after a
+        # full lap. head_lr with head_lr_iters=0 (the DEFAULT) schedules a warm
+        # phase of zero iterations -- every iteration is already past the
+        # switch -- so the run silently trains single-rate. head_lr_iters
+        # without head_lr never builds a second parameter group at all, so the
+        # number is silently ignored. Both raise instead.
+        if config.head_lr is not None and config.head_lr_iters < 1:
+            raise ValueError(
+                f"head_lr ({config.head_lr}) requires head_lr_iters >= 1 (got "
+                f"{config.head_lr_iters}) -- a warm phase of zero iterations means "
+                "head_lr is never applied and the run trains at a single rate")
+        if config.head_lr_iters > 0 and config.head_lr is None:
+            raise ValueError(
+                f"head_lr_iters ({config.head_lr_iters}) requires head_lr -- without it "
+                "there is only one parameter group and the iteration count is ignored")
     device = config.device
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1293,6 +1739,17 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     "raise --iterations or stop"
                 )
             run_id = state_payload.get("run_id")
+            # mortal-scale-scratch: a resume never re-runs construction, so it
+            # has no construction flags of its own to record -- it inherits
+            # the lineage's. `_save_train_state` persists the `init` block, so
+            # the checkpoints written after a resume keep saying "scratch"
+            # (with the same BC digest) rather than degrading to "resumed" and
+            # losing a long lap's provenance across a box restart. Only a
+            # LEGACY state, written before that slot existed, has nothing to
+            # read -- record "resumed" there rather than guessing at a kind.
+            init_meta = state_payload.get("init") or {
+                "kind": "resumed", "bc_checkpoint_sha256": None, "bc_checkpoint_path": None,
+                "transfer_gate": None}
             history_path = checkpoint_dir / "history.json"
             history = train_state._load_resume_history(history_path, run_id, checkpoint_dir,
                                            start_iteration,
@@ -1359,6 +1816,10 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             # and including early iterations of the new run still leaves the
             # old run fully recoverable from the backup directory via a manual
             # move.
+            # Amendment 1 §4: only the `--scratch --init-from-bc` construction
+            # below has a BC policy to be equal to; every other path leaves
+            # this None (there is nothing to prove, not a gate that passed).
+            transfer_gate = None
             if growth_blocks > 0:
                 model = grow_b2b_model(champion_checkpoint, growth_blocks, device, env_config=env_config)
                 model_config = model.model_config
@@ -1366,6 +1827,18 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 model = widen_event_gru(champion_checkpoint, widen_event_hidden,
                                         env_config=env_config, device=device)
                 model_config = model.model_config
+            elif scratch:
+                model = build_scratch_model(_b2b_model_env_config(env_config), model_config, device,
+                                            bc_checkpoint=init_from_bc)
+                # Amendment 1 §4: prove step-0 == BC BEFORE anything is
+                # collected, trained or moved. This raises on any deviation,
+                # and it runs here -- inside construction, upstream of the
+                # `--fresh-run-overwrite` backup move below -- so a failed
+                # transfer aborts with the prior run's artifacts still in
+                # place, exactly like the other constructor-side raises.
+                if init_from_bc is not None:
+                    transfer_gate = verify_bc_transfer(model, init_from_bc,
+                                                       _b2b_model_env_config(env_config))
             else:
                 model = build_b2b_model(_b2b_model_env_config(env_config), model_config, champion_checkpoint, device)
             # Adversarial round 14, high finding: pin the bridge identity for
@@ -1424,6 +1897,25 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
             start_iteration = 1
             history = []
             run_id = uuid.uuid4().hex
+            # mortal-scale-scratch: record which construction path built this
+            # run's weights, alongside the run_id that identifies the lineage.
+            # The digest comes from `build_scratch_model`, which hashed the
+            # exact bytes it loaded the weights from (M4) -- so every
+            # `iter_*.pt` this run writes names the BC checkpoint this model
+            # actually came from, even if the file at `init_from_bc` is later
+            # replaced mid-run. The path is kept alongside the digest because a
+            # bare hash cannot be resolved back to a file by hand.
+            init_meta = {
+                "kind": "scratch" if scratch else "champion",
+                "bc_checkpoint_sha256": getattr(model, "init_from_bc_sha256", None),
+                "bc_checkpoint_path": str(init_from_bc) if init_from_bc is not None else None,
+                # The step-0 transfer evidence (Amendment 1 §4): the probe's
+                # diffs plus the exact loaded/unloaded key sets, so a lap can
+                # be audited from any checkpoint it wrote. None on every path
+                # with no BC init. `_save_train_state` persists `init` whole,
+                # so a resume carries this forward unchanged.
+                "transfer_gate": transfer_gate,
+            }
             # A fresh run never has anything to quarantine -- either the
             # directory was empty/new, or `--fresh-run-overwrite` just moved
             # every prior managed artifact (including any leftover `.stale`
@@ -1437,7 +1929,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
         train_state._assert_bridge_pinned(env_config, pinned_bridge_sha256)
         train_state._write_lock_owner(lock_file, run_id=run_id)
         model.train()
-        optimizer = torch.optim.AdamW(model.parameters(), lr=config.lr)
+        optimizer = build_optimizer(model, config)
         if state_payload is not None:
             optimizer.load_state_dict(state_payload["optimizer"])
             torch.set_rng_state(state_payload["torch_rng"])
@@ -1445,8 +1937,59 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 torch.cuda.set_rng_state_all(state_payload["cuda_rng"])
             np.random.set_state(state_payload["numpy_rng"])
             random.setstate(state_payload["python_rng"])
+        # Amendment 4 (mortal-scale-scratch): snapshot the event pathway HERE --
+        # after a resume has restored the weights, before the first iteration --
+        # so update norms are true from the first recorded iteration either way.
+        # `expect_zero_init` only for a FRESH --init-from-bc lap: a resume and a
+        # champion warm start both legitimately carry a non-zero slice.
+        event_path = train_state.EventPathTelemetry(
+            model, expect_zero_init=(scratch and init_from_bc is not None and start_iteration == 1))
+        trunk_alpha = train_state.TrunkAlphaTelemetry(model)
+        event_path_init = event_path.initial_metrics()
+        if event_path_init is not None:
+            logger.info("event-path init: %s", event_path_init)
         collector = None
-        if config.num_workers > 1:
+        pool = None
+        model.trunk_autocast = trunk_autocast_dtype(config)
+        if model.trunk_autocast is not None:
+            # bf16 tensor-core convolutions run NHWC: channels_last weights save
+            # cuDNN a layout conversion per call (~7% of the update at 192x24;
+            # no gain in float32). Parameters keep their identity, so the
+            # optimizer's references stay valid.
+            model.to(memory_format=torch.channels_last)
+        if config.collector not in ("process", "batched"):
+            # Fail closed: an unrecognized value must never quietly fall back
+            # to the process collector and misattribute a whole lap.
+            raise ValueError(
+                f"unknown PPOConfig.collector {config.collector!r} "
+                "(expected 'process' or 'batched')")
+        if config.collector == "batched":
+            # batched-b2b-collector spec change 4. The pool replaces the spawn
+            # workers entirely: one process, `pool_slots` concurrent envs, one
+            # batched forward per round on `config.device`. Imported here, not
+            # at module scope, because `batched_b2b` imports this module's
+            # shared match state and finalizer.
+            from .batched_b2b import collect_b2b_rollouts_batched, make_b2b_pool
+            if config.num_workers > 1:
+                logger.info(
+                    "collector=batched: num_workers=%d is ignored (collection runs in "
+                    "this process against a %d-slot env pool)",
+                    config.num_workers, config.pool_slots)
+            # Slots beyond `matches_per_iter` never receive a command -- every
+            # match is in flight from round 1 -- so allocating them would charge
+            # env construction and memory to slots that can never be used.
+            # `pool_slots` stays the REQUESTED value in the config echo and in
+            # the resume contract; the allocation is derived from it.
+            allocated = max(1, min(int(config.pool_slots), int(config.matches_per_iter)))
+            if allocated != config.pool_slots:
+                logger.info(
+                    "collector=batched: pool_slots=%d requested, allocating %d "
+                    "(matches_per_iter=%d bounds the slots that can hold a match)",
+                    config.pool_slots, allocated, config.matches_per_iter)
+            # Same snapshot-bound env_config the process collectors get, so a
+            # pooled lap can never reach the mutable source library path.
+            pool = make_b2b_pool(bridge_env_config, model, config, allocated)
+        elif config.num_workers > 1:
             # Adversarial round 20, high finding: threads the SNAPSHOT-bound
             # env_config into every worker, never the mutable source path --
             # see `bridge_env_config`'s construction above.
@@ -1468,7 +2011,10 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 train_state._verify_bridge_unchanged(bridge_env_config, pinned_bridge_path, pinned_bridge_sha256,
                                          allow_bridge_mismatch, bridge_drift_warned)
                 iter_seed = base_seed + iteration * config.matches_per_iter
-                if collector is not None:
+                if pool is not None:
+                    batch = collect_b2b_rollouts_batched(
+                        bridge_env_config, model, config, base_seed=iter_seed, pool=pool)
+                elif collector is not None:
                     state = cpu_state_snapshot(model)
                     batch = collector.collect(state, iter_seed, config.matches_per_iter)
                 else:
@@ -1485,10 +2031,16 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         raise RuntimeError(f"iter {iteration}: match telemetry missing or incomplete")
                 advantages, returns = compute_gae(batch.rewards, batch.values, batch.dones,
                                                   config.gamma, config.gae_lambda)
+                # Amendment 1 §6: re-applied EVERY iteration, before the update
+                # that consumes it. Idempotent by construction, so the first
+                # iteration after a resume lands on this iteration's lr rather
+                # than inheriting whatever the restored optimizer state carried.
+                lrs = apply_lr_schedule(optimizer, config, iteration)
                 metrics = ppo_update(model, optimizer, batch, advantages, returns, config)
                 metrics["iteration"] = iteration
                 metrics["mean_reward"] = float(np.sum(batch.rewards) / max(1.0, float(batch.dones.sum())))
                 metrics["steps"] = len(batch)
+                metrics.update(lrs)
                 # Aux-supervision telemetry: an all-zero deal-in rate across many
                 # iters is the corrupted-labels signature — watch it in history.json.
                 if batch.dealin_labels is not None:
@@ -1515,6 +2067,13 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 growth_alpha_mean_abs = train_state._growth_alpha_mean_abs(model)
                 if growth_alpha_mean_abs is not None:
                     metrics["growth_alpha_mean_abs"] = growth_alpha_mean_abs
+                # Amendment 4: diagnostic only -- these keys never gate anything.
+                event_path_metrics = event_path.record(model, iteration)
+                if event_path_metrics is not None:
+                    metrics.update(event_path_metrics)
+                trunk_alpha_metrics = trunk_alpha.record(model)
+                if trunk_alpha_metrics is not None:
+                    metrics.update(trunk_alpha_metrics)
                 metrics["truncated_matches"] = int(batch.truncated_matches)
                 matches_total = max(1, int(config.matches_per_iter))
                 truncation_rate = batch.truncated_matches / matches_total
@@ -1576,6 +2135,17 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         },
                         "model_config": model_config_metadata(model_config),
                         "run_id": run_id,
+                        # mortal-scale-scratch: which construction path this
+                        # lineage came from, so a checkpoint's provenance is
+                        # readable off the file rather than only from the
+                        # launch command -- see `init_meta` above.
+                        "init": init_meta,
+                        # Amendment 4: the iteration-0 event-path snapshot, so
+                        # "the slice started at exactly zero" is auditable off
+                        # any checkpoint rather than only from the run's log.
+                        # Omitted for a model with no event encoder.
+                        **({"event_path_init": event_path_init}
+                           if event_path_init is not None else {}),
                         "objective": {
                             "placement_bonus_values": (list(config.placement_bonus_values)
                                                        if config.placement_bonus_values is not None else None),
@@ -1623,6 +2193,7 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                         env_config=env_config, base_seed=base_seed, run_id=run_id,
                         pinned_bridge_sha256=pinned_bridge_sha256,
                         pinned_bridge_path=pinned_bridge_path,
+                        init=init_meta,
                     )
                     # Adversarial round 18, high finding: `train_state.pt` just
                     # landed durably -- this is the new run's first durable
@@ -1632,9 +2203,20 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                     if overwrite_backup_dir is not None and not backup_cleared and durability_trigger == "state":
                         shutil.rmtree(overwrite_backup_dir, ignore_errors=True)
                         backup_cleared = True
+                # Amendment 4 integrity gate, LAST in the iteration: this
+                # iteration's history row, `iter_N.pt` and `train_state.pt` are
+                # all durable above, so the evidence survives the halt. Raising
+                # here stops the run before the next collection rather than
+                # letting a lap that is not measuring what the protocol thinks
+                # it is keep spending GPU hours.
+                event_path.raise_if_halted()
         finally:
             if collector is not None:
                 collector.close()
+            if pool is not None:
+                # Every pool slot holds a live Go env; an exception mid-
+                # collection must not leak them for the rest of the process.
+                pool.close()
         # Adversarial round 19, high finding: sweep any `.stale` files still
         # left over at successful run completion -- e.g. this resume's
         # `--iterations` target stopped short of some iteration numbers that

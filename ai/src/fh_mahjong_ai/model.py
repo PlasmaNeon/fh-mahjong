@@ -48,16 +48,24 @@ def build_plane_scalar_encoders(env_config: EnvConfig, model_config: ModelConfig
     """
     channels, height, width = env_config.plane_shape
 
+    kernel = (3, model_config.kernel_width)
+    padding = (1, model_config.kernel_width // 2)
     plane_stem = nn.Sequential(
-        nn.Conv2d(channels, model_config.channels, kernel_size=3, padding=1),
+        nn.Conv2d(channels, model_config.channels, kernel_size=kernel, padding=padding),
         nn.GELU(),
     )
+    # mortal-scale-scratch Amendment 3: a deep plain stack (gelu(x + F(x)),
+    # no normalization, no residual scaling) blows up at init past a handful
+    # of blocks; `trunk_rezero` swaps every main block for the ReZero form
+    # (identity at init), which carries one extra `alpha` scalar per block.
+    block_class = ReZeroResidualBlock if model_config.trunk_rezero else ResidualBlock
     plane_blocks = nn.Sequential(
         *[
-            ResidualBlock(
+            block_class(
                 model_config.channels,
                 channel_attention=model_config.channel_attention,
                 attention_ratio=model_config.channel_attention_ratio,
+                kernel_width=model_config.kernel_width,
             )
             for _ in range(model_config.residual_blocks)
         ]
@@ -163,6 +171,7 @@ class PolicyValueNet(nn.Module):
                     model_config.channels,
                     channel_attention=model_config.channel_attention,
                     attention_ratio=model_config.channel_attention_ratio,
+                    kernel_width=model_config.kernel_width,
                 )
                 for _ in range(model_config.growth_blocks)
             ]
@@ -175,14 +184,32 @@ class PolicyValueNet(nn.Module):
     def forward(self, planes: Tensor, scalars: Tensor, action_mask: Tensor,
                 events: Tensor | None = None, event_lengths: Tensor | None = None) -> tuple[Tensor, Tensor]:
         features = self.encode(planes, scalars, events, event_lengths)
+        return self.policy_value(features, planes, action_mask)
 
+    def policy_value(self, features: Tensor, planes: Tensor, action_mask: Tensor) -> tuple[Tensor, Tensor]:
+        """The ``forward`` heads over already-encoded ``features``, so a caller that
+        also needs the features (the PPO aux losses) encodes once."""
         logits = self.policy_head(features)
         masked_logits = logits.masked_fill(action_mask <= 0, torch.finfo(logits.dtype).min)
         value = self.value_head(self._value_features(features, planes)).squeeze(-1)
         return masked_logits, value
 
+    # CUDA autocast dtype for `encode` (PPOConfig.trunk_dtype); None = float32.
+    # A runtime setting, not part of the state dict or the model config.
+    trunk_autocast: torch.dtype | None = None
+
     def encode(self, planes: Tensor, scalars: Tensor, events: Tensor | None = None,
                event_lengths: Tensor | None = None) -> Tensor:
+        if self.trunk_autocast is not None and planes.is_cuda:
+            # cache_enabled=False: the cast-weight cache must not outlive a
+            # CUDA graph capture. The features return as float32 so the heads,
+            # losses and optimizer never see the reduced precision.
+            with torch.autocast("cuda", dtype=self.trunk_autocast, cache_enabled=False):
+                return self._encode(planes, scalars, events, event_lengths).float()
+        return self._encode(planes, scalars, events, event_lengths)
+
+    def _encode(self, planes: Tensor, scalars: Tensor, events: Tensor | None,
+                event_lengths: Tensor | None) -> Tensor:
         policy_planes = planes[:, : self.policy_channels]
         plane_trunk = self.growth(self.plane_blocks(self.plane_stem(policy_planes)))
         plane_features = self.plane_head(self.plane_projection(plane_trunk))
@@ -290,12 +317,15 @@ class ChannelAttention2d(nn.Module):
 class ResidualBlock(nn.Module):
     """Small no-pooling residual block for semantic tile planes."""
 
-    def __init__(self, channels: int, channel_attention: bool = False, attention_ratio: int = 16) -> None:
+    def __init__(self, channels: int, channel_attention: bool = False, attention_ratio: int = 16,
+                 kernel_width: int = 3) -> None:
         super().__init__()
+        kernel = (3, kernel_width)
+        padding = (1, kernel_width // 2)
         self.layers = nn.Sequential(
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+            nn.Conv2d(channels, channels, kernel_size=kernel, padding=padding),
             nn.GELU(),
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+            nn.Conv2d(channels, channels, kernel_size=kernel, padding=padding),
         )
         self.channel_attention = ChannelAttention2d(channels, attention_ratio) if channel_attention else nn.Identity()
 
@@ -311,12 +341,15 @@ class ReZeroResidualBlock(nn.Module):
     so stacking these for capacity growth is dormant until training moves alpha.
     """
 
-    def __init__(self, channels: int, channel_attention: bool = False, attention_ratio: int = 16) -> None:
+    def __init__(self, channels: int, channel_attention: bool = False, attention_ratio: int = 16,
+                 kernel_width: int = 3) -> None:
         super().__init__()
+        kernel = (3, kernel_width)
+        padding = (1, kernel_width // 2)
         self.layers = nn.Sequential(
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+            nn.Conv2d(channels, channels, kernel_size=kernel, padding=padding),
             nn.GELU(),
-            nn.Conv2d(channels, channels, kernel_size=3, padding=1),
+            nn.Conv2d(channels, channels, kernel_size=kernel, padding=padding),
         )
         self.channel_attention = ChannelAttention2d(channels, attention_ratio) if channel_attention else nn.Identity()
         self.alpha = nn.Parameter(torch.zeros(()))
@@ -487,6 +520,12 @@ def _shape_inferred_fields(state_dict: dict[str, Tensor]) -> dict:
         dueling_q=dueling_q,
         privileged_critic="privileged_encoder.0.weight" in state_dict,
         aux_heads="belief_head.weight" in state_dict,
+        kernel_width=int(state_dict["plane_stem.0.weight"].shape[3]),
+        # Amendment 3: only a ReZeroResidualBlock carries an `alpha` scalar, so
+        # the first main block's alpha key is the trunk-type witness. A
+        # residual-free trunk (residual_blocks=0) has no block to witness and
+        # keeps the default (False).
+        trunk_rezero="plane_blocks.0.alpha" in state_dict,
     )
     if "event_encoder.embedding.weight" in state_dict:
         fields["event_embed_dim"] = int(state_dict["event_encoder.embedding.weight"].shape[1])

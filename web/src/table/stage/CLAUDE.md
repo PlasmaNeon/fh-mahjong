@@ -8,9 +8,6 @@ The board is a fixed 1600x900-ish design surface scaled as one unit, rather than
 reflows each seat/discard region from viewport units. This directory owns that calculation: a pure
 function, the React hook that feeds it DOM measurements, and the style objects the pages apply.
 
-Moved here from `web/src/hooks/` in PR 2 — `computeStageLayout.ts` is not a hook, and grouping the
-three files next to `table/` puts the geometry beside the presenter that consumes it.
-
 ## Key Files
 
 - **computeStageLayout.ts** — Pure (DOM-free, unit-tested in `computeStageLayout.test.ts`) helper that maps an available width/height to the stage layout:
@@ -29,10 +26,9 @@ three files next to `table/` puts the geometry beside the presenter that consume
   `stageStyle` `CSSProperties` the three consuming pages apply. `zoom` rather than
   `transform: scale()` is deliberate: it keeps Framer Motion tile transitions in a less surprising
   coordinate space. `useGameStageLayout()` returns both alongside the raw layout, so pages never
-  rebuild them (see `docs/refactoring-notes.md`, PR 1a).
+  rebuild them.
 
 ## Architecture Notes
 
-- Used for client-side prediction (zero-latency feedback); server always re-validates.
 - `useGameStageLayout.ts` is intentionally game/replay-specific rather than a generic layout hook; it stops seat/hand/discard drift by scaling a fixed-height, aspect-flexible DOM stage as one unit instead of reflowing each region from viewport units, and it should prefer post-layout remeasurement over immediate resize-event reads when flex shells or side panels are involved.
 - Phones in portrait get forced landscape via the `.stage-rotator` wrapper (CSS in `web/src/table/table-geometry.css`, gated `(pointer: coarse) and (orientation: portrait) and (max-width: 600px)`). Because that wraps and rotates the measured shell, the hook must read the untransformed layout box (`offsetWidth/offsetHeight`). The replay route opts out of the rotation (`.stage-rotator--replay`) so its control panel stays accessible.

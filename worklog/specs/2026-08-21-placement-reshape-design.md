@@ -331,6 +331,163 @@ need no special handling; the −0.010 + CI-upper<0 pair is coherent.
 **After these amendments Stage 0 is authorized under the existing numbers.
 Stage 1 training remains unauthorized until every amended Stage-0 gate passes.**
 λ, σ_R, σ_V, corr(R,V), the archived γ/λ_GAE, and the Stage-0 gate results are
-recorded here as Amendment 2 when Stage 0 completes.
+recorded in Amendment 2.
 
-**Stage 0 code landed** (Tasks 1–9, commits deb299e..992c241 and the final-review fix commit, 2026-08-25): bonus wiring + fail-closed collection, calibration tool, eval tail metrics, fh-mj-compare tail gate. λ, σ_R, σ_V, γ/λ_GAE and the gate measurements remain pending on the box (Amendment 2). Amendment 1 item 10's completeness check (aggregated `unknown_hands` == 0 and `rank_parity_mismatches` == 0 in eval reports) is an operator gate at Stage-0 calibration and confirmation time (plan Task 12 step 3), not mechanized in code.
+**Stage 0 code landed** (Tasks 1–9, commits deb299e..992c241 and the final-review fix commit, 2026-08-25): bonus wiring + fail-closed collection, calibration tool, eval tail metrics, fh-mj-compare tail gate. Box measurements are recorded in Amendment 2 — all gates green; Stage 0 is complete. Amendment 1 item 10's completeness check (aggregated `unknown_hands` == 0 and `rank_parity_mismatches` == 0 in eval reports) is an operator gate at Stage-0 calibration and confirmation time (plan Task 12 step 3), not mechanized in code.
+
+### Amendment 2 (Stage-0 box measurements, 2026-08-25) — Stage 0 COMPLETE
+
+All measurements on the 4090/WSL box against anchor075
+(`/root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt`); artifacts in
+`/root/fh-mahjong-runs/placement-reshape/stage0/`.
+
+**Archived champion discounting** (ds960 archive `train_state.pt` `config_echo`,
+plan Task 10): γ = 0.99, λ_GAE = 0.95 — the consult's assumption confirmed.
+
+**λ calibration** (`fh-mj-placement-calibrate`, 320 matches, seeds
+720000–720319, bonus OFF, `calibration.json`):
+
+| Quantity | Value |
+|---|---|
+| σ_R (per-seat trajectory-return RMS, population ddof=0, 1280 records) | 1.2771589615131842 |
+| σ_V (utility RMS; matches registered vector RMS exactly) | 0.745355986408624 |
+| corr(R, V) | 0.8419034213688973 |
+| **λ = 0.5·σ_R/σ_V (frozen)** | **0.8567442838065646** |
+| Collection digest | `6b3eda33b297a4c93f30849d5bebd16fe7c123e6daa8e19f4d8698f4833adea7` |
+| bonus_mean / bonus_rms / bonus_abs_p99 | ~0 (3.2e-18) / 0.6385794807565921 / 0.9970407995565881 |
+| 4th-place bonus / σ_R | −0.7806708746698107 |
+
+**Return-scale gates** (same frozen batch, bonus ON vs OFF) — ALL PASS:
+
+| Gate | Threshold | Measured |
+|---|---|---|
+| shaped/raw return RMS ratio | ≤ 1.35 | 1.1322245342811552 |
+| shaped/raw abs-p99 ratio | ≤ 1.50 | 1.200709048734831 |
+| frozen-critic MSE ratio | ≤ 2.00 | 1.3360246253746213 |
+
+**Digest parity at positive λ** (plan Task 12, 320 matches, seeds
+720320–720639, cuda): four bonus-ON digests identical across workers 1/10/20 +
+dispatch-chunk 320 and workers 10 + chunk 0 —
+`3e228283814cde07283c12a661f636c349b5e2e5440895cea63cfbb09f68878d`; bonus-OFF
+digest differs — `b9f89979e6092f2bfd39a20432099666baa59cbf22bbae3b5b19e05679adf9e0`.
+
+**Screening-evaluator completeness** (Amendment 1 item 10 operator gate;
+anchor075, duplicate seats, 120 seeds 910000–910119, chongci):
+anchor075
+self-eval via the duplicate-seat evaluator (`fh-mj-evaluate --duplicate-seats`,
+cuda, event window 128): `rank_parity_mismatches` = 0 and `unknown_hands` = 0 on
+all four seat reports and the aggregate; `deal_in_rate` populated (aggregate
+0.1022, per-seat 0.0971–0.1075); zero truncations. **PASS.**
+
+Stage-0 gates are all green. Stage 1 training remains unauthorized until the
+pre-Stage-1 consult ratifies this amendment.
+
+### Stage 1 outcome (2026-08-27) — NULL, no eligible milestone
+
+Lap ran 2026-08-26 01:39Z → 2026-08-27 03:55Z on the 4090 box, 150/150
+iterations, TRAIN-EXIT rc=0, zero truncations / fail-closed aborts; frozen
+manifest `stage1-launch-manifest.json` (commit a740662, bridge 66f7a061…,
+λ = 0.8567442838065646, digest 6b3eda33…). Screens vs anchor075 @910000–910119
+(F = 4th-share delta, C = canonical delta, LL = large-loss delta):
+
+| iter | F | C | LL | significant (C) |
+|---|---|---|---|---|
+| 25 | +0.0021 | +0.0069 | +0.0021 | no |
+| 50 | +0.0500 | −0.0958 | +0.0083 | yes |
+| 75 | +0.0125 | −0.0181 | 0.0000 | no |
+| 100 | +0.0146 | −0.0486 | +0.0063 | no |
+| 125 | +0.0188 | −0.0306 | −0.0104 | no |
+| 150 | +0.0063 | −0.0403 | −0.0063 | no |
+
+Kill rule at 100: not triggered (C₇₅ = −0.018 > −0.060). Eligibility (F ≤ −0.005
+∧ C ≥ −0.050 ∧ LL ≤ +0.010): **no milestone qualifies** — none reduced 4th-place
+share. Per the selection rule: **NULL — no confirmation run**; the reserved
+window 1300000–1301499 was never inspected and remains fresh. anchor075 remains
+champion. The asymmetric terminal bonus, at the calibrated λ, did not produce
+tail-safer play within 150 iterations; the transient at iter 50 moved in the
+wrong direction on both axes. Result returned to consult per protocol.
+
+Screen provenance note: mid-lap the checkout was briefly at 9098aed (another
+session's pull); screen-25 was re-run at the pinned a740662 and matched
+byte-identically. All recorded screens are pinned-commit.
+
+**Descriptive benchmark vs heuristic bots (non-gating yardstick, 2026-08-27).**
+`fh-mj-benchmark`, 100 episodes/seat × 4 seats = 400 matches each (~19.4k hands),
+seed base 1000, bootstrap CI95, run against the lap's archived bridge snapshot.
+
+| Metric | iter_150 | anchor075 |
+|---|---|---|
+| Win rate | 22.87% [22.29, 23.49] | 22.47% [21.90, 23.03] |
+| Deal-in rate | 10.33% [9.91, 10.76] | 9.99% [9.55, 10.39] |
+| Avg deal-in loss | 88.2 [85.1, 92.0] | 83.8 [80.3, 87.1] |
+| Avg win value | 233.2 [226.2, 240.1] | 232.3 [225.9, 238.6] |
+| 1st / 2nd / 3rd / 4th | 47.75 / 26.00 / 16.25 / 10.00 | 45.50 / 27.75 / 17.75 / 9.00 |
+| Canonical utility (derived from rates) | 0.410 | 0.398 |
+| Hands per match | 48.41 | 48.80 |
+
+Every difference is inside noise: the 1st-place gap is 9 matches of 400
+(t ≈ 0.6), the 4th-place gap 4 matches (t ≈ 0.5), and the deal-in CIs overlap
+across most of their width. The unpaired canonical figure favours the candidate
+(+0.012) while the paired screen at the same checkpoint favours the anchor
+(−0.040) — opposite signs, both non-significant, which is what a true zero looks
+like measured twice, and why the registered gate is the paired duplicate-seat
+comparison rather than an absolute sheet. What *is* consistent is the primary
+axis: 4th-place share is worse for the candidate here and at every one of the
+six paired screens. Deal-in does **not** corroborate — paired, the candidate
+sits 0.04–0.32 pt *below* the anchor's deal-in rate at five of six checkpoints
+(+0.16 pt at 150) against this sheet's +0.33 pt, so the deal-in difference is
+noise of inconsistent sign and is not the discriminator. A benchmark sheet is
+never a promotion gate.
+
+**Consult ruling (GPT-5.6-Sol, 2026-08-27): RATIFIED — scientifically valid,
+protocol-defined NULL.** Scope of the claim: under the registered warm-started
+B2b recipe, additive asymmetric terminal placement utility at k=0.5, 320
+matches/iteration and 150 iterations failed to produce any checkpoint meeting
+the pre-registered minimum tail-improvement eligibility criterion — a selection
+NULL, not a CI proof of zero effect. The screens cannot distinguish
+insufficient credit assignment, destructive PPO drift, or a resistant local
+basin; no single explanation is to be selected retrospectively.
+
+**Closure:** `placement-reshape` is closed as a scoped NULL for the registered
+additive terminal-bonus formulation, vector, k=0.5, anchor075 warm start, B2b
+recipe, data scale and 150-iteration horizon. No rerun, extension, post-hoc
+confirmation, λ/k sweep, nearby placement-vector variant, or automatic
+cold-start replication is authorized. Reopening requires either (1) concrete
+new evidence that a protocol or implementation defect invalidated this lap, or
+(2) a materially different, independently motivated objective or
+credit-assignment/training formulation supplying genuinely new information —
+not a nearby coefficient, seed, horizon, or initialization sweep. Run artifacts
+(`/root/fh-mahjong-runs/placement-reshape/`) are archived read-only; the
+1300000–1301499 window is preserved unspent.
+
+**Archive.** `/root/fh-mahjong-runs/placement-reshape/` is read-only and carries
+`CLOSEOUT-MANIFEST.json` (machine-generated from the artifacts: calibration,
+launch manifest, all six screen comparisons with eligibility recomputed, both
+benchmark sheets, incident record, reopening rule). Final candidate
+`ckpt/iter_150.pt`, sha256
+`b0b9629776b8a58a60b54648f1bff1d4296420d46a2134743b85b1ff77744969` — a retained
+research artifact: never promote, never deploy, never add to
+`best-checkpoints.json`. All 150 iteration checkpoints retained (1.7 GB).
+
+### Notes for a future lap
+
+1. **The float/int rank-parity check fires in practice.** Screen-150 recorded
+   `rank_parity_mismatches = 1` (seat 2, 1 episode of 120; `unknown_hands` 0
+   everywhere, no truncations) — one near-tie where float32 accumulated-score
+   ranking disagreed with exact integer reconstruction. Harmless here (screen
+   milestones carry no parity gate, and one flipped episode moves 4th-share by
+   ≤0.002 against a 0.0113 shortfall), but Amendment 1 item 10's operator gate
+   demands **zero** at confirmation time, and a confirmation run is 6000
+   seat-episodes rather than 480. Land Amendment 1 item 9's single shared
+   exact-standings helper before any future confirmation run, or expect the
+   gate to fail on a near-tie.
+2. **4th-place share is the discriminator; deal-in is not.** Across six paired
+   screens the deal-in delta stayed within ±0.32 pt and changed sign, while
+   4th-share was uniformly and interpretably wrong-signed. Report deal-in as
+   descriptive; do not build a gate on it at this sample size.
+3. **Screens at this width cannot see the registered effect.** Clustered CI95
+   half-widths ran ±0.031–0.038 on 4th-share against a −0.010 target, so a
+   120-seed screen can only ever reject gross failure, not confirm success.
+   That is by design (screens are cheap triage), but a future protocol wanting
+   mid-lap evidence of tail movement needs a wider screening window.
+

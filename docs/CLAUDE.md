@@ -6,15 +6,15 @@
   literature says. Records of **how the work happened** (plans, specs, runbooks, experiment
   logs) live in `/worklog/` instead; see `worklog/CLAUDE.md`.
 - `docs/rules/` is the canonical Fenghua rules reference.
-- `docs/refactoring-notes.md` records where shared/de-duplicated logic now lives.
+- `docs/refactoring-notes.md` records where shared logic lives and the look-alike code that must stay separate.
 - `docs/rl-papers/` stores RL paper read reports, follow-up reading, and implementation takeaways for the Mahjong AI roadmap.
 - `docs/rl-papers/roadmap-and-development-plan.md` is the study path and development plan tying the reports to repo work. Its stages are the learning sequence; **"Where The Project Actually Is"** is the only section tracking current state.
-- `docs/rl-papers/rl-research-directions-2026-07.md` is a literature sweep on alternatives to pure self-play.
-- `docs/rl-papers/implementation-takeaways.md` records repo-specific RL design defaults, with Mortal-style operation-level Q/value learning as the primary path and Suphx-style oracle/global-reward ideas as later auxiliaries.
+- `docs/rl-papers/rl-research-directions-2026-07.md` is a literature sweep on alternatives to pure self-play, with the outcome of each direction.
+- `docs/rl-papers/implementation-takeaways.md` records repo-specific RL design defaults (BC → on-policy PPO self-play) and the rules learned from closed experiments.
 
 **Boundary:** `docs/rl-papers/` holds knowledge about the field (papers, study path,
 derived defaults). Our own experiment records — the Chongci progress notebook, risk-target
-design note, and lap status files — moved to `worklog/rl-experiment/` on 2026-08-21.
+design note, and lap records — live in `worklog/rl-experiment/`.
 
 ## Update Rules
 

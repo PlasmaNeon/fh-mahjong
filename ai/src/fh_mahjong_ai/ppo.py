@@ -148,8 +148,27 @@ class PPOConfig:
     # No async prefetch or double buffering — synchronous one-minibatch-at-a-
     # time transfer only, per the ruling.
     minibatch_device_transfer: bool = False
+    # mortal-scale-scratch Amendment 1 §6: two AdamW parameter groups for
+    # --scratch --init-from-bc runs. Parameters loaded from the BC stage
+    # (SCRATCH_BC_PREFIXES) train at `lr` throughout; every other parameter
+    # (event encoder, value/Q, privileged critic, aux and risk heads) trains at
+    # `head_lr` for iterations 1..head_lr_iters, then at `lr`. The optimizer is
+    # never rebuilt at the switch -- moments are retained. None = one group.
+    head_lr: Optional[float] = None
+    head_lr_iters: int = 0
     collector: str = "process"   # "process" (spawn workers) | "batched" (env pool + batched forward)
     pool_slots: int = 128        # concurrent env-pool slots for collector="batched"
+    # collector="batched": slot groups that take turns so the pool steps one
+    # group while the GPU runs another's forward. 1 = one forward over every
+    # slot per round. It changes which rows share a forward (batch-composition
+    # floats), so like pool_slots it is part of the lineage.
+    pool_pipeline_groups: int = 1
+    # "bfloat16" runs PolicyValueNet.encode (conv trunk, event GRU, trunk MLP)
+    # under CUDA autocast in both collection and the update; heads, losses and
+    # the optimizer stay float32. A precision change, not a summation-order
+    # one: a recipe field, rejected on change. Requires collector="batched" on
+    # CUDA so the collected old_logprobs come from the same precision.
+    trunk_dtype: str = "float32"
     pool_max_size: int = 1
     pool_snapshot_interval: int = 10
     grp_checkpoint: Optional[Path] = None
@@ -259,11 +278,35 @@ def concat_rollout_batches(batches: List["RolloutBatch"], consume: bool = False)
     return result
 
 
-def masked_policy_distribution(masked_logits: torch.Tensor) -> torch.distributions.Categorical:
+def masked_policy_distribution(masked_logits: torch.Tensor,
+                               validate_args: Optional[bool] = None) -> torch.distributions.Categorical:
     """Categorical over actions; logits are already -inf-masked (finfo.min) for
     illegal actions by PolicyValueNet.forward, so illegal probability is ~0 and
-    entropy stays finite."""
-    return torch.distributions.Categorical(logits=masked_logits)
+    entropy stays finite. `validate_args=False` skips torch's argument checks,
+    which sync the host; the values are identical."""
+    return torch.distributions.Categorical(logits=masked_logits, validate_args=validate_args)
+
+
+def masked_logprob(logits_row: torch.Tensor, temperature: float, action: int) -> float:
+    """Log-probability of `action` under the temperature-scaled masked policy
+    for ONE decision. `logits_row` is the model's [A] logits row (illegal
+    actions already finfo.min-masked). Shared by both B2b collectors so
+    `old_logprobs` is the same Torch computation regardless of how the
+    action was chosen (sampled, greedy) or batched."""
+    scaled = logits_row / max(float(temperature), 1e-6)
+    dist = masked_policy_distribution(scaled)
+    return float(dist.log_prob(torch.tensor(int(action), device=logits_row.device)))
+
+
+def masked_logprobs(logits: torch.Tensor, temperature: float, actions: list[int]) -> list[float]:
+    """`masked_logprob` for every row of a contiguous [N, A] CPU logits tensor
+    in one Categorical. Bit-identical to calling `masked_logprob` per row: the
+    division is elementwise and CPU logsumexp reduces each contiguous row with
+    the same kernel (pinned by test_masked_logprobs_matches_per_row), at ~1/30
+    of the per-row cost."""
+    scaled = logits / max(float(temperature), 1e-6)
+    dist = masked_policy_distribution(scaled)
+    return dist.log_prob(torch.as_tensor(actions, dtype=torch.int64, device=logits.device)).tolist()
 
 
 def compute_gae(
@@ -301,6 +344,28 @@ def ppo_update(
     returns: np.ndarray,
     config: PPOConfig,
 ) -> dict:
+    """One PPO update over `batch`. On CUDA, cuDNN autotunes its convolution
+    algorithms for the update (restored on exit): its default heuristic picks a
+    slow non-tensor-core weight-gradient kernel for the (3, k) convs over 42x1
+    planes, over half the update's GPU time at 192x24. Autotuning chooses by
+    timing, so the floats differ from the heuristic's by summation order, and
+    can differ between processes. Each new shape (the ragged final minibatch
+    changes size every iteration) costs one tuning pass, about a second.
+
+    cuDNN caches the plan per shape whatever the flag was when the shape was
+    first seen: a shape first run untuned in this process stays untuned."""
+    if torch.device(config.device).type != "cuda":
+        return _ppo_update(model, optimizer, batch, advantages, returns, config)
+    previous = torch.backends.cudnn.benchmark
+    torch.backends.cudnn.benchmark = True
+    try:
+        return _ppo_update(model, optimizer, batch, advantages, returns, config)
+    finally:
+        torch.backends.cudnn.benchmark = previous
+
+
+def _ppo_update(model, optimizer, batch: RolloutBatch, advantages: np.ndarray,
+                returns: np.ndarray, config: PPOConfig) -> dict:
     device = config.device
     n = len(batch)
     host_transfer = bool(getattr(config, "minibatch_device_transfer", False))
@@ -358,6 +423,51 @@ def ppo_update(
             )
         if not host_transfer:
             belief_target = (planes[:, 39:51] > 0).float().squeeze(-1)
+    metric_names = list(_PPO_METRICS) + (list(_AUX_METRICS) if has_aux else [])
+
+    def step_losses(mb: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        """Loss and the [len(metric_names)] metric vector for one minibatch.
+        No host syncs, so a CUDA graph can capture it."""
+        if has_aux:
+            # Encode ONCE for the policy/value heads and the aux heads. The net
+            # has no dropout or batch norm, so a second encode would recompute
+            # the same features and double the trunk's forward and backward.
+            features = model.encode(mb["planes"], mb["scalars"], mb["events"], mb["lengths"])
+            masked_logits, value = model.policy_value(features, mb["planes"], mb["mask"])
+        else:
+            masked_logits, value = model(mb["planes"], mb["scalars"], mb["mask"],
+                                         events=mb["events"], event_lengths=mb["lengths"])
+        # validate_args=False: the argument checks sync the host; values are unchanged.
+        dist = masked_policy_distribution(masked_logits, validate_args=False)
+        new_logprobs = dist.log_prob(mb["actions"])
+        ratio = torch.exp(new_logprobs - mb["old_logprobs"])
+        surr1 = ratio * mb["adv"]
+        surr2 = torch.clamp(ratio, 1.0 - config.clip_eps, 1.0 + config.clip_eps) * mb["adv"]
+        policy_loss = -torch.min(surr1, surr2).mean()
+        value_loss = torch.nn.functional.mse_loss(value, mb["ret"])
+        entropy = dist.entropy().mean()
+        loss = policy_loss + config.value_coef * value_loss - config.entropy_coef * entropy
+        with torch.no_grad():
+            approx_kl = (mb["old_logprobs"] - new_logprobs).mean()
+            clip_fraction = (torch.abs(ratio - 1.0) > config.clip_eps).float().mean()
+        metrics = [policy_loss, value_loss, entropy, approx_kl, clip_fraction]
+        if has_aux:
+            aux = model.aux_predictions(features)
+            belief_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                aux["belief"], mb["belief"])
+            dealin_loss = torch.nn.functional.binary_cross_entropy_with_logits(
+                aux["dealin"], mb["dealin"])
+            # Mean over labelled rows (rank >= 0), 0 when there are none. A masked
+            # sum, not boolean indexing: indexing's data-dependent shape would
+            # sync the host every minibatch.
+            labelled = mb["rank"] >= 0
+            rank_ce = torch.nn.functional.cross_entropy(
+                aux["rank"], mb["rank"].clamp(min=0), reduction="none")
+            rank_loss = ((rank_ce * labelled).sum()
+                         / labelled.sum().clamp(min=1).to(rank_ce.dtype))
+            loss = loss + AUX_LOSS_WEIGHT * (belief_loss + dealin_loss + rank_loss)
+            metrics += [belief_loss, dealin_loss, rank_loss]
+        return loss, torch.stack([m.detach() for m in metrics])
 
     # Telemetry is aggregated over ALL minibatches (row-weighted, so the
     # ragged final minibatch counts by its true size) rather than reporting
@@ -365,97 +475,129 @@ def ppo_update(
     # single-slice sample that cannot be compared across batch scales
     # (data-scale-960 Stage 0 prerequisite). `optimizer_steps` counts every
     # optimizer.step() taken, i.e. ppo_epochs * ceil(n / minibatch_size).
-    metric_totals: dict[str, float] = {}
+    # The totals stay on the device (float64) and are read once at the end: a
+    # per-step .item() stalls the host every minibatch, idling the GPU while
+    # the next minibatch is gathered and launched.
+    metric_total: Optional[torch.Tensor] = None
     rows_seen = 0
     optimizer_steps = 0
+    params = [p for p in model.parameters()]
+    # On CUDA every full-size minibatch replays one captured forward+backward
+    # (_GraphedStep); clipping and the optimizer step stay eager. The ragged
+    # final minibatch runs eagerly.
+    graphed_step: Optional[_GraphedStep] = None
+    use_graph = GRAPHED_UPDATE_STEP and torch.device(device).type == "cuda"
     model.train()
     for _ in range(config.ppo_epochs):
         perm = torch.randperm(n, device=device)
+        # One device->host copy per epoch instead of a sync per minibatch.
+        perm_h = perm.cpu() if host_transfer else None
         for start in range(0, n, config.minibatch_size):
             idx = perm[start : start + config.minibatch_size]
-            mb_lengths = lengths_t[idx] if lengths_t is not None else None
+            mb = {"lengths": lengths_t[idx] if lengths_t is not None else None}
             if host_transfer:
-                idx_h = idx.cpu()
-                mb_planes = planes_h.index_select(0, idx_h).to(device)
-                mb_scalars = scalars_h.index_select(0, idx_h).to(device)
-                mb_mask = action_mask_h.index_select(0, idx_h).to(device)
-                mb_events = (torch.from_numpy(
+                idx_h = perm_h[start : start + config.minibatch_size]
+                mb["planes"] = planes_h.index_select(0, idx_h).to(device)
+                mb["scalars"] = scalars_h.index_select(0, idx_h).to(device)
+                mb["mask"] = action_mask_h.index_select(0, idx_h).to(device)
+                mb["events"] = (torch.from_numpy(
                     events_np[idx_h.numpy()].astype(np.int64)).to(device)
                     if events_np is not None else None)
             else:
-                mb_planes = planes[idx]
-                mb_scalars = scalars[idx]
-                mb_mask = action_mask[idx]
-                mb_events = events_t[idx] if events_t is not None else None
-            masked_logits, value = model(mb_planes, mb_scalars, mb_mask,
-                                         events=mb_events, event_lengths=mb_lengths)
-            dist = masked_policy_distribution(masked_logits)
-            new_logprobs = dist.log_prob(actions[idx])
-            ratio = torch.exp(new_logprobs - old_logprobs[idx])
-            mb_adv = adv_t[idx]
-            surr1 = ratio * mb_adv
-            surr2 = torch.clamp(ratio, 1.0 - config.clip_eps, 1.0 + config.clip_eps) * mb_adv
-            policy_loss = -torch.min(surr1, surr2).mean()
-            value_loss = torch.nn.functional.mse_loss(value, ret_t[idx])
-            entropy = dist.entropy().mean()
-            loss = policy_loss + config.value_coef * value_loss - config.entropy_coef * entropy
-
-            aux_metrics = {}
+                mb["planes"] = planes[idx]
+                mb["scalars"] = scalars[idx]
+                mb["mask"] = action_mask[idx]
+                mb["events"] = events_t[idx] if events_t is not None else None
+            mb["actions"] = actions[idx]
+            mb["old_logprobs"] = old_logprobs[idx]
+            mb["adv"] = adv_t[idx]
+            mb["ret"] = ret_t[idx]
             if has_aux:
                 # In the legacy path belief_target was precomputed from the
                 # full device-resident planes; in the host-transfer path it is
                 # derived per minibatch from the SAME plane values (an exact
                 # comparison, so the result is byte-identical either way).
-                mb_belief = (belief_target[idx] if belief_target is not None
-                             else (mb_planes[:, 39:51] > 0).float().squeeze(-1))
-                features = model.encode(mb_planes, mb_scalars, mb_events, mb_lengths)
-                aux = model.aux_predictions(features)
-                belief_loss = torch.nn.functional.binary_cross_entropy_with_logits(
-                    aux["belief"], mb_belief)
-                dealin_loss = torch.nn.functional.binary_cross_entropy_with_logits(
-                    aux["dealin"], dealin_t[idx])
-                rank_mask = rank_t[idx] >= 0
-                if rank_mask.any():
-                    rank_loss = torch.nn.functional.cross_entropy(
-                        aux["rank"][rank_mask], rank_t[idx][rank_mask])
-                else:
-                    rank_loss = torch.zeros((), device=device)
-                loss = loss + AUX_LOSS_WEIGHT * (belief_loss + dealin_loss + rank_loss)
-                aux_metrics = {
-                    "belief_loss": float(belief_loss.item()),
-                    "dealin_loss": float(dealin_loss.item()),
-                    "rank_loss": float(rank_loss.item()),
-                }
-
-            optimizer.zero_grad()
-            loss.backward()
+                mb["belief"] = (belief_target[idx] if belief_target is not None
+                                else (mb["planes"][:, 39:51] > 0).float().squeeze(-1))
+                mb["dealin"] = dealin_t[idx]
+                mb["rank"] = rank_t[idx]
+            mb_rows = int(idx.shape[0])
+            if use_graph and mb_rows == config.minibatch_size:
+                if graphed_step is None:
+                    graphed_step = _GraphedStep(step_losses, params, mb)
+                metric_vec = graphed_step.run(mb)
+            else:
+                # After a capture the gradients live in the graph's buffers:
+                # zero them in place rather than dropping them.
+                optimizer.zero_grad(set_to_none=graphed_step is None)
+                loss, metric_vec = step_losses(mb)
+                loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
             optimizer.step()
-
-            with torch.no_grad():
-                approx_kl = (old_logprobs[idx] - new_logprobs).mean()
-                clip_fraction = (torch.abs(ratio - 1.0) > config.clip_eps).float().mean()
-            step_metrics = {
-                "policy_loss": float(policy_loss.item()),
-                "value_loss": float(value_loss.item()),
-                "entropy": float(entropy.item()),
-                "approx_kl": float(approx_kl.item()),
-                "clip_fraction": float(clip_fraction.item()),
-                **aux_metrics,
-            }
-            mb_rows = int(idx.shape[0])
+            weighted = metric_vec.to(torch.float64) * mb_rows
+            metric_total = weighted if metric_total is None else metric_total + weighted
             rows_seen += mb_rows
             optimizer_steps += 1
-            for key, value in step_metrics.items():
-                metric_totals[key] = metric_totals.get(key, 0.0) + value * mb_rows
     if rows_seen:
-        metrics = {key: total / rows_seen for key, total in metric_totals.items()}
+        totals = metric_total.tolist()
+        metrics = {key: total / rows_seen for key, total in zip(metric_names, totals)}
     else:  # ppo_epochs == 0: keep the historical zeroed shape
         metrics = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0,
                    "approx_kl": 0.0, "clip_fraction": 0.0}
     metrics["optimizer_steps"] = optimizer_steps
     memprobe.probe("ppo_update_done", rows=int(n), optimizer_steps=int(optimizer_steps))
     return metrics
+
+
+# Tests switch this off to compare the graphed step with the eager one.
+GRAPHED_UPDATE_STEP = True
+
+_PPO_METRICS = ("policy_loss", "value_loss", "entropy", "approx_kl", "clip_fraction")
+_AUX_METRICS = ("belief_loss", "dealin_loss", "rank_loss")
+
+
+class _GraphedStep:
+    """One PPO minibatch's forward, losses and backward captured as a CUDA graph.
+
+    The update is launch-bound at production sizes (hundreds of small kernels per
+    step); a replay issues them in one call. The graph runs the same kernels as
+    the eager step, so it matches it bit for bit given the same cuDNN plans; it
+    is captured once per `ppo_update` call, after three eager warmups on a side
+    stream (which also let cuDNN autotune before capture). Capture starts with
+    every gradient unset, so the graph writes, rather than accumulates, into
+    gradient buffers it owns; they stay the parameters' `.grad` afterwards.
+    """
+
+    WARMUP = 3
+
+    def __init__(self, step_losses, params: list, example: dict) -> None:
+        self.static = {k: v.clone() for k, v in example.items() if v is not None}
+        inputs = {k: self.static.get(k) for k in example}
+        side = torch.cuda.Stream()
+        side.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side):
+            for _ in range(self.WARMUP):
+                for p in params:
+                    p.grad = None
+                loss, _ = step_losses(inputs)
+                loss.backward()
+                # Drop the autograd graph so its AccumulateGrad nodes, which
+                # remember the stream they were created on, are not reused later.
+                del loss
+        torch.cuda.current_stream().wait_stream(side)
+        for p in params:
+            p.grad = None
+        self.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.graph):
+            loss, self.metrics = step_losses(inputs)
+            loss.backward()
+        del loss
+
+    def run(self, mb: dict) -> torch.Tensor:
+        for key, static in self.static.items():
+            static.copy_(mb[key])
+        self.graph.replay()
+        return self.metrics
 
 
 def _obs_to_tensors(obs: Observation, device: str):

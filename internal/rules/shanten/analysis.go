@@ -46,7 +46,7 @@ func Analyze(counts [34]int, numWilds int, numOpenMelds int) RouteBreakdown {
 	ensureTables()
 	m := maxMelds - numOpenMelds
 
-	tilesToAdd := calcStandard(counts, m)
+	tilesToAdd := calcStandard(&counts, m)
 	standard := normalizeShanten(tilesToAdd - 1 - numWilds)
 
 	sevenPairs := RouteUnavailable
@@ -80,7 +80,7 @@ func AnalyzeFromTiles(closedHand []*pb.Tile, openMelds int, wildTiles []*pb.Tile
 func AnalyzeHand(closedHand []*pb.Tile, openMelds int, wildTiles []*pb.Tile) HandAnalysis {
 	counts, numWilds, wildSet := buildCountsFromTiles(closedHand, wildTiles)
 	routes := Analyze(counts, numWilds, openMelds)
-	usefulTiles, totalUseful := findUsefulTiles(counts, numWilds, openMelds, routes.Overall, wildSet)
+	usefulTiles, totalUseful := findUsefulTiles(counts, numWilds, openMelds, routes, wildSet)
 	discardOptions := analyzeDiscardOptions(closedHand, counts, numWilds, openMelds, wildSet)
 
 	return HandAnalysis{
@@ -94,7 +94,7 @@ func AnalyzeHand(closedHand []*pb.Tile, openMelds int, wildTiles []*pb.Tile) Han
 func FindUsefulTilesFromTiles(closedHand []*pb.Tile, openMelds int, wildTiles []*pb.Tile) ([]UsefulTile, int, RouteBreakdown) {
 	counts, numWilds, wildSet := buildCountsFromTiles(closedHand, wildTiles)
 	routes := Analyze(counts, numWilds, openMelds)
-	usefulTiles, totalUseful := findUsefulTiles(counts, numWilds, openMelds, routes.Overall, wildSet)
+	usefulTiles, totalUseful := findUsefulTiles(counts, numWilds, openMelds, routes, wildSet)
 	return usefulTiles, totalUseful, routes
 }
 
@@ -120,7 +120,7 @@ func analyzeDiscardOptions(closedHand []*pb.Tile, counts [34]int, numWilds int, 
 		}
 
 		after := Analyze(counts, numWilds, openMelds)
-		usefulTiles, totalUseful := findUsefulTiles(counts, numWilds, openMelds, after.Overall, wildSet)
+		usefulTiles, totalUseful := findUsefulTiles(counts, numWilds, openMelds, after, wildSet)
 		options = append(options, DiscardOption{
 			Discard: TileType{
 				Suit:  tile.Suit,
@@ -180,14 +180,20 @@ func buildCountsFromTiles(closedHand []*pb.Tile, wildTiles []*pb.Tile) ([34]int,
 	return counts, numWilds, wildSet
 }
 
-func findUsefulTiles(counts [34]int, numWilds int, openMelds int, currentShanten int, wildSet map[uint32]bool) ([]UsefulTile, int) {
-	if currentShanten < 0 {
-		currentShanten = 0
-	}
+// findUsefulTiles lists the draws that lower the hand's overall shanten
+// (clamped at 0) below before.Overall's. `before` must be Analyze of exactly
+// these counts, numWilds and openMelds.
+func findUsefulTiles(counts [34]int, numWilds int, openMelds int, before RouteBreakdown, wildSet map[uint32]bool) ([]UsefulTile, int) {
+	currentShanten := max(before.Overall, 0)
 
 	usefulTiles := make([]UsefulTile, 0, 34)
 	totalUseful := 0
+	if currentShanten == 0 {
+		// A draw's shanten is clamped at 0 too, so nothing can be below it.
+		return usefulTiles, totalUseful
+	}
 
+	prefix := newStandardPrefix(&counts, maxMelds-openMelds)
 	for idx := 0; idx < 34; idx++ {
 		suit, value := tiles.FromIndex34(idx)
 		key := tiles.KeyOf(suit, value)
@@ -199,21 +205,17 @@ func findUsefulTiles(counts [34]int, numWilds int, openMelds int, currentShanten
 			continue
 		}
 
-		newShanten := 0
+		var useful bool
 		if wildSet[key] {
-			numWilds++
-			newShanten = Analyze(counts, numWilds, openMelds).Overall
-			numWilds--
+			// A wild draw leaves the natural counts, so the table value, unchanged.
+			useful = drawBeats(&counts, prefix.base, numWilds+1, openMelds, before, currentShanten)
 		} else {
 			counts[idx]++
-			newShanten = Analyze(counts, numWilds, openMelds).Overall
+			useful = drawBeats(&counts, prefix.withDraw(&counts, idx), numWilds, openMelds, before, currentShanten)
 			counts[idx]--
 		}
-		if newShanten < 0 {
-			newShanten = 0
-		}
 
-		if newShanten < currentShanten {
+		if useful {
 			usefulTiles = append(usefulTiles, UsefulTile{
 				Suit:      suit,
 				Value:     value,
@@ -224,6 +226,78 @@ func findUsefulTiles(counts [34]int, numWilds int, openMelds int, currentShanten
 	}
 
 	return usefulTiles, totalUseful
+}
+
+// standardPrefix caches the fixed part of calcStandard's combination chain
+// (honor, then add1 sou, then add1 pin, then add2 man) for one hand, so a
+// one-tile draw recomputes only the chain from the group it lands in. add1
+// is a pure function of its operands, so a resumed chain equals the full one.
+type standardPrefix struct {
+	m                      int
+	honor, sou, souPin     [10]uint8 // chain state after honor / +sou / +pin
+	manRow, pinRow, souRow [10]uint8 // the hand's suit table rows
+	base                   int       // calcStandard of the hand itself
+}
+
+func newStandardPrefix(counts *[34]int, m int) standardPrefix {
+	ensureTables()
+	p := standardPrefix{m: m}
+	p.manRow = suitTable[hash(counts[0:9])]
+	p.pinRow = suitTable[hash(counts[9:18])]
+	p.souRow = suitTable[hash(counts[18:27])]
+	p.honor = honorTable[hash(counts[27:34])]
+	p.sou = p.honor
+	add1(&p.sou, p.souRow, m)
+	p.souPin = p.sou
+	add1(&p.souPin, p.pinRow, m)
+	ret := p.souPin
+	add2(&ret, p.manRow, m)
+	p.base = int(ret[m+5])
+	return p
+}
+
+// withDraw is calcStandard(counts, m) for counts = the prefix's hand plus
+// one tile at idx (already added to counts).
+func (p *standardPrefix) withDraw(counts *[34]int, idx int) int {
+	m := p.m
+	var ret [10]uint8
+	switch {
+	case idx < 9: // man: only the final add2 changes
+		ret = p.souPin
+		add2(&ret, suitTable[hash(counts[0:9])], m)
+	case idx < 18: // pin
+		ret = p.sou
+		add1(&ret, suitTable[hash(counts[9:18])], m)
+		add2(&ret, p.manRow, m)
+	case idx < 27: // sou
+		ret = p.honor
+		add1(&ret, suitTable[hash(counts[18:27])], m)
+		add1(&ret, p.pinRow, m)
+		add2(&ret, p.manRow, m)
+	default:
+		return calcStandard(counts, m)
+	}
+	return int(ret[m+5])
+}
+
+// drawBeats reports whether Analyze(counts, numWilds, openMelds).Overall is
+// below target (>= 1), where counts/numWilds are the hand plus one drawn tile,
+// tilesToAdd is calcStandard of counts, and `before` is Analyze of the hand
+// without the draw. One added tile, natural or wild, raises pairs+min(kinds,7)
+// and the independence overlap by at most one, so the seven-pairs and
+// independence shanten fall by at most one: a route with before >= target+1
+// cannot reach below target, and is skipped.
+func drawBeats(counts *[34]int, tilesToAdd int, numWilds int, openMelds int, before RouteBreakdown, target int) bool {
+	if normalizeShanten(tilesToAdd-1-numWilds) < target {
+		return true
+	}
+	if openMelds != 0 {
+		return false
+	}
+	if before.SevenPairs-1 < target && normalizeShanten(calcSevenPairsWithWilds(*counts, numWilds)) < target {
+		return true
+	}
+	return before.Independence-1 < target && normalizeShanten(calcIndependenceWithWilds(*counts, numWilds)) < target
 }
 
 func normalizeShanten(value int) int {

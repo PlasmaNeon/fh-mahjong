@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import filecmp
 import json
+import os
+import shutil
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -15,7 +18,8 @@ from fh_mahjong_ai.data import backfill_returns, split_train_validation
 from fh_mahjong_ai.evaluate import compute_action_agreement, compute_action_agreement_from_batches
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.storage import is_sharded_transition_dataset, load_checkpoint, read_transition_arrays, read_transitions, save_checkpoint
+from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args, model_config_params
+from fh_mahjong_ai.storage import is_sharded_transition_dataset, load_checkpoint, model_config_metadata, read_transition_arrays, read_transitions, save_checkpoint
 from fh_mahjong_ai.offline_trainers import BehaviorCloningTrainer, TrainMetrics
 
 BC_ARRAY_KEYS = (
@@ -46,8 +50,19 @@ def train_bc(
     mlflow_experiment: str = DEFAULT_EXPERIMENT_NAME,
     mlflow_run_name: Optional[str] = None,
     validation_batch_size: int = 4096,
+    model_config: Optional[ModelConfig] = None,
+    patience: Optional[int] = None,
+    min_delta: float = 1e-4,
+    min_epochs: int = 1,
 ) -> List[TrainMetrics]:
     """Run BC training and return collected metrics."""
+    if patience is not None and patience < 1:
+        raise ValueError("--patience must be >= 1")
+    if min_delta < 0:
+        raise ValueError("--min-delta must be >= 0")
+    if min_epochs < 1:
+        raise ValueError("--min-epochs must be >= 1")
+
     torch.manual_seed(split_seed)
     validation_arrays: Optional[dict[str, np.ndarray]] = None
     validation_indices: Optional[np.ndarray] = None
@@ -82,8 +97,12 @@ def train_bc(
     if len(buf) == 0:
         raise ValueError(f"no training transitions found in {data_path}")
 
+    if patience is not None and validation_count == 0:
+        raise ValueError("--patience requires a validation split")
+
     env_config = EnvConfig()
-    model_config = ModelConfig()
+    if model_config is None:
+        model_config = ModelConfig()
     model = PolicyValueNet(env_config, model_config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1e-4)
 
@@ -118,8 +137,16 @@ def train_bc(
         "validation_batch_size": validation_batch_size,
         "learning_rate": learning_rate,
         "device": device,
+        "model_config": model_config_metadata(model_config),
         "epochs": [],
     }
+
+    best_ce = float("inf")
+    best_epoch: Optional[int] = None
+    patience_ref = float("inf")
+    stale = 0
+    stopped_early = False
+    epochs_run = 0
 
     with start_run(
         enabled=mlflow_enabled,
@@ -146,6 +173,7 @@ def train_bc(
                     "total_transitions": total_transitions,
                     "train_transitions": train_count,
                     "validation_transitions": validation_count,
+                    **model_config_params(model_config),
                 }
             )
 
@@ -175,6 +203,12 @@ def train_bc(
                 "avg_policy_loss": epoch_policy_loss / steps_per_epoch,
                 "avg_value_loss": epoch_value_loss / steps_per_epoch,
             }
+            # BC trains event-enabled configs with events=None (zeroed event
+            # features, per spec B2b/4.3), so validating under that same
+            # zeroed condition is a faithful measure of what BC learned --
+            # NOT a valid metric for an event-trained (PPO) checkpoint. See
+            # compute_action_agreement_from_batches's docstring.
+            wants_events = bool(getattr(model, "wants_events", False))
             if validation_count:
                 if validation_arrays is not None and validation_indices is not None:
                     validation_report = compute_action_agreement_from_batches(
@@ -185,6 +219,7 @@ def train_bc(
                             validation_batch_size,
                         ),
                         device=device,
+                        allow_zero_events=wants_events,
                     )
                 else:
                     validation_report = compute_action_agreement(
@@ -192,8 +227,10 @@ def train_bc(
                         validation_transitions,
                         device=device,
                         batch_size=validation_batch_size,
+                        allow_zero_events=wants_events,
                     )
                 epoch_report["validation"] = validation_report
+                epoch_report["validation_events"] = "zeroed" if wants_events else "none"
                 print(
                     f"--- epoch {epoch} avg_loss={avg_loss:.4f}  "
                     f"val_top1={validation_report['agreement_rate']:.2%}  "
@@ -201,6 +238,7 @@ def train_bc(
                 )
             else:
                 epoch_report["validation"] = None
+                epoch_report["validation_events"] = None
                 print(f"--- epoch {epoch} avg_loss={avg_loss:.4f}")
 
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -208,9 +246,44 @@ def train_bc(
             save_checkpoint(
                 checkpoint_path,
                 model, optimizer, step=epoch,
+                metadata={
+                    "model_config": model_config_metadata(model_config),
+                    "method": "behavior_cloning",
+                },
             )
             epoch_report["checkpoint_path"] = str(checkpoint_path)
             report["epochs"].append(epoch_report)
+
+            epochs_run = epoch
+            val_ce = (epoch_report["validation"] or {}).get("mean_cross_entropy")
+            if val_ce is not None:
+                # Selection (best_epoch) is the literal argmin over validation CE.
+                # Stopping (stale/patience) is gated on a min_delta-significant
+                # improvement, tracked separately so a sub-min_delta improvement
+                # can still win selection without resetting the patience clock.
+                if val_ce < best_ce:
+                    best_ce, best_epoch = float(val_ce), epoch
+                    if patience is not None:
+                        # Refresh best.pt right after this epoch's checkpoint is
+                        # saved so an interrupted run always leaves a current
+                        # best.pt behind, not just a run that reaches the end
+                        # of the loop. Copy-then-rename so a reader never
+                        # observes a partially written best.pt.
+                        best_pt_dst = checkpoint_dir / "best.pt"
+                        best_pt_tmp = checkpoint_dir / "best.pt.tmp"
+                        shutil.copyfile(checkpoint_path, best_pt_tmp)
+                        os.replace(best_pt_tmp, best_pt_dst)
+                if val_ce < patience_ref - min_delta:
+                    patience_ref, stale = float(val_ce), 0
+                else:
+                    stale += 1
+                if patience is not None and epoch >= min_epochs and stale >= patience:
+                    stopped_early = True
+
+            report["stopped_early"] = stopped_early
+            report["epochs_run"] = epochs_run
+            report["best_epoch"] = best_epoch
+            report["best_validation_cross_entropy"] = best_ce if best_epoch is not None else None
 
             if report_path is not None:
                 write_training_report(report_path, report)
@@ -229,9 +302,30 @@ def train_bc(
                 )
                 log_artifact(checkpoint_path, artifact_path="checkpoints")
 
+            if stopped_early:
+                print(
+                    f"--- early stop at epoch {epoch}: no val CE improvement >= {min_delta} "
+                    f"for {patience} epochs (best epoch {best_epoch})"
+                )
+                break
+
         if mlflow_run is not None:
             log_artifact(report_path, artifact_path="reports")
             print(f"MLflow run: {mlflow_run.info.run_id}")
+
+    if patience is not None and best_epoch is not None:
+        # best.pt is refreshed in-loop as soon as best_epoch changes (above);
+        # this is a no-op guard for callers that mutate checkpoint_dir between
+        # the last in-loop refresh and return (e.g. tests, `--resume` chains).
+        # filecmp.cmp(shallow=False) compares sizes first and only reads both
+        # files when sizes match, so the common (already-refreshed) case never
+        # pays for a full byte compare.
+        best_checkpoint_path = checkpoint_dir / f"epoch_{best_epoch:03d}.pt"
+        best_pt_path = checkpoint_dir / "best.pt"
+        if not (best_pt_path.exists() and filecmp.cmp(best_pt_path, best_checkpoint_path, shallow=False)):
+            best_pt_tmp = checkpoint_dir / "best.pt.tmp"
+            shutil.copyfile(best_checkpoint_path, best_pt_tmp)
+            os.replace(best_pt_tmp, best_pt_path)
 
     return all_metrics
 
@@ -299,7 +393,21 @@ def main() -> None:
     parser.add_argument("--mlflow-tracking-uri", type=str, default=None)
     parser.add_argument("--mlflow-experiment", type=str, default=DEFAULT_EXPERIMENT_NAME)
     parser.add_argument("--mlflow-run-name", type=str, default=None)
+    parser.add_argument("--patience", type=int, default=None,
+                         help="Stop after this many epochs without validation CE improvement")
+    parser.add_argument("--min-delta", type=float, default=1e-4,
+                         help="Minimum validation CE decrease to count as an improvement")
+    parser.add_argument("--min-epochs", type=int, default=1,
+                         help="Minimum epochs to run before early stopping can trigger")
+    add_model_config_args(parser)
     args = parser.parse_args()
+
+    if args.patience is not None and args.patience < 1:
+        parser.error("--patience must be >= 1")
+    if args.min_delta < 0:
+        parser.error("--min-delta must be >= 0")
+    if args.min_epochs < 1:
+        parser.error("--min-epochs must be >= 1")
 
     report_output = args.report_output or args.checkpoint_dir / "training_report.json"
     print(f"Loading data from {args.data}...")
@@ -320,6 +428,10 @@ def main() -> None:
         mlflow_experiment=args.mlflow_experiment,
         mlflow_run_name=args.mlflow_run_name,
         validation_batch_size=args.validation_batch_size,
+        model_config=model_config_from_args(args),
+        patience=args.patience,
+        min_delta=args.min_delta,
+        min_epochs=args.min_epochs,
     )
     print(f"Training complete. Final loss: {metrics[-1].loss:.4f}")
     print(f"Report saved to {report_output}")

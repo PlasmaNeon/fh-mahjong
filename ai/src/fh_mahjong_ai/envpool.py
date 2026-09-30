@@ -9,13 +9,20 @@ from __future__ import annotations
 
 import ctypes
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Optional, Sequence
 
 import numpy as np
 
-from .bridge import BridgeError, FHBytesResult, build_bridge, resolve_bridge_library
+from .bridge import (BridgeError, CtypesGoBridge, FHBytesResult, build_bridge,
+                     resolve_bridge_library)
 from .config import EnvConfig
 from .generated.proto import game_pb2
+
+# The single-env bridge's round-outcome decoder, reused verbatim so a pool
+# payload and a `StepResult.info["round_outcome"]` payload are the same dict.
+# It reads no instance state, hence the bound `None` self.
+_decode_round_outcome = partial(CtypesGoBridge._decode_round_outcome, None)
 
 
 @dataclass(frozen=True)
@@ -35,6 +42,17 @@ class SlotMeta:
     step_rewards: np.ndarray
     has_observation: bool
     error: str = ""
+    # Decoded RoundOutcome for the hand this step closed (nonterminal hand
+    # boundary, terminal step, or truncation-after-a-completed-hand); None
+    # when the proto field is unset. Same payload the single-env path puts in
+    # `StepResult.info["round_outcome"]` — hindsight labels key off it.
+    round_outcome: Optional[dict] = None
+
+
+def _step_result_outcome(result) -> Optional[dict]:
+    """`StepResult.info["round_outcome"]` if the bridge attached one."""
+    info = getattr(result, "info", None) if result is not None else None
+    return info.get("round_outcome") if info else None
 
 
 @dataclass(frozen=True)
@@ -45,6 +63,11 @@ class PoolStepResult:
     action_masks: np.ndarray  # (rows, A) int8
     event_histories: list[np.ndarray] = field(default_factory=list)  # per-row uint32, TRUE length
     row_of_slot: dict[int, int] = field(default_factory=dict)
+    # The same histories as one (rows, window) uint32 grid: row i holds its
+    # newest min(len, window) events oldest-first, zero-padded at the end,
+    # with the kept count in event_counts[i]. None when the window is 0.
+    event_grid: Optional[np.ndarray] = None
+    event_counts: Optional[np.ndarray] = None
 
 
 def _empty_result(env_config: EnvConfig, slots: list[SlotMeta]) -> PoolStepResult:
@@ -57,6 +80,21 @@ def _empty_result(env_config: EnvConfig, slots: list[SlotMeta]) -> PoolStepResul
         event_histories=[],
         row_of_slot={},
     )
+
+
+def _event_grid(histories: list[np.ndarray], window: int):
+    """(rows, window) grid + kept counts from true-length histories: each row
+    keeps its newest min(len, window) events, oldest-first, zero-padded."""
+    if window <= 0:
+        return None, None
+    grid = np.zeros((len(histories), window), dtype=np.uint32)
+    counts = np.zeros(len(histories), dtype=np.int64)
+    for i, ev in enumerate(histories):
+        n = min(int(ev.shape[0]), window)
+        if n > 0:
+            grid[i, :n] = ev[-n:]
+        counts[i] = n
+    return grid, counts
 
 
 class InProcessEnvPool:
@@ -83,18 +121,21 @@ class InProcessEnvPool:
                 rewards = np.asarray(result.rewards if result is not None else [], dtype=np.float32)
                 terminated = bool(result.terminated) if result is not None else False
                 truncated = bool(result.truncated) if result is not None else False
+                outcome = _step_result_outcome(result)
             elif command.action_id is not None:
                 result = bridge.step(int(command.action_id))
                 observation = result.observation
                 rewards = np.asarray(result.rewards, dtype=np.float32)
                 terminated, truncated = bool(result.terminated), bool(result.truncated)
+                outcome = _step_result_outcome(result)
             else:  # skip
                 metas.append(SlotMeta(slot, 0, False, False,
                                       np.zeros(0, np.float32), False))
                 continue
             has_obs = not (terminated or truncated)
             seat = int(observation.seat) if has_obs else 0
-            metas.append(SlotMeta(slot, seat, terminated, truncated, rewards, has_obs))
+            metas.append(SlotMeta(slot, seat, terminated, truncated, rewards, has_obs,
+                                  round_outcome=outcome))
             if has_obs:
                 obs_rows.append((
                     slot,
@@ -107,13 +148,18 @@ class InProcessEnvPool:
         if not obs_rows:
             return _empty_result(self.env_config, metas)
         row_of_slot = {slot: i for i, (slot, *_rest) in enumerate(obs_rows)}
+        event_histories = [r[5] for r in obs_rows]
+        event_grid, event_counts = _event_grid(event_histories,
+                                               int(self.env_config.event_history_window))
         return PoolStepResult(
             slots=metas,
             planes=np.stack([r[1] for r in obs_rows]),
             scalars=np.stack([r[2] for r in obs_rows]),
             action_masks=np.stack([r[3] for r in obs_rows]),
-            event_histories=[r[5] for r in obs_rows],
+            event_histories=event_histories,
             row_of_slot=row_of_slot,
+            event_grid=event_grid,
+            event_counts=event_counts,
         )
 
     def close(self) -> None:
@@ -169,6 +215,8 @@ class GoEnvPool:
                 step_rewards=np.asarray(state.step_rewards, dtype=np.float32),
                 has_observation=bool(state.has_observation),
                 error=str(state.error),
+                round_outcome=(_decode_round_outcome(state.round_outcome)
+                               if state.HasField("round_outcome") else None),
             ))
             if state.has_observation:
                 live_slots.append(int(state.slot))
@@ -190,9 +238,10 @@ class GoEnvPool:
         masks = masks.reshape(rows, int(response.action_space_size))
 
         event_histories: list[np.ndarray] = []
+        grid = counts = None
         window = int(response.event_history_window)
         if window > 0:
-            counts = np.frombuffer(response.event_counts, dtype="<u4")
+            counts = np.frombuffer(response.event_counts, dtype="<u4").astype(np.int64)
             if counts.size != rows:
                 raise BridgeError(f"event_counts has {counts.size} rows, expected {rows}")
             flat = np.frombuffer(response.event_histories, dtype="<u4")
@@ -200,12 +249,13 @@ class GoEnvPool:
                 raise BridgeError(
                     f"event_histories has {flat.size} uint32s, expected rows*window={rows * window}"
                 )
+            if int(counts.max()) > window:
+                i = int(counts.argmax())
+                raise BridgeError(f"row {i} event count {int(counts[i])} exceeds window {window}")
+            # The Go side zero-pads each row's tail, so the wire grid is
+            # already event_grid's layout. Histories are read-only views of it.
             grid = flat.reshape(rows, window)
-            for i in range(rows):
-                count = int(counts[i])
-                if count > window:
-                    raise BridgeError(f"row {i} event count {count} exceeds window {window}")
-                event_histories.append(grid[i, :count].copy())
+            event_histories = [grid[i, :count] for i, count in enumerate(counts.tolist())]
         else:
             event_histories = [np.zeros(0, dtype=np.uint32) for _ in range(rows)]
 
@@ -213,6 +263,7 @@ class GoEnvPool:
             slots=metas, planes=planes, scalars=scalars, action_masks=masks,
             event_histories=event_histories,
             row_of_slot={slot: i for i, slot in enumerate(live_slots)},
+            event_grid=grid, event_counts=counts,
         )
 
     def close(self) -> None:
@@ -292,6 +343,9 @@ def make_selfplay_pool(env_config: EnvConfig, ppo_config, slots: int):
         auto_play_heuristics=False,
         max_steps_per_episode=ppo_config.max_steps_per_episode,
         match_mode=ppo_config.match_mode,
+        chongci_starting_score=env_config.chongci_starting_score,
+        chongci_bust_threshold=env_config.chongci_bust_threshold,
+        chongci_max_hands=env_config.chongci_max_hands,
         oracle_observation=env_config.oracle_observation,
         event_history_window=env_config.event_history_window,
     )

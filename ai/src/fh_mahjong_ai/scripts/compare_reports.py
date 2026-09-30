@@ -94,6 +94,27 @@ def _check_comparable(
         raise ValueError(
             f"reports are not comparable: decision protocol differs ({label_a!r} vs {label_b!r})"
         )
+    # A report without an ``opponents`` field was played against the heuristic
+    # bots; the field exists only for a strong table. Absence is therefore a
+    # real value, not missing config, and no flag relaxes this check.
+    opponents_a = report_a.get("opponents")
+    opponents_b = report_b.get("opponents")
+    if opponents_a != opponents_b:
+        raise ValueError(
+            "reports are not comparable: opponents differ "
+            f"({opponents_a or 'heuristic bots'!r} vs {opponents_b or 'heuristic bots'!r})"
+        )
+    # Which evaluator produced the report. Absent means the sequential evaluator.
+    # The batched pool evaluator's fast path can flip a near-tied greedy argmax,
+    # so the two only ever pair with a report from the same evaluator settings.
+    evaluator_a = report_a.get("evaluator")
+    evaluator_b = report_b.get("evaluator")
+    if evaluator_a != evaluator_b:
+        raise ValueError(
+            "reports are not comparable: evaluator differs "
+            f"({evaluator_a or 'sequential'!r} vs {evaluator_b or 'sequential'!r}); "
+            "regenerate the comparator with the same evaluator settings"
+        )
     for key in _COMPAT_KEYS:
         in_a = key in report_a
         in_b = key in report_b
