@@ -106,6 +106,10 @@ def main() -> None:
     parser.add_argument("--batched-eval-inference", choices=("batched", "per_row"), default="batched",
                         help="batched evaluator forward: 'batched' (fast) or 'per_row' (byte-identical "
                              "to the sequential evaluator, for verification)")
+    parser.add_argument("--symmetry-average", choices=("none", "suits"), default="none",
+                        help="average the policy over the six suit permutations (a different policy "
+                             "than the plain checkpoint; recorded as policy_transform). Requires "
+                             "--batched-eval-slots")
     parser.add_argument("--bridge-lib", type=Path, default=None, help="Path to c-shared library")
     parser.add_argument("--match-mode", choices=("classic", "chongci"), default="classic", help="Simulator match mode")
     parser.add_argument("--chongci-starting-score", type=int, default=2000, help="Chongci starting score")
@@ -216,6 +220,8 @@ def main() -> None:
                          "(not --search, --sample-temperature, --opponent-checkpoint, --oracle)")
     elif args.batched_eval_inference != "batched":
         parser.error("--batched-eval-inference requires --batched-eval-slots")
+    if args.symmetry_average != "none" and args.batched_eval_slots == 0:
+        parser.error("--symmetry-average requires --batched-eval-slots")
 
     if args.opponent_checkpoint is not None:
         if not args.duplicate_seats:
@@ -545,6 +551,7 @@ def main() -> None:
                     event_history_window=args.event_history_window,
                     slots=args.batched_eval_slots,
                     inference_mode=args.batched_eval_inference,
+                    symmetry=args.symmetry_average,
                 )
             elif args.duplicate_seats:
                 online_report = evaluate_duplicate_seats(
