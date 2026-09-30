@@ -121,6 +121,7 @@ def test_compare_accepts_same_evaluator():
     (["--duplicate-seats", "--batched-eval-slots", "-1"], ">= 0"),
     (["--duplicate-seats", "--batched-eval-inference", "per_row"], "requires --batched-eval-slots"),
     (["--duplicate-seats", "--batched-eval-slots", "8", "--sample-temperature", "0.5"], "greedy"),
+    (["--duplicate-seats", "--ensemble-checkpoint", "other.pt"], "requires --batched-eval-slots"),
 ])
 def test_cli_validation(tmp_path, monkeypatch, capsys, argv, message):
     from fh_mahjong_ai.scripts import evaluate as evaluate_cli
