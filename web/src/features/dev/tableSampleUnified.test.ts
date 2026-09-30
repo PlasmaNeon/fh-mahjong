@@ -12,11 +12,21 @@ describe('unified table preview', () => {
     expect(ruleBody(css, sides + ' .zone-hand')).toContain('left: var(--side-hand-inset)')
     const exposed = ruleBody(css, sides + ' .seat-bundle__exposed:has(.seat-meld-group:nth-child(4)):has(.seat-meld-group > :nth-child(4))')
     const kanWidth = 3 * pixelVariable(exposed, '--tile-small-width') + pixelVariable(exposed, '--tile-small-height')
-    const remainingPair = 2 * 24 + 1
+    const remainingPair = 2 * value('--tile-small-width') + 1
     const fourKans = 4 * kanWidth + 3 * pixelVariable(ruleBody(css, sides + ' .seat-bundle__exposed'), '--meld-group-gap')
     const gap = value('--bundle-span-opp') - value('--side-hand-inset') - remainingPair - fourKans
-    expect(gap).toBeGreaterThanOrEqual(8)
+    expect(gap).toBeGreaterThanOrEqual(4)
     expect(value('--side-hand-inset')).toBe(60)
+  })
+  it('keeps four discard rows clear of top and lifted local hands', () => {
+    const centerY = 360 - value('--center-shift')
+    const outerOffset = value('--center-hud-size') / 2 + value('--discard-hud-gap')
+    const riverDepth = value('--discard-tile-height') * 4
+    expect(centerY - outerOffset - riverDepth - 1).toBeGreaterThanOrEqual(28 + value('--tile-small-height'))
+    expect(centerY + outerOffset + riverDepth + 1).toBeLessThan(720 - value('--bundle-edge-offset') - value('--tile-height') - 22)
+    const laneSize = value('--discard-tile-width') * 6 + 2
+    const longSideRowEnd = centerY - laneSize / 2 + 1 + (12 - (30 - 24) / 2) * value('--discard-tile-width')
+    expect(longSideRowEnd).toBeLessThan(720 - value('--bundle-edge-offset') - value('--tile-height') - 22)
   })
   for (const [width, height] of [[667, 375], [1280, 720], [2560, 1080]]) {
     it(`preserves large hand tiles and edge clearance at ${width}x${height}`, () => {
@@ -31,7 +41,7 @@ describe('unified table preview', () => {
       const opponentBottom = layout.stageHeight / 2 - value('--center-shift') - 28 + value('--bundle-span-opp') / 2
       const liftedHandTop = layout.stageHeight - value('--bundle-edge-offset') - value('--tile-height') - 22
       expect(opponentBottom).toBeLessThan(liftedHandTop)
-      const rightHandInnerEdge = layout.stageWidth - 28 - 34
+      const rightHandInnerEdge = layout.stageWidth - 28 - value('--tile-small-height')
       const selfHandRight = (layout.stageWidth - value('--bundle-span-self')) / 2 + rail
       expect(rightHandInnerEdge).toBeGreaterThan(selfHandRight)
       const leftPivot = layout.stageHeight / 2 - value('--center-shift') - 28

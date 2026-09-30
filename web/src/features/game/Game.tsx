@@ -11,12 +11,12 @@ import { saveLeftMatchMarker, loadLeftMatchMarker } from './rejoinMatch';
 import ExitMatchButton from './ExitMatchButton';
 import GameSettingsButton from './GameSettingsButton';
 import { preloadAllTileSvgs } from '../../utils/tileDisplay';
-import { TableBoard, TileComponent } from '../../table/TableBoard'
+import { TableBoard } from '../../table/TableBoard'
 import { TableRoundResultOverlay } from '../../table/TableRoundResultOverlay';
 import MatchEndOverlay from './MatchEndOverlay';
 import { LoadingScreen } from '../../theme';
 import { orderTableActions } from './actionOrdering';
-import { collapseChiiActions, eligibleChiiTileIds, resolveChiiTileClick } from './chiiChoice';
+import { CallActionBar } from './CallActionBar';
 import { loadDiscardMode, saveDiscardMode } from './discardMode';
 import { resolveHandTileClick } from './handTileClick';
 import { shouldClearLift } from './clearLift';
@@ -89,9 +89,6 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
     const [hasSubmittedInterrupt, setHasSubmittedInterrupt] = useState(false);
     const [discardMode, setDiscardMode] = useState(loadDiscardMode);
     const [liftedTileId, setLiftedTileId] = useState<number | null>(null);
-    // undefined = normal interrupt actions; null = choosing the first chii tile;
-    // number = the first tile is selected and the matching second tiles remain.
-    const [chiiChoiceSelectedTileId, setChiiChoiceSelectedTileId] = useState<number | null | undefined>(undefined);
     const stageLayout = useGameStageLayout();
 
     // Reset ready state when a new round starts
@@ -111,20 +108,6 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
     const pendingFlowerReveal = rawValidActions.find((action: any) => action.type === game.ActionType.ACTION_FLOWER_REVEAL) || null;
     const validActions = rawValidActions.filter((action: any) => action.type !== game.ActionType.ACTION_FLOWER_REVEAL);
     const orderedValidActions = orderTableActions(validActions);
-    const orderedInterruptActions = orderedValidActions.filter((action: any) => action.type !== game.ActionType.ACTION_PASS);
-    const chiiActions = orderedInterruptActions.filter((action: any) => action.type === game.ActionType.ACTION_CHII);
-    const displayInterruptActions = collapseChiiActions(orderedInterruptActions);
-    const isChoosingChii = chiiChoiceSelectedTileId !== undefined;
-    const chiiChoiceKey = chiiActions
-        .map((action: any) => (action.meldTiles || []).map((tile: any) => tile.id).join(','))
-        .join('|');
-
-    useEffect(() => {
-        if (gameState.phase !== 3 || chiiActions.length < 2) {
-            setChiiChoiceSelectedTileId(undefined);
-        }
-    }, [gameState.phase, chiiActions.length, chiiChoiceKey]);
-
     // Debug: log discard conditions each state update
     console.log('[Discard Debug]', {
         mySeatId,
@@ -196,7 +179,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
     }, [pendingFlowerReveal, gameState.phase, gameState.activePlayer, mySeatId, socket]);
 
     const handleAction = (type: game.ActionType, tile?: game.ITile, meldTiles: game.ITile[] = []) => {
-        if (!socket || socket.readyState !== WebSocket.OPEN) return;
+        if (!socket || socket.readyState !== WebSocket.OPEN) return false;
 
         const action = game.PlayerAction.create({
             type: type,
@@ -210,6 +193,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
 
         const buffer = game.PlayerAction.encode(action).finish();
         socket.send(buffer);
+        return true;
     };
 
     // Preload all tile SVGs on first mount so images are instant
@@ -239,34 +223,6 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
         }
     }, [socket]);
 
-    const chiiHandTiles = myPlayer?.closedHand || [];
-    const chiiEligibleTileIds = isChoosingChii
-        ? eligibleChiiTileIds(chiiActions, chiiHandTiles, chiiChoiceSelectedTileId)
-        : new Set<number>();
-    const chiiSelectedTileIds = chiiChoiceSelectedTileId == null
-        ? new Set<number>()
-        : new Set<number>([chiiChoiceSelectedTileId]);
-    const handTileChoice = isChoosingChii
-        ? { eligibleTileIds: chiiEligibleTileIds, selectedTileIds: chiiSelectedTileIds }
-        : null;
-
-    const onChiiHandTileClick = (tile: game.ITile) => {
-        if (!isChoosingChii) return;
-        const result = resolveChiiTileClick({
-            actions: chiiActions,
-            hand: chiiHandTiles,
-            selectedTileId: chiiChoiceSelectedTileId,
-            clickedTile: tile,
-        });
-        if (result.kind === 'submit') {
-            setHasSubmittedInterrupt(true);
-            setChiiChoiceSelectedTileId(undefined);
-            handleAction(game.ActionType.ACTION_CHII, undefined, result.action.meldTiles || []);
-        } else if (result.kind === 'select') {
-            setChiiChoiceSelectedTileId(result.tileId);
-        }
-    };
-
     // Drop the lift when it can no longer refer to the tile the player raised:
     // a new round (tile ids are recycled each round, so a surviving id would be
     // a different physical tile) or the lifted tile leaving the self hand
@@ -288,31 +244,6 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
 
     // Check if a tile is wild (rebuilt per gameState.wildTiles)
     const isWildTile = makeWildTilePredicate(gameState.wildTiles);
-
-    const getActionMeta = (action: any) => {
-        if (action.type === game.ActionType.ACTION_CHII) {
-            return { label: t('game.chii'), accent: 'table-action-btn-chii' };
-        }
-        if (action.type === game.ActionType.ACTION_PON) {
-            return { label: t('game.pon'), accent: 'table-action-btn-pon' };
-        }
-        if (action.type === game.ActionType.ACTION_KAN) {
-            return { label: t('game.kan'), accent: 'table-action-btn-kan' };
-        }
-        if (action.type === game.ActionType.ACTION_RON) {
-            return { label: t('game.ron'), accent: 'table-action-btn-ron' };
-        }
-        if (action.type === game.ActionType.ACTION_TSUMO) {
-            return { label: t('game.tsumo'), accent: 'table-action-btn-tsumo' };
-        }
-        if (action.type === game.ActionType.ACTION_ACCEPT_HAITEI) {
-            return { label: '海底 ✓', accent: 'table-action-btn-tsumo' };
-        }
-        if (action.type === game.ActionType.ACTION_REFUSE_HAITEI) {
-            return { label: '海底 ✗', accent: 'table-action-btn-skip' };
-        }
-        return { label: t('game.action'), accent: 'table-action-btn-neutral' };
-    };
 
     const showInterruptActions = gameState.phase === 3 && validActions.length > 0 && !hasSubmittedInterrupt;
     const showTurnActions = gameState.phase === 2 && gameState.activePlayer === mySeatId && validActions.length > 0;
@@ -338,82 +269,19 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
     ];
 
     const actionBar = (showInterruptActions || showTurnActions) ? (
-        <div className="table-action-bar">
-            {showInterruptActions && (
-                isChoosingChii ? (
-                    <div className="chii-choice-prompt" role="status" aria-live="polite">
-                        <span className="chii-choice-prompt__call">{t('game.chii')}</span>
-                        <span className="chii-choice-prompt__instruction">
-                            {t(chiiChoiceSelectedTileId == null ? 'game.chooseChiiFirst' : 'game.chooseChiiSecond')}
-                        </span>
-                        <button
-                            type="button"
-                            className="chii-choice-prompt__cancel"
-                            onClick={() => setChiiChoiceSelectedTileId(undefined)}
-                        >
-                            {t('game.cancelChoice')}
-                        </button>
-                    </div>
-                ) : (
-                <>
-                    {displayInterruptActions.map((action: any, i: number) => {
-                        const meta = getActionMeta(action);
-
-                        return (
-                            <button
-                                key={i}
-                                onClick={() => {
-                                    if (action.type === game.ActionType.ACTION_CHII && chiiActions.length > 1) {
-                                        setLiftedTileId(null);
-                                        setChiiChoiceSelectedTileId(null);
-                                        return;
-                                    }
-                                    setHasSubmittedInterrupt(true);
-                                    handleAction(action.type, undefined, action.meldTiles || []);
-                                }}
-                                className={`table-action-btn ${meta.accent}`}
-                            >
-                                <span className="table-action-btn-label">{meta.label}</span>
-                                {action.type !== game.ActionType.ACTION_CHII && action.meldTiles && action.meldTiles.length > 0 && (
-                                    <div className="table-action-preview">
-                                        {action.meldTiles.map((meldTile: any, meldTileIndex: number) => (
-                                            <TileComponent key={meldTileIndex} tile={meldTile} size="small" isWild={isWildTile(meldTile)} />
-                                        ))}
-                                    </div>
-                                )}
-                            </button>
-                        );
-                    })}
-                    <button onClick={() => { setHasSubmittedInterrupt(true); handleAction(game.ActionType.ACTION_PASS); }} className="table-action-btn table-action-btn-skip">
-                        {t('game.pass')}
-                    </button>
-                </>
-                )
-            )}
-
-            {showTurnActions && (
-                <>
-                    {orderedValidActions.map((action: any, i: number) => {
-                        if (action.type === game.ActionType.ACTION_TSUMO) {
-                            const meta = getActionMeta(action);
-                            return (
-                                <button key={i} onClick={() => handleAction(game.ActionType.ACTION_TSUMO)} className={`table-action-btn ${meta.accent} table-action-btn-prominent`}>
-                                    {meta.label}
-                                </button>
-                            );
-                        } else if (action.type === game.ActionType.ACTION_KAN) {
-                            const meta = getActionMeta(action);
-                            return (
-                                <button key={i} onClick={() => handleAction(game.ActionType.ACTION_KAN, undefined, action.meldTiles || [])} className={`table-action-btn ${meta.accent}`}>
-                                    {meta.label}
-                                </button>
-                            );
-                        }
-                        return null;
-                    })}
-                </>
-            )}
-        </div>
+        <CallActionBar
+            actions={showInterruptActions ? orderedValidActions : orderedValidActions.filter(action =>
+                action.type === game.ActionType.ACTION_KAN || action.type === game.ActionType.ACTION_TSUMO)}
+            contextKey={`${gameState.handNum}:${gameState.phase}:${gameState.activePlayer}:${activeDiscardTile?.id}:${myPlayer?.drawnTileId}:${(myPlayer?.closedHand || []).map(tile => tile.id).join(',')}`}
+            allowPass={showInterruptActions}
+            isWildTile={isWildTile}
+            onAction={action => {
+                if (!handleAction(action.type, action.tile, action.meldTiles || [])) return false;
+                if (showInterruptActions) setHasSubmittedInterrupt(true);
+                setLiftedTileId(null);
+                return true;
+            }}
+        />
     ) : null;
 
     const playerViews = useMemo(() => gameState.players.map((player: any) => ({
@@ -542,7 +410,6 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
                 <div
                     className="game-stage"
                     data-discard-mode={discardMode}
-                    data-chii-choice={isChoosingChii ? 'true' : undefined}
                     data-compact={stageLayout.compact ? 'true' : undefined}
                     style={stageStyle}
                 >
@@ -571,8 +438,7 @@ function GameTable({ matchId, navigate, socket, disconnect, clearGameState, game
                             </>
                         ) : null}
                         liftedTileId={liftedTileId}
-                        onHandTileClick={isChoosingChii ? onChiiHandTileClick : onHandTileClick}
-                        handTileChoice={handTileChoice}
+                        onHandTileClick={onHandTileClick}
                         isWildTile={isWildTile}
                         animateDiscardTileIds={newlyDiscardedTileIds}
                         callableDiscard={callableDiscard}

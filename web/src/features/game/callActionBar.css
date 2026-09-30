@@ -1,0 +1,97 @@
+/* Floating tile pairs, not a dialog: leave the table visible between choices. */
+.game-stage .call-action-dock {
+  position: absolute;
+  right: 94px;
+  bottom: var(--action-bottom);
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 22px;
+  max-width: calc(100% - 188px);
+  color: #edf3f7;
+  pointer-events: auto;
+}
+.call-action-buttons { display: flex; align-items: center; gap: 14px; }
+.call-action-button {
+  min-width: 110px;
+  min-height: 86px;
+  padding: 14px 30px;
+  border: 1px solid #ffffff4a;
+  border-radius: 999px;
+  background: #edf3f6;
+  color: #203b4e;
+  box-shadow: 0 6px 18px #142b3b26;
+  font-family: inherit;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.call-action-win { background: #ecd5ad; color: #574023; border-color: #f9e7c7; }
+.call-action-pass, .call-action-back {
+  background: #263f50a6;
+  backdrop-filter: blur(12px);
+  border-color: #d4e3ed26;
+  color: #edf3f6;
+  font-size: 24px;
+  font-weight: 500;
+  box-shadow: none;
+}
+.call-choice-panel { max-width: 100%; }
+.call-choice-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 16px;
+  margin: 0 6px 16px;
+  color: #d0dfe8;
+  font-size: 22px;
+  line-height: 1.3;
+  text-shadow: 0 1px 5px #1e3649;
+}
+.call-choice-heading > span { color: #fff; font-size: 26px; font-weight: 600; }
+.call-choice-options { display: flex; gap: 18px; flex-wrap: wrap; justify-content: flex-end; }
+.call-choice-option {
+  --tile-small-width: 52px;
+  --tile-small-height: 72px;
+  position: relative;
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+  min-height: 106px;
+  padding: 15px;
+  border: 1px solid #ffffff54;
+  border-radius: 18px;
+  background: #dce8efdb;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 6px 18px #172f412b;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.call-choice-option::after {
+  content: '';
+  position: absolute;
+  bottom: 5px;
+  width: 28px;
+  height: 3px;
+  border-radius: 3px;
+  background: #315f7a;
+  opacity: 0;
+}
+@media (hover: hover) {
+  .call-choice-option:hover { background: #f2f7fa; transform: translateY(-5px); box-shadow: 0 12px 24px #172f413b; }
+  .call-choice-option:hover::after { opacity: 1; }
+  .call-action-button:hover { background: #fff; transform: translateY(-2px); }
+  .call-action-win:hover { background: #f4dfbd; }
+  .call-action-pass:hover, .call-action-back:hover { background: #28465a; }
+}
+.call-choice-option:active { background: #fff; transform: translateY(-1px); }
+.call-choice-option:active::after, .call-choice-option:focus-visible::after { opacity: 1; }
+.call-action-button:active { transform: translateY(1px); }
+.call-choice-option:focus-visible, .call-action-button:focus-visible { outline: 2px solid #d2e9f8; outline-offset: 5px; }
+@media (prefers-reduced-motion: no-preference) {
+  .call-choice-option, .call-action-button { transition: background 140ms, box-shadow 140ms, transform 140ms; }
+}

@@ -36,8 +36,12 @@ The `flower-heavy` fixture combines full concealed hands and eight flowers per s
 
 Unified preview side pivots use equal/opposite 28-unit offsets about the HUD center, so left hand start and right hand start are 180-degree counterparts. Side edge inset is 28; the local exposed stack with melds has a 32-unit right margin to clear the right hand. Concealed hand anchors remain fixed across meld counts.
 
-Unified side hands additionally have a constant 60-unit local inset (left moves down, right moves up). Side exposed tiles use 24x32 so even four sideways kans leave a 9-unit gap (2-unit gaps between meld groups) to the remaining pair. Meld length consumes the gap without changing the concealed start; melds remain on one row. Verified crowded, four-kan and flower-only fixtures at 667x375 and 1280x720.
+Unified side hands additionally have a constant 60-unit local inset (left moves down, right moves up). Side exposed tiles use 24x32 so even four sideways kans leave a 5-unit gap (2-unit gaps between meld groups) to the remaining pair. Meld length consumes the gap without changing the concealed start; melds remain on one row. Verified crowded, four-kan and flower-only fixtures at 667x375 and 1280x720.
 
 TableSample omits the decorative Fenghua corner badge.
 
 Unified exposed tiles prioritize legibility: opponents use 28x38 and self uses 34x46; flowers have an independent 32x42 rail. Side seats containing a four-wide kan use 26x34 at three melds and 24x32 at four to keep the fixed hand anchor and a single meld row even for direct kans.
+
+Call previews use the real `CallActionBar`: `multi-chii` offers three pairs for a left-seat 3s discard and a pon; `multi-kan` offers four different kan groups. The toolbar output records the submitted action/IDs. Changing fixtures resets this output and the chooser.
+
+Unified readability pass: concealed opponents use 26x37, discard bodies 29x38 with 80% face images with a 10% inset on each edge, while the HUD stays 170 square and its gap is 5. The fourth side discard row distributes columns beyond 24 equally toward both ends to clear lifted local tiles; the first three rows keep six tiles and fixed anchors.

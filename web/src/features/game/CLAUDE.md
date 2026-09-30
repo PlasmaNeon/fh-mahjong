@@ -13,7 +13,8 @@
 
 ### Pure helpers (each unit-tested alongside)
 - **actionOrdering.ts** — `orderTableActions`: wins first, calls next, Pass last.
-- **chiiChoice.ts** — The multi-choice chii state machine: `collapseChiiActions`, `eligibleChiiTileIds`, `resolveChiiTileClick`. Server candidates collapse to **one** `CHII` trigger; after it is pressed, eligible hand faces are selected in two taps and the matching original action (with its canonical tile IDs) is submitted. Duplicate physical copies stay equivalent by suit/value.
+- **CallActionBar.tsx** / **callActionBar.css** — Shared live/dev call dock: one trigger per action type, tile-group choices for ambiguous chii/pon/kan, Back without passing, explicit Pass, keyboard focus restoration and Escape. Retains canonical server actions while deduplicating equal-face candidates. `contextKey` plus action IDs remount the choice session on new turns/discards/legal actions; a synchronous ref prevents duplicate submissions. A callback returning false leaves a failed send retryable.
+- **chiiChoice.ts** — Legacy hand-tile choice helpers retained for existing tests; live play now uses the group chooser.
 - **handTileClick.ts** — `resolveHandTileClick` / `HandTileClickResult`: what a tap on a hand tile means in the current mode.
 - **discardMode.ts** — `DiscardMode` plus `parse`/`load`/`save`: the persisted tap-to-discard preference.
 - **clearLift.ts** — `shouldClearLift`: when a lifted (selected) tile should drop back.
@@ -31,3 +32,5 @@
 - Live round-result payout adapters use explicit `Ready` / `Waiting` labels. Replay adapters leave readiness absent, and the shared overlay must not synthesize a status when none was provided.
 - The board is deliberately **not** a canvas — the fixed-stage DOM approach preserves Framer Motion, SVG tiles, and clickable DOM interactions while eliminating viewport-unit drift.
 - Preview layout changes on `/tools/table-sample` (see `../dev/`) rather than by deploying a live match.
+
+Call dock styling uses separate floating pale tile-group targets without an enclosing dialog, pill-shaped action buttons, sentence-case action labels, and separate pointer-hover/keyboard-focus states. Touch targets retain the 86-unit minimum height; motion honors reduced-motion preferences.

@@ -6,7 +6,7 @@ import { TableBoard } from '../../table/TableBoard'
 import { TableRoundResultOverlay } from '../../table/TableRoundResultOverlay'
 import type { MeldLike, PlayerTableView, TileLike } from '../../table/types'
 import { GameDialog } from '../../theme'
-import { eligibleChiiTileIds, resolveChiiTileClick } from '../game/chiiChoice'
+import { CallActionBar } from '../game/CallActionBar'
 
 // Dev-only sample page: renders the real TableBoard with mock game data so the
 // table layout can be seen and iterated without a live match. Route: /tools/table-sample.
@@ -96,7 +96,13 @@ const calledPlayers: PlayerTableView[] = players.map((player) => player.seat ===
     }
   : player)
 
+const demoKanActions = [1, 2, 3, 4].map(value => ({ type: game.ActionType.ACTION_KAN, meldTiles: Array.from({length: 4}, () => t(1, value)) }))
+
 const wildTiles: TileLike[] = [t(4, 6)]
+const demoFifthSou = t(1, 5)
+const demoPonTiles = [selfConcealed[2], t(1, 3)]
+const demoCalledTile = t(1, 3)
+const demoChiiPlayers = players.map(player => player.seat === 0 ? { ...player, drawnTileId: null, closedHand: selfConcealed.map((tile, index) => index === 8 ? demoPonTiles[1] : index === 9 ? demoFifthSou : tile) } : player.seat === 3 ? { ...player, discards: [...(player.discards ?? []).slice(0, -1), demoCalledTile] } : player)
 const demoChiiActions = [
   {
     type: game.ActionType.ACTION_CHII,
@@ -106,6 +112,7 @@ const demoChiiActions = [
     type: game.ActionType.ACTION_CHII,
     meldTiles: [selfConcealed[1], selfConcealed[3]],
   },
+  { type: game.ActionType.ACTION_CHII, meldTiles: [selfConcealed[3], demoFifthSou] },
 ]
 
 // Dense synthetic state for geometry checks; not a rules-engine scenario.
@@ -144,59 +151,20 @@ export default function TableSample() {
   const stageLayout = useGameStageLayout(unifiedPreview ? { baseHeight: 720, compactMaxHeight: Infinity } : {})
   const [fixture, setFixture] = useState<Fixture>(FIXTURES.some(f => f.value === initialFixture) ? initialFixture as Fixture : 'idle')
   const [liftedTileId, setLiftedTileId] = useState<number | null>(null)
-  const [demoChiiChoiceOpen, setDemoChiiChoiceOpen] = useState(false)
-  const [demoChiiSelectedTileId, setDemoChiiSelectedTileId] = useState<number | null>(null)
+  const [demoSubmitted, setDemoSubmitted] = useState<string | null>(null)
   const handInteractive = fixture === 'active' || fixture === 'called-hand' || fixture === 'crowded' || fixture === 'wild-hand' || fixture === 'flower-heavy'
-  const tablePlayers = fixture === 'flower-heavy' ? flowerHeavyPlayers : fixture === 'called-hand' ? calledPlayers : fixture === 'crowded' ? crowdedPlayers : fixture === 'meld-heavy' ? meldHeavyPlayers : players
-  const demoChiiEligibleIds = demoChiiChoiceOpen
-    ? eligibleChiiTileIds(demoChiiActions, selfConcealed, demoChiiSelectedTileId)
-    : new Set<number>()
-  const demoHandChoice = demoChiiChoiceOpen
-    ? {
-        eligibleTileIds: demoChiiEligibleIds,
-        selectedTileIds: demoChiiSelectedTileId == null
-          ? new Set<number>()
-          : new Set<number>([demoChiiSelectedTileId]),
-      }
-    : null
-
+  const tablePlayers = fixture === 'multi-chii' ? demoChiiPlayers : fixture === 'flower-heavy' ? flowerHeavyPlayers : fixture === 'called-hand' ? calledPlayers : fixture === 'crowded' ? crowdedPlayers : fixture === 'meld-heavy' ? meldHeavyPlayers : players
   const { shellStyle: stageShellStyle, stageStyle } = stageLayout
 
-  const actionBar = fixture === 'active' || fixture === 'crowded' || fixture === 'interrupt' || fixture === 'multi-chii' ? (
-    <div className="table-action-bar">
-      {fixture === 'interrupt' && <button className="table-action-btn table-action-btn-pon">PON</button>}
-      {fixture === 'interrupt' && <button className="table-action-btn table-action-btn-ron">RON!</button>}
-      {fixture === 'multi-chii' && demoChiiChoiceOpen && (
-        <div className="chii-choice-prompt" role="status">
-          <span className="chii-choice-prompt__call">CHII</span>
-          <span className="chii-choice-prompt__instruction">
-            {demoChiiSelectedTileId == null ? 'Pick the first tile' : 'Pick the matching tile'}
-          </span>
-          <button
-            type="button"
-            className="chii-choice-prompt__cancel"
-            onClick={() => {
-              setDemoChiiChoiceOpen(false)
-              setDemoChiiSelectedTileId(null)
-            }}
-          >
-            Cancel
-          </button>
-        </div>
-      )}
-      {fixture === 'multi-chii' && !demoChiiChoiceOpen && (
-        <button
-          className="table-action-btn table-action-btn-chii"
-          onClick={() => setDemoChiiChoiceOpen(true)}
-        >
-          CHII
-        </button>
-      )}
-      {fixture === 'multi-chii' && !demoChiiChoiceOpen && <button className="table-action-btn table-action-btn-pon">PON</button>}
-      {(fixture === 'active' || fixture === 'crowded') && <button className="table-action-btn table-action-btn-kan">KAN</button>}
-      {(fixture === 'active' || fixture === 'crowded') && <button className="table-action-btn table-action-btn-tsumo">TSUMO!</button>}
-      {!(fixture === 'multi-chii' && demoChiiChoiceOpen) && <button className="table-action-btn table-action-btn-skip">SKIP</button>}
-    </div>
+  const actionBar = ['active', 'crowded', 'interrupt', 'multi-chii', 'multi-kan'].includes(fixture) ? (
+    <CallActionBar key={fixture} contextKey={fixture}
+      actions={fixture === 'multi-chii' ? [...demoChiiActions, { type: game.ActionType.ACTION_PON, meldTiles: demoPonTiles }]
+        : fixture === 'multi-kan' ? demoKanActions
+        : fixture === 'interrupt' ? [{ type: game.ActionType.ACTION_PON }, { type: game.ActionType.ACTION_RON }]
+        : [{ type: game.ActionType.ACTION_KAN }, { type: game.ActionType.ACTION_TSUMO }]}
+      allowPass={fixture !== 'multi-kan'}
+      onAction={action => setDemoSubmitted(`${game.ActionType[action.type!]}: ${(action.meldTiles ?? []).map(tile => tile.id).join(',')}`)}
+    />
   ) : null
 
   const roundResult = fixture === 'round-result' ? {
@@ -236,24 +204,23 @@ export default function TableSample() {
         onChange={(nextFixture) => {
           setFixture(nextFixture)
           setLiftedTileId(null)
-          setDemoChiiChoiceOpen(false)
-          setDemoChiiSelectedTileId(null)
+          setDemoSubmitted(null)
         }}
       />}
+      {demoSubmitted && !cleanPreview && <output aria-live="polite">{demoSubmitted}</output>}
       <div className="game-stage-shell" ref={stageLayout.containerRef} style={stageShellStyle}>
         <div className="game-stage-frame">
           <div
             className="game-stage"
             data-unified={unifiedPreview ? 'true' : undefined}
-            data-discard-mode={handInteractive || demoChiiChoiceOpen ? 'double' : undefined}
-            data-chii-choice={demoChiiChoiceOpen ? 'true' : undefined}
+            data-discard-mode={handInteractive ? 'double' : undefined}
             data-compact={stageLayout.compact ? 'true' : undefined}
             style={stageStyle}
           >
             <TableBoard
               viewSeat={0}
               players={tablePlayers}
-              activeSeat={fixture === 'interrupt' || fixture === 'callable' || fixture === 'multi-chii' ? 1 : 0}
+              activeSeat={fixture === 'multi-chii' ? 3 : fixture === 'interrupt' || fixture === 'callable' ? 1 : 0}
               wildTiles={fixture === 'wild-hand' ? [selfConcealed[10]] : wildTiles}
               isWildTile={(tile) => {
                 const indicator = fixture === 'wild-hand' ? selfConcealed[10] : wildTiles[0]
@@ -262,25 +229,8 @@ export default function TableSample() {
               hudChips={[{ label: 'East 2' }, { label: '58 tiles' }]}
               actionBar={actionBar}
               liftedTileId={liftedTileId}
-              onHandTileClick={demoChiiChoiceOpen
-                ? (tile) => {
-                    const result = resolveChiiTileClick({
-                      actions: demoChiiActions,
-                      hand: selfConcealed,
-                      selectedTileId: demoChiiSelectedTileId,
-                      clickedTile: tile,
-                    })
-                    if (result.kind === 'select') setDemoChiiSelectedTileId(result.tileId)
-                    if (result.kind === 'submit') {
-                      setDemoChiiChoiceOpen(false)
-                      setDemoChiiSelectedTileId(null)
-                    }
-                  }
-                : handInteractive
-                  ? (tile) => setLiftedTileId((current) => current === tile.id ? null : tile.id)
-                  : undefined}
-              handTileChoice={demoHandChoice}
-              callableDiscard={fixture === 'callable' || fixture === 'multi-chii' ? { seat: 1, tileId: callableTile.id } : null}
+              onHandTileClick={handInteractive ? (tile) => setLiftedTileId(current => current === tile.id ? null : tile.id) : undefined}
+              callableDiscard={fixture === 'multi-chii' ? { seat: 3, tileId: demoCalledTile.id } : fixture === 'callable' ? { seat: 1, tileId: callableTile.id } : null}
             />
           </div>
         </div>
@@ -292,7 +242,7 @@ export default function TableSample() {
   )
 }
 
-type Fixture = 'flower-heavy' | 'wild-hand' | 'meld-heavy' | 'crowded' | 'idle' | 'active' | 'called-hand' | 'interrupt' | 'multi-chii' | 'callable' | 'round-result' | 'match-end' | 'exit'
+type Fixture = 'multi-kan' | 'flower-heavy' | 'wild-hand' | 'meld-heavy' | 'crowded' | 'idle' | 'active' | 'called-hand' | 'interrupt' | 'multi-chii' | 'callable' | 'round-result' | 'match-end' | 'exit'
 
 const FIXTURES: Array<{ value: Fixture; label: string }> = [
   { value: 'idle', label: 'Idle' },
@@ -304,6 +254,7 @@ const FIXTURES: Array<{ value: Fixture; label: string }> = [
   { value: 'called-hand', label: 'Called hand' },
   { value: 'interrupt', label: 'Interrupt' },
   { value: 'multi-chii', label: 'Multi CHII' },
+  { value: 'multi-kan', label: 'Multi KAN' },
   { value: 'callable', label: 'Callable' },
   { value: 'round-result', label: 'Round result' },
   { value: 'match-end', label: 'Match end' },

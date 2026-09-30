@@ -24,3 +24,5 @@ One seat's worth of tabletop, decomposed into zones. `TableBoard.tsx` composes f
 - Preview changes on `/tools/table-sample` (`features/dev/`), not by deploying a live match.
 
 `DiscardZone` assigns stable row/column coordinates in formation order: three rows of six, then an extensible fourth row. All four rotations use the same coordinates and CSS chooses their axis/direction. `DiscardZone.test.ts` covers the 18/24-tile boundaries and 30-tile overflow.
+
+DiscardZone exposes `--discard-overflow-columns` (count beyond 24) for preview layouts to balance a long fourth side row without moving the first three rows.

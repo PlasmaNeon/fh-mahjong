@@ -13,3 +13,5 @@
 - Interpolation uses named `{variable}` placeholders. **Keep placeholder names identical in both files** — the type only checks that a key exists and is a string, not that its placeholders match.
 - Both files have the same line count; a difference is a useful smell that one drifted.
 - Consumers use `useI18n()` from `../I18nContext.tsx` rather than importing these directly.
+
+Call-group selection uses `game.chooseCallGroup`, `game.backToActions`, and `game.actionSent` for the shared live/dev action dock.

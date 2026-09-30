@@ -22,7 +22,8 @@ export function DiscardZone({
   hiddenTileIds,
 }: DiscardZoneProps) {
   return (
-    <div className={`discard-lane discard-lane--${direction} ${discards.length === 0 ? 'discard-lane--empty' : ''}`}>
+    <div className={`discard-lane discard-lane--${direction} ${discards.length === 0 ? 'discard-lane--empty' : ''}`}
+      style={{ '--discard-overflow-columns': Math.max(0, discards.length - 24) } as CSSProperties}>
       {discards.length === 0 ? (
         <div className="discard-lane__placeholder" aria-hidden="true" />
       ) : (

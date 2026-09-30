@@ -8,7 +8,11 @@
   --bundle-span-opp: 540px;
   --bundle-side-shift: 80px;
   --side-hand-inset: 60px;
-  --discard-tile-width: 28px;
+  --tile-small-width: 26px;
+  --tile-small-height: 37px;
+  --discard-tile-width: 29px;
+  --center-hud-size: 170px;
+  --discard-hud-gap: 5px;
   --discard-tile-height: 38px;
   --center-shift: 52px;
   --action-bottom: 210px;
@@ -62,4 +66,22 @@
 .game-stage[data-unified="true"][data-compact] .zone-flowers {
   --tile-small-width: 32px;
   --tile-small-height: 42px;
+}
+
+/* Use the face's inner margin for legibility without expanding four rows
+   into the top hand or the local lifted-tile interaction band. */
+.game-stage[data-unified="true"][data-compact] .discard-lane .mahjong-tile img {
+  width: 80% !important;
+  height: 80% !important;
+  top: 10% !important;
+  left: 10% !important;
+}
+
+/* A rare long fourth side row grows equally toward both ends, protecting
+   the local hand while the first three six-tile rows keep their anchors. */
+.game-stage[data-unified="true"][data-compact] .discard-lane--left .discard-lane__tile:nth-child(n + 19) {
+  top: calc(var(--discard-padding) + (var(--discard-column) - var(--discard-overflow-columns) / 2) * (var(--discard-tile-width) + var(--discard-gap)));
+}
+.game-stage[data-unified="true"][data-compact] .discard-lane--right .discard-lane__tile:nth-child(n + 19) {
+  bottom: calc(var(--discard-padding) + (var(--discard-column) - var(--discard-overflow-columns) / 2) * (var(--discard-tile-width) + var(--discard-gap)));
 }
