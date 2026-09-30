@@ -60,6 +60,56 @@ func TestFenghuaRuleset_PriorityTieBreaksBySeat(t *testing.T) {
 	}
 }
 
+// A wild fills any position of a run: 8m9m+W is 7-8-9 exactly as 1m2m+W is 1-2-3, and a
+// lone 9m with two wilds is the run 7-8-9 as a lone 1m is 1-2-3. Mirrored hands score the same.
+func TestFenghuaRuleset_WildFillsAnyRunPosition(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
+	ws := wildState(pb.Suit_SUIT_SOU, 9) // wild = 9s
+	winTile := &pb.Tile{Id: 20, Suit: pb.Suit_SUIT_JIHAI, Value: 3}
+	mkHand := func(tail ...*pb.Tile) []*pb.Tile {
+		hand := []*pb.Tile{
+			{Id: 1, Suit: pb.Suit_SUIT_MAN, Value: 4}, {Id: 2, Suit: pb.Suit_SUIT_MAN, Value: 5},
+			{Id: 3, Suit: pb.Suit_SUIT_MAN, Value: 6}, {Id: 4, Suit: pb.Suit_SUIT_PIN, Value: 4},
+			{Id: 5, Suit: pb.Suit_SUIT_PIN, Value: 5}, {Id: 6, Suit: pb.Suit_SUIT_PIN, Value: 6},
+			{Id: 7, Suit: pb.Suit_SUIT_SOU, Value: 2}, {Id: 8, Suit: pb.Suit_SUIT_SOU, Value: 3},
+			{Id: 9, Suit: pb.Suit_SUIT_SOU, Value: 4}, {Id: 10, Suit: pb.Suit_SUIT_JIHAI, Value: 3},
+		}
+		return append(hand, tail...)
+	}
+	man := func(id, value uint32) *pb.Tile { return &pb.Tile{Id: id, Suit: pb.Suit_SUIT_MAN, Value: value} }
+	wild := func(id uint32) *pb.Tile { return &pb.Tile{Id: id, Suit: pb.Suit_SUIT_SOU, Value: 9} }
+	hasCommonWin := func(breakdown []*pb.ScoreEntry) bool {
+		for _, entry := range breakdown {
+			if entry.PatternId == rules.PatternCommonWin {
+				return true
+			}
+		}
+		return false
+	}
+	pairs := []struct {
+		name        string
+		bottom, top []*pb.Tile
+	}{
+		{"one wild completes a run from below", mkHand(man(11, 8), man(12, 9), wild(13)), mkHand(man(11, 1), man(12, 2), wild(13))},
+		{"two wilds under a lone high tile", mkHand(man(11, 9), wild(12), wild(13)), mkHand(man(11, 1), wild(12), wild(13))},
+	}
+	for _, pair := range pairs {
+		t.Run(pair.name, func(t *testing.T) {
+			topScore, topBreakdown, topWin := r.EvaluateHand(pair.top, nil, winTile, ws, 0, true)
+			bottomScore, bottomBreakdown, bottomWin := r.EvaluateHand(pair.bottom, nil, winTile, ws, 0, true)
+			if !topWin || !hasCommonWin(topBreakdown) {
+				t.Fatalf("low hand: canWin=%v breakdown=%v", topWin, topBreakdown)
+			}
+			if !bottomWin || !hasCommonWin(bottomBreakdown) {
+				t.Fatalf("high hand: canWin=%v breakdown=%v", bottomWin, bottomBreakdown)
+			}
+			if bottomScore != topScore {
+				t.Fatalf("high hand scores %d, low hand %d", bottomScore, topScore)
+			}
+		})
+	}
+}
+
 // --- Variant: Common Win (朋胡) ---
 // Standard 4 melds + 1 pair, no special patterns.
 // Scoring: Base(1) + WildBonus + Common(1) + [Tsumo(1)] + [SingleWait(1)]
