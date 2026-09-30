@@ -630,46 +630,10 @@ func (r *FenghuaRuleset) checkMeldsFast(counts *[34]int, startIdx int, wilds int
 		}
 
 		// Try chii (sequence). Jihai (indices >= 27) cannot form sequences.
-		// i%9 <= 6 ensures i+1 and i+2 are within the same suit block.
-		if allowChow && i < 27 && i%9 <= 6 {
-			needNext1 := 1
-			if counts[i+1] > 0 {
-				needNext1 = 0
-			}
-			needNext2 := 1
-			if counts[i+2] > 0 {
-				needNext2 = 0
-			}
-
-			totalNeededForChii := needNext1 + needNext2
-			if wilds >= totalNeededForChii {
-				counts[i]--
-				if needNext1 == 0 {
-					counts[i+1]--
-				}
-				if needNext2 == 0 {
-					counts[i+2]--
-				}
-
-				if r.checkMeldsFast(counts, i, wilds-totalNeededForChii, allowChow) {
-					counts[i]++
-					if needNext1 == 0 {
-						counts[i+1]++
-					}
-					if needNext2 == 0 {
-						counts[i+2]++
-					}
-					return true
-				}
-
-				counts[i]++
-				if needNext1 == 0 {
-					counts[i+1]++
-				}
-				if needNext2 == 0 {
-					counts[i+2]++
-				}
-			}
+		if allowChow && r.tryRunsCovering(counts, i, wilds, func(left int) bool {
+			return r.checkMeldsFast(counts, i, left, allowChow)
+		}) {
+			return true
 		}
 
 		// Neither pon nor chii can consume this tile — this branch fails.
@@ -994,50 +958,57 @@ func (r *FenghuaRuleset) checkChowOnlyMelds(counts *[34]int, startIdx int, wilds
 		if counts[i] == 0 {
 			continue
 		}
-		// Jihai (indices >= 27) cannot form sequences, so fail.
-		if i >= 27 || i%9 > 6 {
-			return false
-		}
-		// Try chow (sequence)
-		needNext1 := 1
-		if counts[i+1] > 0 {
-			needNext1 = 0
-		}
-		needNext2 := 1
-		if counts[i+2] > 0 {
-			needNext2 = 0
-		}
-		totalNeeded := needNext1 + needNext2
-		if wilds >= totalNeeded {
-			counts[i]--
-			if needNext1 == 0 {
-				counts[i+1]--
-			}
-			if needNext2 == 0 {
-				counts[i+2]--
-			}
-			if r.checkChowOnlyMelds(counts, i, wilds-totalNeeded) {
-				counts[i]++
-				if needNext1 == 0 {
-					counts[i+1]++
-				}
-				if needNext2 == 0 {
-					counts[i+2]++
-				}
-				return true
-			}
-			counts[i]++
-			if needNext1 == 0 {
-				counts[i+1]++
-			}
-			if needNext2 == 0 {
-				counts[i+2]++
-			}
-		}
-		// Cannot form a chow with this tile — fail.
-		return false
+		// The lowest remaining tile must sit in some chow, or this branch fails.
+		return r.tryRunsCovering(counts, i, wilds, func(left int) bool {
+			return r.checkChowOnlyMelds(counts, i, left)
+		})
 	}
 	return true
+}
+
+// tryRunsCovering tries every run (sequence) that contains face i as its lowest remaining
+// real tile, calling next with the wilds left after each. Tile i must be the lowest non-zero
+// count, so run positions below i are wilds; positions above i use a real tile when one is
+// left, else a wild. A wild fills any position: 8m9m+W is 7-8-9 as 1m2m+W is 1-2-3. Counts
+// are restored after every attempt. Jihai (indices >= 27) cannot form runs.
+func (r *FenghuaRuleset) tryRunsCovering(counts *[34]int, i int, wilds int, next func(wildsLeft int) bool) bool {
+	if i >= 27 {
+		return false
+	}
+	suitBase := i - i%9
+	for start := i - 2; start <= i; start++ {
+		if start < suitBase || start%9 > 6 {
+			continue // the run must stay inside one suit
+		}
+		var real [3]bool
+		needed := 0
+		for k := 0; k < 3; k++ {
+			face := start + k
+			if face == i || (face > i && counts[face] > 0) {
+				real[k] = true
+			} else {
+				needed++
+			}
+		}
+		if needed > wilds {
+			continue
+		}
+		for k := 0; k < 3; k++ {
+			if real[k] {
+				counts[start+k]--
+			}
+		}
+		ok := next(wilds - needed)
+		for k := 0; k < 3; k++ {
+			if real[k] {
+				counts[start+k]++
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *FenghuaRuleset) isUncompletedAllHonors(hand []*pb.Tile, openMelds []*pb.Meld, wildHashes map[uint32]bool) bool {
