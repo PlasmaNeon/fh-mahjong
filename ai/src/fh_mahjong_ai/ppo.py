@@ -169,6 +169,11 @@ class PPOConfig:
     # one: a recipe field, rejected on change. Requires collector="batched" on
     # CUDA so the collected old_logprobs come from the same precision.
     trunk_dtype: str = "float32"
+    # collector="batched": each decision's acting policy sees a randomly suit-permuted view
+    # of its observation (suit_symmetry), chooses in that view, and the env receives the
+    # inverse-mapped action. Rows, actions, old_logprobs and values are stored as the policy
+    # saw them, so PPO is unchanged. Changes what is collected: a recipe field.
+    suit_augment: bool = False
     pool_max_size: int = 1
     pool_snapshot_interval: int = 10
     grp_checkpoint: Optional[Path] = None
@@ -186,6 +191,10 @@ class PPOConfig:
     device: str = "cpu"
     objective: str = "ppo"       # "ppo" | "ach" (selects the policy update)
     ach_beta: float = 2.0        # hedge/logit trust-region threshold when objective="ach"
+
+    def __post_init__(self) -> None:
+        if self.suit_augment and self.collector != "batched":
+            raise ValueError("suit_augment=True requires collector='batched'")
 
 
 @dataclass

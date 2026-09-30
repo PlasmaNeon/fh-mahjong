@@ -42,7 +42,7 @@ uv run --project ai <command>
 | `fh-mj-train-ppo` | Online self-play PPO vs a frozen anchor |
 | `fh-mj-train-oracle` | Phase-1 oracle (single-seat, perfect-information) |
 | `fh-mj-train-selfplay-oracle` | Phase-2 self-play feature-dropout oracle |
-| `fh-mj-train-b2b` | Spec B2b: event history + privileged critic + aux heads; `--scratch [--init-from-bc]` for random-init runs; `--head-lr/--head-lr-iters` for the two-group lr schedule; `--collector batched --pool-slots N` for env-pool collection; opt-in `--pool-pipeline-groups K` and `--trunk-dtype bfloat16` (batched on CUDA) for speed |
+| `fh-mj-train-b2b` | Spec B2b: event history + privileged critic + aux heads; `--scratch [--init-from-bc]` for random-init runs; `--head-lr/--head-lr-iters` for the two-group lr schedule; `--collector batched --pool-slots N` for env-pool collection; opt-in `--pool-pipeline-groups K` and `--trunk-dtype bfloat16` (batched on CUDA) for speed; `--suit-augment` (batched) collects each decision in a random suit-permuted view |
 
 ### Evaluate and gate
 | Command | Purpose |

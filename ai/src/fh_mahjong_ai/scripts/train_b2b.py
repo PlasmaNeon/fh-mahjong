@@ -61,6 +61,11 @@ def main() -> None:
                         "round. Changes which rows share a forward, so like --pool-slots it "
                         "is part of the lineage and rejected-on-change by "
                         "--resume-from-state")
+    p.add_argument("--suit-augment", action="store_true",
+                   help="collect with a random suit permutation per decision: the policy acts "
+                        "on a suit-permuted view and the env gets the inverse-mapped action "
+                        "(needs --collector batched). A recipe field: rejected-on-change by "
+                        "--resume-from-state")
     p.add_argument("--trunk-dtype", choices=("float32", "bfloat16"), default="float32",
                    help="precision of the model's encoder (conv trunk, event GRU, trunk "
                         "MLP) in collection and the update; heads, losses and the optimizer "
@@ -240,6 +245,8 @@ def main() -> None:
         p.error(f"--pool-pipeline-groups must be >= 1 (got {args.pool_pipeline_groups})")
     if args.pool_slots < 1:
         p.error(f"--pool-slots must be >= 1 (got {args.pool_slots})")
+    if args.suit_augment and args.collector != "batched":
+        p.error("--suit-augment requires --collector batched")
     num_workers = args.num_workers
     if num_workers is None:
         num_workers = min(default_num_workers(), args.matches_per_iter)
@@ -255,6 +262,7 @@ def main() -> None:
                        num_workers=num_workers,
                        collector=args.collector, pool_slots=args.pool_slots,
                        trunk_dtype=args.trunk_dtype,
+                       suit_augment=args.suit_augment,
                        pool_pipeline_groups=args.pool_pipeline_groups,
                        collect_dispatch_chunk=args.collect_dispatch_chunk,
                        minibatch_device_transfer=args.minibatch_device_transfer,

@@ -28,6 +28,7 @@ from .config import EnvConfig
 from .envpool import PoolCommand, PoolStepResult, make_selfplay_pool
 from .model import PolicyValueNet
 from .ppo import PPOConfig, RolloutBatch, masked_logprobs
+from .suit_symmetry import SUIT_PERMUTATIONS, action_map, permute_rows
 from .train_b2b import (
     _B2B_ROW_KEYS, _B2bMatchState, _check_chongci_outcomes, _finalize_b2b_match,
 )
@@ -97,6 +98,9 @@ class _SlotMatch:
         self.match_index = match_index
         self.seed = int(base_seed + match_index)
         self.sample_rng = np.random.default_rng([self.seed, 17])
+        # suit_augment's permutation draws: a separate stream, so the sampling stream
+        # (and every augment-off lineage) is untouched.
+        self.suit_rng = np.random.default_rng([self.seed, 5017])
         self.state = _B2bMatchState()
         self.rows: dict[str, list] | None = None   # set at finalize
         self.telemetry: dict | None = None
@@ -459,6 +463,11 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
 
     active: dict[int, _SlotMatch] = {}
     pending_action: dict[int, int] = {}
+    # suit_augment: the view (index into SUIT_PERMUTATIONS) each slot's pending action was
+    # chosen in, and each view's action map inverted (view action -> real action).
+    slot_view: dict[int, int] = {}
+    inverse_action_maps = [np.argsort(action_map(perm, cfg.action_space_size))
+                           for perm in SUIT_PERMUTATIONS]
     completed: dict[int, _SlotMatch] = {}
     next_match = 0
     emit_next = 0
@@ -599,6 +608,21 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
         else:
             events_r = np.zeros((len(live), 0), dtype=np.uint32)
             lengths_r = np.zeros(len(live), dtype=np.int64)
+        if config.suit_augment:
+            # Each decision gets its own view: permute the rows in place (they are this
+            # round's private copies) before the forward, and remember which view each
+            # slot acted in so its action can be mapped back for the env.
+            views = np.fromiter((entry[1].suit_rng.integers(len(SUIT_PERMUTATIONS)) for entry in live),
+                                dtype=np.int64, count=len(live))
+            for k in np.unique(views):
+                rows = np.flatnonzero(views == k)
+                if k == 0:
+                    continue  # identity
+                p, s, m, e = permute_rows(planes_r[rows], scalars_r[rows], masks_r[rows],
+                                          events_r[rows], SUIT_PERMUTATIONS[k])
+                planes_r[rows], scalars_r[rows], masks_r[rows], events_r[rows] = p, s, m, e
+            for (slot, _, _, _), k in zip(live, views):
+                slot_view[slot] = int(k)
         pending_rows = [
             (slot, sm, seat, planes_r[i], scalars_r[i], masks_r[i], events_r[i], int(lengths_r[i]))
             for i, (slot, sm, seat, _) in enumerate(live)]
@@ -695,7 +719,9 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             ms.seat_events[seat].append(row_events)
             ms.seat_lengths[seat].append(ev_len)
             ms.seat_hand_ids[seat].append(ms.hand_id)
-            pending_action[slot] = action
+            # The stored action is in the view the policy acted on; the env needs the real one.
+            pending_action[slot] = (int(inverse_action_maps[slot_view[slot]][action])
+                                    if config.suit_augment else action)
         python_seconds += time.perf_counter() - python_start
 
     def wedged() -> RuntimeError:
