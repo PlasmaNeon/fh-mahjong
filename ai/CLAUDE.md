@@ -57,7 +57,7 @@ uv run --project ai <command>
 ### Serve
 | Command | Purpose |
 |---|---|
-| `fh-mj-serve-policy` | JSON HTTP policy server (`/act`, `/evaluate`, `/healthz`, `/reload`, `/warmup`) |
+| `fh-mj-serve-policy` | JSON HTTP policy server (`/act`, `/evaluate`, `/healthz`, `/reload`, `/warmup`); `--symmetry-average suits` serves the suit-averaged policy |
 | `fh-mj-reload-policy` | Hot-swap or inspect a running server's checkpoint (no torch import; starts instantly) |
 | `fh-mj-serving-parity` | **Hard promotion gate**: eval-path vs serving-path action parity |
 | `fh-mj-serving-smoke` | Load a manifest checkpoint and step a bridge for legality |

@@ -399,6 +399,7 @@ class PolicyHolder:
                 sample_top_k=current.sample_top_k,
                 sample_action_family=current.sample_action_family,
                 seed=current.sample_seed,
+                symmetry=current.symmetry,
             )
             # Validate the NEW policy fully BEFORE swapping the reference: an
             # event-window mismatch against the currently-serving policy is a
@@ -458,6 +459,7 @@ class PolicyRequestHandler(BaseHTTPRequestHandler):
                 "sample_top_k": policy.sample_top_k,
                 "sample_action_family": policy.sample_action_family,
                 "sample_seed": policy.sample_seed,
+                "symmetry": policy.symmetry,
                 "model_config": asdict(model_config),
                 "event_window": model_config.event_window,
                 "contract_version": EVENT_CONTRACT_V1,
@@ -999,6 +1001,10 @@ def main() -> None:
     parser.add_argument("--sample-action-family", type=str, default="all",
                         help="only sample when every legal action is in this family (e.g. 'discard')")
     parser.add_argument("--sample-seed", type=int, default=1)
+    parser.add_argument("--symmetry-average", choices=("none", "suits"), default="none",
+                        help="serve the suit-averaged policy: every decision is the mean of the "
+                             "model's log-probabilities over the six suit permutations (one 6-row "
+                             "forward). /healthz reports it as 'symmetry'")
     parser.add_argument(
         "--logit-export-token", type=str, default=os.environ.get("FH_MJ_LOGIT_EXPORT_TOKEN"),
         help="Shared-secret token required for /act callers to request 'return_logits: true' and "
@@ -1072,6 +1078,7 @@ def main() -> None:
         sample_top_k=args.sample_top_k,
         sample_action_family=args.sample_action_family,
         sample_seed=args.sample_seed,
+        symmetry=args.symmetry_average,
     )
     holder = PolicyHolder(
         policy,

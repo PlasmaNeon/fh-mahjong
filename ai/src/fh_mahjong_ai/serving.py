@@ -50,7 +50,10 @@ class CheckpointPolicy:
         sample_top_k: int = 0,
         sample_action_family: str = "all",
         seed: int = 1,
+        symmetry: str = "none",
     ) -> None:
+        if symmetry not in ("none", "suits"):
+            raise ValueError(f"symmetry must be 'none' or 'suits', got {symmetry!r}")
         self.model = model
         self.checkpoint_path = checkpoint_path
         self.checkpoint_step = checkpoint_step
@@ -60,6 +63,10 @@ class CheckpointPolicy:
         self.sample_action_family = str(sample_action_family or "all")
         self.sample_seed = int(seed)  # kept so holders can rebuild with the same config
         self._rng = np.random.default_rng(seed)
+        # "suits": every decision is the mean of the model's log-probabilities over the six
+        # suit permutations (suit_symmetry.suit_averaged_log_probs). The logits this policy
+        # reports are then those averaged log-probabilities.
+        self.symmetry = symmetry
         self.model.eval()
 
     @classmethod
@@ -72,6 +79,7 @@ class CheckpointPolicy:
         sample_top_k: int = 0,
         sample_action_family: str = "all",
         seed: int = 1,
+        symmetry: str = "none",
     ) -> "CheckpointPolicy":
         """Deserialize a policy from an already-read checkpoint buffer.
 
@@ -103,6 +111,7 @@ class CheckpointPolicy:
             sample_top_k=sample_top_k,
             sample_action_family=sample_action_family,
             seed=seed,
+            symmetry=symmetry,
         )
 
     @classmethod
@@ -114,6 +123,7 @@ class CheckpointPolicy:
         sample_top_k: int = 0,
         sample_action_family: str = "all",
         seed: int = 1,
+        symmetry: str = "none",
     ) -> "CheckpointPolicy":
         data = Path(checkpoint_path).read_bytes()
         return cls.from_checkpoint_bytes(
@@ -124,6 +134,7 @@ class CheckpointPolicy:
             sample_top_k=sample_top_k,
             sample_action_family=sample_action_family,
             seed=seed,
+            symmetry=symmetry,
         )
 
     @torch.inference_mode()
@@ -200,7 +211,10 @@ class CheckpointPolicy:
             events = torch.from_numpy(row).to(self.device)
             event_lengths = torch.tensor([n], dtype=torch.int64, device=self.device)
 
-        logits, value = self.model(planes, scalars, action_mask, events=events, event_lengths=event_lengths)
+        if self.symmetry == "suits":
+            logits, value = self._suit_averaged(planes, scalars, action_mask, events, event_lengths)
+        else:
+            logits, value = self.model(planes, scalars, action_mask, events=events, event_lengths=event_lengths)
         greedy_action_id = int(torch.argmax(logits, dim=1).item())
         sampling_actions = [] if force_greedy else self._sampling_actions(legal_actions)
         sampling_applied = (
@@ -277,7 +291,10 @@ class CheckpointPolicy:
             if events is not None and event_lengths is not None:
                 ev = torch.from_numpy(events[start:end]).to(self.device)
                 ev_len = torch.from_numpy(event_lengths[start:end]).to(self.device)
-            logits, value = self.model(p, s, m, events=ev, event_lengths=ev_len)
+            if self.symmetry == "suits":
+                logits, value = self._suit_averaged(p, s, m, ev, ev_len)
+            else:
+                logits, value = self.model(p, s, m, events=ev, event_lengths=ev_len)
             legal = m.to(dtype=torch.bool)
             masked = logits.masked_fill(~legal, float("-inf"))
             probs = torch.softmax(masked, dim=1)
@@ -285,6 +302,25 @@ class CheckpointPolicy:
             all_probs[start:end] = probs.cpu().numpy().astype(np.float32)
             all_values[start:end] = value.reshape(-1).cpu().numpy().astype(np.float32)
         return all_probs, all_values
+
+    def _suit_averaged(self, planes, scalars, action_mask, events, event_lengths):
+        """`(logits, value)` for the suit-averaged policy, shaped like `self.model(...)`:
+        logits are the averaged log-probabilities with illegal entries at the dtype's
+        finite minimum (as the model's masked logits are), value the mean over views."""
+        from .suit_symmetry import suit_averaged_log_probs
+        n = planes.shape[0]
+        if events is None:
+            ev = np.zeros((n, 0), dtype=np.uint32)
+            ln = np.zeros(n, dtype=np.int64)
+        else:
+            ev = events.cpu().numpy().astype(np.uint32)
+            ln = event_lengths.cpu().numpy().astype(np.int64)
+        logp, value = suit_averaged_log_probs(
+            self.model, planes.cpu().numpy(), scalars.cpu().numpy(), action_mask.cpu().numpy(),
+            ev, ln, self.device)
+        finite = np.where(np.isfinite(logp), logp, np.finfo(np.float32).min).astype(np.float32)
+        return (torch.from_numpy(finite).to(self.device),
+                torch.from_numpy(value.astype(np.float32)).to(self.device))
 
     def _sampling_actions(self, legal_actions: list[int]) -> list[int]:
         if self.sample_action_family in {"", "all", "*"}:
@@ -303,6 +339,7 @@ def load_policy_from_manifest(
     sample_top_k: int = 0,
     sample_action_family: str = "all",
     sample_seed: int = 1,
+    symmetry: str = "none",
 ) -> CheckpointPolicy:
     manifest = load_checkpoint_manifest(manifest_path)
     checkpoint_path = resolve_checkpoint_path(
@@ -317,6 +354,7 @@ def load_policy_from_manifest(
         sample_top_k=sample_top_k,
         sample_action_family=sample_action_family,
         seed=sample_seed,
+        symmetry=symmetry,
     )
 
 
@@ -327,6 +365,7 @@ def load_checkpoint_policy_with_hash(
     sample_top_k: int = 0,
     sample_action_family: str = "all",
     seed: int = 1,
+    symmetry: str = "none",
 ) -> tuple[CheckpointPolicy, str]:
     """Read `checkpoint_path`'s bytes exactly once, sha256 those bytes, and
     build the policy from the SAME buffer.
@@ -350,6 +389,7 @@ def load_checkpoint_policy_with_hash(
         sample_top_k=sample_top_k,
         sample_action_family=sample_action_family,
         seed=seed,
+        symmetry=symmetry,
     )
     return policy, checkpoint_sha256
 
@@ -363,6 +403,7 @@ def load_policy_from_manifest_with_hash(
     sample_top_k: int = 0,
     sample_action_family: str = "all",
     sample_seed: int = 1,
+    symmetry: str = "none",
 ) -> tuple[CheckpointPolicy, str]:
     """Manifest-resolving counterpart to `load_checkpoint_policy_with_hash`:
     resolves the checkpoint path the same way `load_policy_from_manifest`
@@ -380,6 +421,7 @@ def load_policy_from_manifest_with_hash(
         sample_top_k=sample_top_k,
         sample_action_family=sample_action_family,
         seed=sample_seed,
+        symmetry=symmetry,
     )
 
 
