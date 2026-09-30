@@ -28,7 +28,7 @@ A single-page React application built with Vite and TypeScript. Renders the mahj
 - Production hosting: use the bundled Go SPA or a reverse proxy that exposes `/api` and `/api/v1/ws` on the frontend’s public origin. Direct split URLs are supported only for same-site subdomains and require the backend `FRONTEND_ORIGINS` allowlist
 - All game state arrives as Protobuf binary via WebSocket; decoded by `protobufjs`.
 - `src/proto/game.js` and `src/proto/game.d.ts` are generated from `proto/game.proto`; regenerate them whenever proto schemas change.
-- Tile rendering uses layered SVG images: `Front.svg` (background) + tile face SVG.
+- Tile rendering uses layered SVG images: `Front.svg` (background) + colored I.Mahjong-HK face SVGs. Eight flowers retain their Chinese labels (春夏秋冬 in red, 梅蘭菊竹 in black) and the white dragon retains its double-line frame. Attribution and license are in `public/Regular_shortnames/SOURCE.md` and `LICENSE.hk.txt`; face URLs use `getTileSvgUrl()` to bypass the server’s 30-day cache when artwork changes.
 
 ## Local design prototype
 

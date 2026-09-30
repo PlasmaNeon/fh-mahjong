@@ -1,4 +1,4 @@
-import { getTileName, getTileSvgName } from '../../utils/tileDisplay'
+import { getTileName, getTileSvgName, getTileSvgUrl } from '../../utils/tileDisplay'
 import {
   TILE_LIBRARY,
   formatTile,
@@ -52,7 +52,7 @@ export function LedgerTile({
       disabled={disabled}
       title={getTileName(tile)}
     >
-      <img src={`/Regular_shortnames/${svgName}`} alt={getTileName(tile)} draggable="false" />
+      <img src={getTileSvgUrl(svgName)} alt={getTileName(tile)} draggable="false" />
       {badge && <span className="ldg-tile__badge">{badge}</span>}
     </button>
   )

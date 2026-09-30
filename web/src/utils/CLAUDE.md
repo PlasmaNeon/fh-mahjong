@@ -10,6 +10,7 @@ Pages must not re-implement anything here — extend these modules instead.
 
 - **tileDisplay.ts** — Tile display utilities:
   - `getTileSvgName(tile)` — Maps a Protobuf `Tile` (suit + value) to SVG filename (e.g., `1m.svg`, `chun.svg` for flowers)
+  - `getTileSvgUrl(svgName)` — Builds the versioned face URL (`?v=hk-color-v3`); renderers and preloading share this helper because the Go server caches stable SVG filenames for 30 days. Bump its artwork version when replacing faces.
   - `getTileName(tile)` — Human-readable tile name (e.g., "1 Man", "East", "Spring")
   - Suit suffix mapping: MAN→`m`, PIN→`p`, SOU→`s`, JIHAI→`z`
   - Flower SVG mapping: values 1-8 → `chun.svg`, `xia.svg`, `qiu.svg`, `dong.svg`, `mei.svg`, `lan.svg`, `ju.svg`, `zhu.svg`

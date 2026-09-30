@@ -3,6 +3,11 @@ import { game } from '../proto/game';
 
 const flowerSvgMap = ['', 'chun.svg', 'xia.svg', 'qiu.svg', 'dong.svg', 'mei.svg', 'lan.svg', 'ju.svg', 'zhu.svg'];
 
+// Stable filenames are cached for 30 days by the Go server.
+const tileArtworkVersion = 'hk-color-v3';
+export const getTileSvgUrl = (svgName: string) =>
+    `/Regular_shortnames/${svgName}?v=${tileArtworkVersion}`;
+
 // Preload all tile SVGs into browser cache so they render instantly
 let _preloaded = false;
 export const preloadAllTileSvgs = () => {
@@ -20,7 +25,7 @@ export const preloadAllTileSvgs = () => {
 
     for (const svg of svgs) {
         const img = new Image();
-        img.src = `/Regular_shortnames/${svg}`;
+        img.src = getTileSvgUrl(svg);
     }
 };
 const flowerNameMap = ['', 'Spring', 'Summer', 'Autumn', 'Winter', 'Plum', 'Orchid', 'Chrysanthemum', 'Bamboo'];
