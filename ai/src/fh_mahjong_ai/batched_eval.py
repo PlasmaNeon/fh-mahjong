@@ -35,6 +35,7 @@ from .evaluate import (
 from .types import Transition
 
 INFERENCE_MODES = ("batched", "per_row")
+SYMMETRIES = ("none", "suits")
 
 
 def _rewards(values) -> np.ndarray:
@@ -56,17 +57,25 @@ class _SlotEpisode:
 
 
 class _GreedyForward:
-    """Greedy actions for a round's live rows, batched or one row at a time."""
+    """Greedy actions for a round's live rows, batched or one row at a time.
 
-    def __init__(self, model, device: str, inference_mode: str, max_rows: int) -> None:
+    With `symmetry="suits"` every row is also evaluated under the five other suit
+    permutations (`suit_symmetry`), each permuted copy's log-probabilities are mapped back
+    to the original actions, and the greedy action maximises their mean.
+    """
+
+    def __init__(self, model, device: str, inference_mode: str, max_rows: int,
+                 symmetry: str = "none") -> None:
         self.model = model
         self.device = torch.device(device)
         self.inference_mode = inference_mode
+        self.symmetry = symmetry
         self.wants_events = bool(getattr(model, "wants_events", False))
         self.graphed = None
         if (inference_mode == "batched" and self.device.type == "cuda" and self.wants_events):
             from .batched_b2b import _GraphedForward
-            self.graphed = _GraphedForward(model, device, max_rows)
+            copies = 6 if symmetry == "suits" else 1
+            self.graphed = _GraphedForward(model, device, max_rows * copies)
 
     def _tensors(self, planes, scalars, masks, events, lengths):
         to = lambda a: torch.from_numpy(np.ascontiguousarray(a)).to(self.device)  # noqa: E731
@@ -76,22 +85,39 @@ class _GreedyForward:
         return to(planes), to(scalars), to(masks), ev, ln
 
     @torch.inference_mode()
-    def __call__(self, planes, scalars, masks, events, lengths) -> list[int]:
+    def _logits(self, planes, scalars, masks, events, lengths) -> torch.Tensor:
+        """Host [n, A] masked logits for the n rows."""
         if self.inference_mode == "per_row":
-            actions = []
+            rows = []
             for i in range(planes.shape[0]):
                 p, s, m, ev, ln = self._tensors(planes[i:i + 1], scalars[i:i + 1], masks[i:i + 1],
                                                 events[i:i + 1], lengths[i:i + 1])
                 logits, _ = self.model(p, s, m, events=ev, event_lengths=ln)
-                actions.append(int(torch.argmax(logits, dim=1).item()))
-            return actions
+                rows.append(logits.cpu())
+            return torch.cat(rows)
         if self.graphed is not None:
             host = self.graphed(planes, scalars, masks, events.astype(np.int64),
                                 lengths.astype(np.int64))
-            return torch.argmax(host[:, :-1], dim=1).tolist()
+            return host[:, :-1]
         p, s, m, ev, ln = self._tensors(planes, scalars, masks, events, lengths)
         logits, _ = self.model(p, s, m, events=ev, event_lengths=ln)
-        return torch.argmax(logits, dim=1).cpu().tolist()
+        return logits.cpu()
+
+    def __call__(self, planes, scalars, masks, events, lengths) -> list[int]:
+        if self.symmetry == "none":
+            return torch.argmax(self._logits(planes, scalars, masks, events, lengths), dim=1).tolist()
+        from .suit_symmetry import SUIT_PERMUTATIONS, permute_rows, unpermute_action_values
+        n = planes.shape[0]
+        views = [permute_rows(planes, scalars, masks, events, perm) for perm in SUIT_PERMUTATIONS]
+        stacked = [np.concatenate(parts) for parts in zip(*views)]
+        logits = self._logits(stacked[0], stacked[1], stacked[2], stacked[3],
+                              np.tile(lengths, len(SUIT_PERMUTATIONS)))
+        logp = torch.log_softmax(logits.double(), dim=1).numpy()
+        total = np.zeros((n, logp.shape[1]), dtype=np.float64)
+        for k, perm in enumerate(SUIT_PERMUTATIONS):
+            total += unpermute_action_values(logp[k * n:(k + 1) * n], perm)
+        total[masks == 0] = -np.inf
+        return np.argmax(total, axis=1).tolist()
 
 
 def _evaluate_seat(model, seeds: Sequence[int], seat: int, cfg: EnvConfig, slots: int,
@@ -212,10 +238,17 @@ def evaluate_duplicate_seats_batched(
     event_history_window: int = 0,
     slots: int = 256,
     inference_mode: str = "batched",
+    symmetry: str = "none",
 ) -> Dict[str, Any]:
-    """`evaluate.evaluate_duplicate_seats` through the env pool (greedy, heuristic opponents)."""
+    """`evaluate.evaluate_duplicate_seats` through the env pool (greedy, heuristic opponents).
+
+    `symmetry="suits"` averages the policy over the six suit permutations (a different policy
+    than the plain checkpoint); the report records it as `policy_transform`.
+    """
     if inference_mode not in INFERENCE_MODES:
         raise ValueError(f"inference_mode must be one of {INFERENCE_MODES}, got {inference_mode!r}")
+    if symmetry not in SYMMETRIES:
+        raise ValueError(f"symmetry must be one of {SYMMETRIES}, got {symmetry!r}")
     if slots < 1:
         raise ValueError("slots must be >= 1")
     window = int(event_history_window)
@@ -229,7 +262,7 @@ def evaluate_duplicate_seats_batched(
     library_path, bridge_sha, snapshot = _snapshot_bridge_library(bridge_kind, bridge_library_path)
     seat_list = list(seats)
     effective_slots = min(int(slots), len(seeds)) or 1
-    forward = _GreedyForward(model, device, inference_mode, effective_slots)
+    forward = _GreedyForward(model, device, inference_mode, effective_slots, symmetry)
     timers = {"pool_seconds": 0.0, "forward_seconds": 0.0, "rounds": 0, "forward_rows": 0}
     started = time.perf_counter()
     seat_reports = []
@@ -258,5 +291,7 @@ def evaluate_duplicate_seats_batched(
         bridge_lib_sha256=bridge_sha)
     report["evaluator"] = {"kind": "batched-pool", "slots": effective_slots,
                            "inference_mode": inference_mode}
+    if symmetry != "none":
+        report["policy_transform"] = {"symmetry": symmetry}
     report["evaluator_timing"] = {**timers, "wall_seconds": time.perf_counter() - started}
     return report
