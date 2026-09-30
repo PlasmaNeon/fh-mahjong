@@ -177,6 +177,20 @@ def test_symmetric_eval_plays_legal_moves_and_pairs_with_the_plain_report():
     assert paired_comparison(faces, symmetric)["config_check"] == "strict"
 
 
+@requires_go_lib
+def test_view_chunking_does_not_change_the_faces_policy(monkeypatch):
+    import fh_mahjong_ai.batched_eval as batched_eval
+    torch.manual_seed(7)
+    model = PolicyValueNet(EnvConfig(), small_model_config(event_window=8)).eval()
+    kw = dict(seeds=[41, 42], match_mode="chongci", chongci_max_hands=4, max_steps_per_episode=4000,
+              event_history_window=8, slots=2, symmetry="faces", inference_mode="per_row")
+    chunked = evaluate_duplicate_seats_batched(model, **kw)
+    monkeypatch.setattr(batched_eval, "VIEWS_PER_FORWARD", 72)
+    whole = evaluate_duplicate_seats_batched(model, **kw)
+    assert chunked["per_seed_mean_placements"] == whole["per_seed_mean_placements"]
+    assert chunked["episodes"] == whole["episodes"] > 0
+
+
 def test_rejects_unknown_symmetry():
     with pytest.raises(ValueError, match="symmetry"):
         evaluate_duplicate_seats_batched(PolicyValueNet(EnvConfig(), small_model_config()),
