@@ -41,7 +41,7 @@ import torch
 from fh_mahjong_ai.bridge import build_bridge
 from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.events import EVENT_CONTRACT_V1
-from fh_mahjong_ai.policies import TorchGreedyPolicy
+from fh_mahjong_ai.policies import SuitAveragedGreedyPolicy, TorchGreedyPolicy
 from fh_mahjong_ai.scripts import serve_policy as serve_policy_module
 # Reuses evaluate.py's chongci step-budget resolution (adversarial round 10,
 # Finding 1c): a full chongci match needs far more decisions than a fixed
@@ -306,6 +306,7 @@ def run_serving_parity(
     match_mode: str = "classic",
     allow_non_production: bool = False,
     logit_export_token: Optional[str] = None,
+    symmetry: str = "none",
 ) -> ParityReport:
     """Drive `episodes` seeded bridge episodes (seeds `start_seed ..
     start_seed + episodes - 1`), checking eval-vs-serving action parity on
@@ -366,7 +367,7 @@ def run_serving_parity(
     # the serving action instead comes from a REAL HTTP call to the endpoint
     # under test, so the endpoint's own weights are independently verified by
     # the eventual action-id comparison.
-    served_reference = CheckpointPolicy.from_checkpoint(checkpoint, device=device)
+    served_reference = CheckpointPolicy.from_checkpoint(checkpoint, device=device, symmetry=symmetry)
     model = served_reference.model
     model_event_window = model.model_config.event_window
 
@@ -390,7 +391,20 @@ def run_serving_parity(
             "something to silently widen and pass"
         )
 
-    reference_policy = TorchGreedyPolicy(model=model, device=device)
+    # With --symmetry-average suits the serving side plays the suit-averaged policy, so the
+    # eval-side reference must too; its "logits" are the averaged log-probabilities.
+    if symmetry == "suits":
+        suit_reference = SuitAveragedGreedyPolicy(model=model, device=device)
+        reference_policy = suit_reference
+
+        def reference_logits_of(observation):
+            logp, _ = suit_reference.log_probs(observation)
+            return np.where(np.isfinite(logp), logp, np.finfo(np.float32).min).astype(np.float32)
+    else:
+        reference_policy = TorchGreedyPolicy(model=model, device=device)
+
+        def reference_logits_of(observation):
+            return _forward_logits(model, observation, device)
 
     if endpoint is not None:
         # Before trusting a single action-id agreement, confirm the endpoint
@@ -482,7 +496,7 @@ def run_serving_parity(
                                 observation,
                             )
                         )
-                    reference_logits = _forward_logits(model, observation, device)
+                    reference_logits = reference_logits_of(observation)
                     legal = np.asarray(observation.legal_actions, dtype=np.int64)
                     _assert_finite_logits(
                         reference_logits, legal, side="reference", seed=seed, decision_index=decision_index,
@@ -505,15 +519,19 @@ def run_serving_parity(
                     act_payload = build_act_payload(observation, decision_index, model_event_window)
                     served_observation = serve_policy_module.observation_from_json(act_payload, model_event_window)
                     try:
-                        served = served_reference.choose(served_observation)
+                        served = served_reference.choose(served_observation,
+                                                         return_logits=symmetry == "suits")
                     except Exception as exc:  # noqa: BLE001 - any raise here is a hard-gate failure, not a bug
                         raise ServingParityError(
                             _failure_message(seed, decision_index, f"serving choose() raised: {exc}", observation)
                         ) from exc
                     serving_action_id = served.greedy_action_id
 
-                    reference_logits = _forward_logits(model, observation, device)
-                    serving_logits = _forward_logits(model, served_observation, device)
+                    reference_logits = reference_logits_of(observation)
+                    # The suit-averaged policy's logits exist only inside choose(); the plain
+                    # policy's are a direct forward over the served observation.
+                    serving_logits = (served.logits if symmetry == "suits"
+                                      else _forward_logits(model, served_observation, device))
                     legal = np.asarray(observation.legal_actions, dtype=np.int64)
                     _assert_finite_logits(
                         reference_logits, legal, side="reference", seed=seed, decision_index=decision_index,
@@ -644,6 +662,12 @@ def main() -> None:
         "400 and the gate fails with a pointer at this flag. No effect in --in-process mode. Can "
         "also be set via FH_MJ_LOGIT_EXPORT_TOKEN.",
     )
+    parser.add_argument(
+        "--symmetry-average", choices=("none", "suits"), default="none",
+        help="check the suit-averaged policy: the reference and the in-process serving policy "
+        "average over the six suit permutations. In --endpoint mode the server under test must "
+        "have been launched with the same --symmetry-average",
+    )
     args = parser.parse_args()
 
     try:
@@ -662,6 +686,7 @@ def main() -> None:
             match_mode=args.match_mode,
             allow_non_production=args.allow_non_production,
             logit_export_token=args.logit_export_token,
+            symmetry=args.symmetry_average,
         )
     except ServingParityError as exc:
         print(str(exc), file=sys.stderr)

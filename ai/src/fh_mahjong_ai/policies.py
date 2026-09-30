@@ -57,6 +57,35 @@ class TorchGreedyPolicy:
         return ActionChoice(action_id=action_id, value=float(value.item()))
 
 
+class SuitAveragedGreedyPolicy:
+    """Greedy over the suit-averaged policy (`suit_symmetry.suit_averaged_log_probs`), built
+    from the raw observation the way `TorchGreedyPolicy` builds its tensors. The eval-side
+    reference for `fh-mj-serving-parity --symmetry-average suits`."""
+
+    def __init__(self, model: PolicyValueNet, device: str = "cpu") -> None:
+        self.model = model
+        self.device = device
+
+    def log_probs(self, observation: Observation) -> tuple[np.ndarray, float]:
+        from .suit_symmetry import suit_averaged_log_probs
+        window = int(self.model.model_config.event_window) if getattr(self.model, "wants_events", False) else 0
+        events = np.zeros((1, window), dtype=np.uint32)
+        history = np.asarray(getattr(observation, "event_history", np.zeros(0, np.uint32)), dtype=np.uint32)
+        n = min(len(history), window)
+        if n:
+            events[0, :n] = history[-n:]
+        logp, value = suit_averaged_log_probs(
+            self.model, np.asarray(observation.planes, dtype=np.float32)[None],
+            np.asarray(observation.scalars, dtype=np.float32)[None],
+            np.asarray(observation.action_mask, dtype=np.int8)[None], events,
+            np.asarray([n], dtype=np.int64), self.device)
+        return logp[0], float(value[0])
+
+    def choose(self, observation: Observation) -> ActionChoice:
+        logp, value = self.log_probs(observation)
+        return ActionChoice(action_id=int(np.argmax(logp)), value=value)
+
+
 class SampledServingPolicy:
     """Adapter exposing serving's CheckpointPolicy (temperature / top-k / family
     sampling) through the ActionChoice protocol used by policy-based evaluation,

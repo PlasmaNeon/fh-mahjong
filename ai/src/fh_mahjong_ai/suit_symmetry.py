@@ -85,3 +85,33 @@ def permute_rows(planes: np.ndarray, scalars: np.ndarray, masks: np.ndarray, eve
 def unpermute_action_values(values: np.ndarray, perm: tuple[int, int, int]) -> np.ndarray:
     """Per-action values computed on the permuted rows, re-indexed to the original actions."""
     return values[:, action_map(perm, values.shape[1])]
+
+
+def suit_averaged_log_probs(model, planes: np.ndarray, scalars: np.ndarray, masks: np.ndarray,
+                            events: np.ndarray, lengths: np.ndarray, device="cpu"):
+    """The suit-averaged policy for n rows: the mean over the six suit views of the model's
+    masked log-probabilities, re-indexed to the original actions (illegal = -inf), and the
+    mean value. `events` are packed uint32 [n, window] (window may be 0); `lengths` [n].
+
+    One batched forward over the 6n permuted rows. Serving, review and the parity reference
+    all use this, so every surface plays the same averaged policy."""
+    import torch
+
+    n = planes.shape[0]
+    views = [permute_rows(planes, scalars, masks, events, perm) for perm in SUIT_PERMUTATIONS]
+    p, s, m, e = (np.concatenate(parts) for parts in zip(*views))
+    to = lambda a: torch.from_numpy(np.ascontiguousarray(a)).to(device)  # noqa: E731
+    ev = ln = None
+    if getattr(model, "wants_events", False):
+        ev = to(e.astype(np.int64))
+        ln = to(np.tile(np.asarray(lengths, dtype=np.int64), len(SUIT_PERMUTATIONS)))
+    with torch.inference_mode():
+        logits, values = model(to(p), to(s), to(m), events=ev, event_lengths=ln)
+    logp = torch.log_softmax(logits.double(), dim=1).cpu().numpy()
+    total = np.zeros((n, masks.shape[1]), dtype=np.float64)
+    for k, perm in enumerate(SUIT_PERMUTATIONS):
+        total += unpermute_action_values(logp[k * n:(k + 1) * n], perm)
+    total /= len(SUIT_PERMUTATIONS)
+    total[masks == 0] = -np.inf
+    value = values.reshape(len(SUIT_PERMUTATIONS), n).double().mean(dim=0).cpu().numpy()
+    return total, value
