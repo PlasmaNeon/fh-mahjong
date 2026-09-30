@@ -106,7 +106,7 @@ def main() -> None:
     parser.add_argument("--batched-eval-inference", choices=("batched", "per_row"), default="batched",
                         help="batched evaluator forward: 'batched' (fast) or 'per_row' (byte-identical "
                              "to the sequential evaluator, for verification)")
-    parser.add_argument("--symmetry-average", choices=("none", "suits"), default="none",
+    parser.add_argument("--symmetry-average", choices=("none", "suits", "faces"), default="none",
                         help="average the policy over the six suit permutations (a different policy "
                              "than the plain checkpoint; recorded as policy_transform). Requires "
                              "--batched-eval-slots")

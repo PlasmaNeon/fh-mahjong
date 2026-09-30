@@ -35,7 +35,7 @@ from .evaluate import (
 from .types import Transition
 
 INFERENCE_MODES = ("batched", "per_row")
-SYMMETRIES = ("none", "suits")
+SYMMETRIES = ("none", "suits", "faces")
 
 
 def _rewards(values) -> np.ndarray:
@@ -60,8 +60,9 @@ class _GreedyForward:
     """Greedy actions for a round's live rows, batched or one row at a time.
 
     With `symmetry="suits"` every row is also evaluated under the five other suit
-    permutations (`suit_symmetry`), each permuted copy's log-probabilities are mapped back
-    to the original actions, and the greedy action maximises their mean.
+    permutations, with `symmetry="faces"` under all 72 face symmetries
+    (`suit_symmetry.SYMMETRY_GROUPS`); each transformed copy's log-probabilities are mapped
+    back to the original actions, and the greedy action maximises their mean.
     """
 
     def __init__(self, model, device: str, inference_mode: str, max_rows: int,
@@ -74,7 +75,8 @@ class _GreedyForward:
         self.graphed = None
         if (inference_mode == "batched" and self.device.type == "cuda" and self.wants_events):
             from .batched_b2b import _GraphedForward
-            copies = 6 if symmetry == "suits" else 1
+            from .suit_symmetry import SYMMETRY_GROUPS
+            copies = len(SYMMETRY_GROUPS.get(symmetry, (None,)))
             self.graphed = _GraphedForward(model, device, max_rows * copies)
 
     def _tensors(self, planes, scalars, masks, events, lengths):
@@ -106,15 +108,16 @@ class _GreedyForward:
     def __call__(self, planes, scalars, masks, events, lengths) -> list[int]:
         if self.symmetry == "none":
             return torch.argmax(self._logits(planes, scalars, masks, events, lengths), dim=1).tolist()
-        from .suit_symmetry import SUIT_PERMUTATIONS, permute_rows, unpermute_action_values
+        from .suit_symmetry import SYMMETRY_GROUPS, permute_rows, unpermute_action_values
+        group = SYMMETRY_GROUPS[self.symmetry]
         n = planes.shape[0]
-        views = [permute_rows(planes, scalars, masks, events, perm) for perm in SUIT_PERMUTATIONS]
+        views = [permute_rows(planes, scalars, masks, events, perm) for perm in group]
         stacked = [np.concatenate(parts) for parts in zip(*views)]
         logits = self._logits(stacked[0], stacked[1], stacked[2], stacked[3],
-                              np.tile(lengths, len(SUIT_PERMUTATIONS)))
+                              np.tile(lengths, len(group)))
         logp = torch.log_softmax(logits.double(), dim=1).numpy()
         total = np.zeros((n, logp.shape[1]), dtype=np.float64)
-        for k, perm in enumerate(SUIT_PERMUTATIONS):
+        for k, perm in enumerate(group):
             total += unpermute_action_values(logp[k * n:(k + 1) * n], perm)
         total[masks == 0] = -np.inf
         return np.argmax(total, axis=1).tolist()
