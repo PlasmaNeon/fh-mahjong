@@ -22,3 +22,5 @@ One seat's worth of tabletop, decomposed into zones. `TableBoard.tsx` composes f
 - Left/right lanes are intentionally not rotationally symmetric: right concealed hands flow `column-reverse`, left flow `column`; right exposed rails sit above the hand, left below it. Do not "fix" this into symmetry.
 - Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with a `small` modifier.
 - Preview changes on `/tools/table-sample` (`features/dev/`), not by deploying a live match.
+
+`DiscardZone` assigns stable row/column coordinates in formation order: three rows of six, then an extensible fourth row. All four rotations use the same coordinates and CSS chooses their axis/direction. `DiscardZone.test.ts` covers the 18/24-tile boundaries and 30-tile overflow.

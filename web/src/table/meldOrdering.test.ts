@@ -70,7 +70,7 @@ describe('orderMelds', () => {
   const a: MeldLike = { tiles: [t(1)] }
   const b: MeldLike = { tiles: [t(2)] }
   const c: MeldLike = { tiles: [t(3)] }
-  it('keeps formation order for every direction (first-formed nearest the hand)', () => {
+  it('keeps formation order for every direction (CSS places first formed farthest from the hand)', () => {
     for (const dir of ['bottom', 'top', 'left', 'right'] as const) {
       expect(orderMelds([a, b, c], dir)).toEqual([a, b, c])
     }

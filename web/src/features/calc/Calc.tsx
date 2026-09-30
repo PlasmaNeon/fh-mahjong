@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 
 import { getApiUrl, hasConfiguredApiBaseUrl } from '../../config'
 import { game } from '../../proto/game'
-import { ClubShell, InputApplyRow, LedgerPaletteGrid, LedgerTile, LedgerTileRow, ToolTabs } from '../../theme'
+import { InputApplyRow, LedgerPaletteGrid, LedgerTile, LedgerTileRow, ToolTabs } from '../../theme'
+import ToolsShell from '../../theme/components/ToolsShell'
 import { useI18n } from '../../i18n/I18nContext'
 import {
   buildCalcRequestPayload,
@@ -154,7 +155,7 @@ function localizeDebugValue(value: string, lang: Lang): string {
 // ─── Main page ───
 
 export default function Calc() {
-  const { t, shortLanguage: lang, toggleLanguage } = useI18n()
+  const { t, shortLanguage: lang } = useI18n()
   const [closedHand, setClosedHand] = useState<CalcTileDraft[]>([])
   const [winTile, setWinTile] = useState<CalcTileDraft | null>(null)
   const [wildTile, setWildTile] = useState<CalcTileDraft | null>(null)
@@ -423,29 +424,10 @@ export default function Calc() {
   }
 
   return (
-    <ClubShell wide title={t('nav.tools')}>
+    <ToolsShell title={t('calc.title')}>
         <article className="ldg-page ldg-page--workbench">
 
           <ToolTabs />
-
-          {/* Header */}
-          <div className="ldg-page-head">
-            <div>
-              <h1 className="ldg-page-head__title">
-                {t('calc.title')}
-                <small>{lang === 'en' ? '奉化算分器' : 'Fenghua Calculator'}</small>
-              </h1>
-            </div>
-            <div className="ldg-page-head__nav">
-              <button
-                type="button"
-                className="ldg-link"
-                onClick={toggleLanguage}
-              >
-                {t('calc.language')}
-              </button>
-            </div>
-          </div>
 
           {/* Closed hand */}
           <section className="ldg-section">
@@ -973,6 +955,6 @@ export default function Calc() {
           </div>
 
         </article>
-    </ClubShell>
+    </ToolsShell>
   )
 }

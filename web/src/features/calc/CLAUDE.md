@@ -14,3 +14,5 @@
 - Sends `POST /api/v1/tools/calc`. A `GET` on that path returns 404 — the endpoint is POST-only.
 - Uses the utility classes from `theme/base.css` directly rather than composing typed primitives; it and `Shanten.tsx` are the deliberate "advanced consumer" exceptions for dense tool layouts.
 - UI spec: `worklog/specs/2026-05-15-shanten-calc-ledger-redesign.md`.
+
+The tool now uses `ToolsShell` and the scoped Direct play light theme: plain shared navigation, blue controls and white work surfaces. Tool tabs identify the page; its accessible title is provided by the shell without an extra decorative heading or duplicate language toggle. Calculation and tile-editing state remain unchanged.

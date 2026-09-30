@@ -1,0 +1,65 @@
+/* Preview-only shared geometry: phone and desktop use one proportion set.
+   The stage scales uniformly; extra aspect-ratio width becomes outer space. */
+.game-stage[data-unified="true"][data-compact] .mahjong-table {
+  --tile-width: 82px;
+  --tile-height: 116px;
+  --bundle-span-self: 1200px;
+  --bundle-edge-offset: 28px;
+  --bundle-span-opp: 540px;
+  --bundle-side-shift: 80px;
+  --side-hand-inset: 60px;
+  --discard-tile-width: 28px;
+  --discard-tile-height: 38px;
+  --center-shift: 52px;
+  --action-bottom: 210px;
+  background: radial-gradient(ellipse at 50% 42%, #4d6879, #405b6d);
+  box-shadow: inset 0 0 0 1px #8ba4b333;
+}
+.game-stage[data-unified="true"][data-compact] .seat-bundle--opp .seat-bundle__exposed {
+  --tile-small-width: 28px;
+  --tile-small-height: 38px;
+}
+.game-stage[data-unified="true"][data-compact] .seat-bundle--self .seat-bundle__exposed {
+  --tile-small-width: 34px;
+  --tile-small-height: 46px;
+}
+/* Equal and opposite offsets around the HUD preserve 180-degree symmetry. */
+.game-stage[data-unified="true"][data-compact] .mahjong-table {
+  --bundle-edge-offset-side: 28px;
+}
+.game-stage[data-unified="true"][data-compact] .seat-bundle-pivot--left {
+  top: calc(50% - var(--center-shift) - 28px);
+}
+.game-stage[data-unified="true"][data-compact] .seat-bundle-pivot--right {
+  top: calc(50% - var(--center-shift) + 28px);
+}
+.game-stage[data-unified="true"][data-compact] .seat-bundle--self .seat-bundle__exposed:has(.zone-melds) {
+  margin-right: 32px;
+}
+
+/* Both sides share a fixed local start: rotation moves left down and right up.
+   Meld length consumes the intervening space, never the hand anchor. */
+.game-stage[data-unified="true"][data-compact] :is(.seat-bundle-pivot--left, .seat-bundle-pivot--right) .zone-hand {
+  position: relative;
+  left: var(--side-hand-inset);
+}
+.game-stage[data-unified="true"][data-compact] :is(.seat-bundle-pivot--left, .seat-bundle-pivot--right) .seat-bundle__exposed {
+  --tile-small-width: 28px;
+  --tile-small-height: 38px;
+  --meld-group-gap: 2px;
+}
+
+/* Reserve the fixed hand start even for three/four full sideways kans. */
+.game-stage[data-unified="true"][data-compact] :is(.seat-bundle-pivot--left, .seat-bundle-pivot--right) .seat-bundle__exposed:has(.seat-meld-group:nth-child(3)):has(.seat-meld-group > :nth-child(4)) {
+  --tile-small-width: 26px;
+  --tile-small-height: 34px;
+}
+.game-stage[data-unified="true"][data-compact] :is(.seat-bundle-pivot--left, .seat-bundle-pivot--right) .seat-bundle__exposed:has(.seat-meld-group:nth-child(4)):has(.seat-meld-group > :nth-child(4)) {
+  --tile-small-width: 24px;
+  --tile-small-height: 32px;
+}
+/* Flowers occupy their own rail, so meld density need not shrink them. */
+.game-stage[data-unified="true"][data-compact] .zone-flowers {
+  --tile-small-width: 32px;
+  --tile-small-height: 42px;
+}

@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import type { CSSProperties } from 'react'
 import { TileComponent } from '../Tile'
 import { tileIdsEqual } from '../meldOrdering'
 import type { SeatLaneDirection, TileLike } from '../types'
@@ -25,7 +26,7 @@ export function DiscardZone({
       {discards.length === 0 ? (
         <div className="discard-lane__placeholder" aria-hidden="true" />
       ) : (
-        discards.map((tile) => {
+        discards.map((tile, index) => {
           const isNewDiscard = animateDiscardTileIds?.has(tile.id) ?? false
           const isCallableDiscard = tileIdsEqual(callableDiscardTileId, tile.id)
 
@@ -42,7 +43,11 @@ export function DiscardZone({
                 opacity: { duration: 0.08, ease: 'easeOut' },
               }}
               className={`discard-lane__tile ${isCallableDiscard ? 'discard-lane__tile--callable' : ''}`}
-              style={hiddenTileIds?.has(tile.id) ? { visibility: 'hidden' } : undefined}
+              style={{
+                '--discard-row': Math.min(Math.floor(index / 6), 3),
+                '--discard-column': index < 18 ? index % 6 : index - 18,
+                visibility: hiddenTileIds?.has(tile.id) ? 'hidden' : undefined,
+              } as CSSProperties}
             >
               <motion.div
                 layout="position"

@@ -757,11 +757,15 @@
   --drawn-gap: 16px;
   --discard-gap: 3px;
   --discard-padding: 6px;
-  --discard-lane-size: calc((var(--tile-small-width) * 6) + (var(--discard-gap) * 5) + (var(--discard-padding) * 2));
+  --discard-tile-width: 28px;
+  --discard-tile-height: 38px;
+  --discard-columns: 6;
+  --center-shift: 32px;
+  --discard-lane-size: calc(var(--discard-tile-width) * var(--discard-columns) + var(--discard-gap) * (var(--discard-columns) - 1) + var(--discard-padding) * 2);
   --center-hud-size: var(--discard-lane-size);
   --side-seat-lane: 88px;
   --wild-tile-top: 24px;
-  --wild-tile-left: 26px;
+  --wild-tile-left: 120px;
   --top-hand-top: 18px;
   --top-hand-side-gap: 272px;
   --bottom-hand-bottom: 28px;
@@ -818,12 +822,18 @@
   --drawn-gap: 12px;
   --tile-small-width: 24px;
   --tile-small-height: 34px;
-  --discard-hud-gap: 6px;
-  --action-bottom: 124px;
+  --discard-tile-width: 26px;
+  --discard-tile-height: 36px;
+  --discard-gap: 0px;
+  --discard-padding: 1px;
+  --discard-columns: 6;
+  --center-shift: 48px;
+  --discard-hud-gap: 2px;
+  --action-bottom: 180px;
   --bundle-edge-offset: 16px;
   --bundle-span-self: 1190px;
-  --bundle-span-opp: 430px;
-  --bundle-side-shift: 34px;
+  --bundle-span-opp: 502px;
+  --bundle-side-shift: 60px;
 }
 
 .game-stage .wild-tile-corner {
@@ -909,6 +919,8 @@
 }
 
 .game-stage .discard-lane {
+  --tile-small-width: var(--discard-tile-width);
+  --tile-small-height: var(--discard-tile-height);
   position: absolute;
   display: flex;
   gap: var(--discard-gap);
@@ -932,7 +944,7 @@
 
 .game-stage .discard-lane--bottom {
   left: calc(50% - var(--center-hud-size) / 2);
-  top: calc(50% + var(--center-hud-size) / 2 + var(--discard-hud-gap));
+  top: calc(50% - var(--center-shift) + var(--center-hud-size) / 2 + var(--discard-hud-gap));
   bottom: auto;
   width: var(--discard-lane-size);
   min-height: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
@@ -944,7 +956,7 @@
 .game-stage .discard-lane--top {
   left: calc(50% - var(--center-hud-size) / 2);
   top: auto;
-  bottom: calc(50% + var(--center-hud-size) / 2 + var(--discard-hud-gap));
+  bottom: calc(50% + var(--center-shift) + var(--center-hud-size) / 2 + var(--discard-hud-gap));
   width: var(--discard-lane-size);
   min-height: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
   flex-direction: row-reverse;
@@ -955,7 +967,7 @@
 .game-stage .discard-lane--left {
   left: auto;
   right: calc(50% + var(--center-hud-size) / 2 + var(--discard-hud-gap));
-  top: 50%;
+  top: calc(50% - var(--center-shift));
   transform: translateY(-50%);
   height: var(--discard-lane-size);
   min-width: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
@@ -967,7 +979,7 @@
 .game-stage .discard-lane--right {
   right: auto;
   left: calc(50% + var(--center-hud-size) / 2 + var(--discard-hud-gap));
-  top: 50%;
+  top: calc(50% - var(--center-shift));
   transform: translateY(-50%);
   height: var(--discard-lane-size);
   min-width: calc((var(--tile-small-height) * 2) + (var(--discard-gap) * 1) + (var(--discard-padding) * 2));
@@ -1065,6 +1077,7 @@
 }
 
 .game-stage .center-info {
+  top: calc(50% - var(--center-shift));
   width: var(--center-hud-size);
   height: var(--center-hud-size);
 }
@@ -1231,4 +1244,61 @@
 
 .game-stage .discard-lane {
   z-index: var(--zone-z-discards);
+}
+
+/* Opponent exposed tiles have their own size budget: four sideways kans plus
+   the remaining pair must fit the fixed bundle without pushing past its edge. */
+.game-stage .seat-bundle--opp .seat-bundle__exposed {
+  --tile-small-width: 28px;
+  --tile-small-height: 38px;
+}
+.game-stage[data-compact="true"] .seat-bundle--opp .seat-bundle__exposed {
+  --tile-small-width: 24px;
+  --tile-small-height: 32px;
+  --meld-group-gap: 4px;
+}
+/* A flower-only rail sits above the hand, avoiding competition for its width. */
+.game-stage[data-compact="true"] .seat-bundle--opp .seat-bundle__exposed:not(:has(.zone-melds)) {
+  position: absolute;
+  right: 0;
+  bottom: 42px;
+}
+.game-stage[data-compact="true"] .seat-bundle--self .seat-bundle__exposed {
+  --tile-small-width: 28px;
+  --tile-small-height: 38px;
+}
+.game-stage[data-compact="true"] .seat-bundle--self .seat-bundle__exposed:not(:has(.zone-melds)) {
+  position: absolute;
+  right: 100px;
+  bottom: calc(var(--tile-height) + 8px);
+}
+/* Keep the top flower row beside the upper discard pool, not over it. */
+.game-stage[data-compact="true"] .seat-bundle-pivot--top { left: calc(50% - 80px); }
+
+/* Four six-tile rows cover ordinary wall exhaustion. Only the fourth row
+   extends sideways for longer histories; no tile is hidden or reduced. */
+.game-stage .discard-lane--bottom,
+.game-stage .discard-lane--top {
+  height: calc(var(--discard-tile-height) * 4 + var(--discard-gap) * 3 + var(--discard-padding) * 2);
+}
+.game-stage .discard-lane--left,
+.game-stage .discard-lane--right {
+  width: calc(var(--discard-tile-height) * 4 + var(--discard-gap) * 3 + var(--discard-padding) * 2);
+}
+.game-stage .discard-lane__tile { position: absolute; }
+.game-stage .discard-lane--bottom .discard-lane__tile {
+  left: calc(var(--discard-padding) + var(--discard-column) * (var(--discard-tile-width) + var(--discard-gap)));
+  top: calc(var(--discard-padding) + var(--discard-row) * (var(--discard-tile-height) + var(--discard-gap)));
+}
+.game-stage .discard-lane--top .discard-lane__tile {
+  right: calc(var(--discard-padding) + var(--discard-column) * (var(--discard-tile-width) + var(--discard-gap)));
+  bottom: calc(var(--discard-padding) + var(--discard-row) * (var(--discard-tile-height) + var(--discard-gap)));
+}
+.game-stage .discard-lane--left .discard-lane__tile {
+  top: calc(var(--discard-padding) + var(--discard-column) * (var(--discard-tile-width) + var(--discard-gap)));
+  right: calc(var(--discard-padding) + var(--discard-row) * (var(--discard-tile-height) + var(--discard-gap)));
+}
+.game-stage .discard-lane--right .discard-lane__tile {
+  bottom: calc(var(--discard-padding) + var(--discard-column) * (var(--discard-tile-width) + var(--discard-gap)));
+  left: calc(var(--discard-padding) + var(--discard-row) * (var(--discard-tile-height) + var(--discard-gap)));
 }

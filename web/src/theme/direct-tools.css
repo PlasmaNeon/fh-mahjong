@@ -1,0 +1,66 @@
+/* Structural overrides for the shared calc/shanten workbench only. */
+.direct-tools { min-height: 100dvh; background: var(--page); color: var(--ink); font-family: var(--font); }
+.direct-tools-header { max-width: 1240px; margin: auto; display: flex; align-items: center; gap: 48px; padding: 22px 40px; border-bottom: 1px solid var(--rule); }
+.direct-tools-brand { color: var(--ink); font-size: 20px; font-weight: 700; text-decoration: none; flex-shrink: 0; }
+.direct-tools-brand small { display: block; color: var(--ink-3); font-size: 11px; font-weight: 400; margin-top: 3px; }
+.direct-tools-nav { display: flex; align-items: center; gap: 28px; }
+.direct-tools-nav a { min-height: 48px; display: inline-flex; align-items: center; text-decoration: none; color: var(--ink-3); font-weight: 600; border-bottom: 2px solid transparent; }
+.direct-tools-nav a[aria-current] { color: var(--accent); border-color: var(--accent); }
+.direct-tools-language { margin-left: auto; min-height: 44px; color: var(--accent); background: transparent; border: 0; cursor: pointer; }
+.direct-tools-main { max-width: 1120px; margin: auto; padding: 32px 40px 48px; }
+.direct-tools-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.direct-tools-mobile-nav { display: none; }
+.direct-tools .ldg-page { padding: 28px; border: 1px solid var(--rule); border-radius: 16px; background: var(--surface); box-shadow: none; overflow: visible; }
+.direct-tools .ldg-page::after { display: none; }
+.direct-tools .tool-tabs { display: flex; width: fit-content; max-width: 100%; border-radius: 8px; background: var(--surface-2); margin-bottom: 24px; }
+.direct-tools .tool-tabs a { min-height: 48px; padding: 12px 22px; font-weight: 600; text-align: center; }
+.direct-tools .tool-tabs a.is-active { background: var(--accent); color: var(--on-dark); }
+.direct-tools .ldg-section { margin-top: 28px; }
+.direct-tools .tool-tabs + .ldg-section { margin-top: 0; }
+.direct-tools .ldg-section-title { font-family: var(--font); font-size: 18px; }
+.direct-tools .ldg-section-title small { letter-spacing: 0; font-size: 13px; }
+.direct-tools .ldg-section-row { flex-wrap: wrap; align-items: center; gap: 12px; }
+.direct-tools :is(.ldg-section-meta, .ldg-result-label, .ldg-palette-drawer__head, .ldg-debug__label, .ldg-field__label) { font-family: var(--font); letter-spacing: 0; text-transform: none; }
+.direct-tools .ldg-btn { min-height: 44px; border: 1px solid #b3c5db; border-radius: 7px; background: var(--surface); color: var(--accent); box-shadow: none; font-family: var(--font); font-size: 14px; letter-spacing: 0; white-space: normal; }
+.direct-tools .ldg-btn:hover:not(:disabled) { background: var(--surface-2); border-color: var(--accent); box-shadow: none; transform: none; }
+.direct-tools .ldg-btn--primary { background: var(--accent); color: var(--on-dark); border-color: var(--accent); }
+.direct-tools .ldg-btn--primary:hover:not(:disabled) { background: var(--accent-strong); color: var(--on-dark); }
+.direct-tools .ldg-btn--danger { color: var(--danger); background: var(--danger-soft); border-color: var(--danger); }
+.direct-tools .ldg-btn--danger:hover:not(:disabled) { color: white; background: var(--danger); }
+.direct-tools :is(.ldg-input, .ldg-select) { min-height: 44px; border: 1px solid #b9c6d4; border-radius: 6px; box-shadow: none; background: var(--surface); }
+.direct-tools :is(button, a, input, select, summary):focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+.direct-tools :is(.ldg-chooser, .ldg-toggle) { background: var(--surface-2); border-color: var(--rule); flex-wrap: wrap; max-width: 100%; }
+.direct-tools :is(.ldg-chooser__btn, .ldg-toggle__btn) { min-height: 44px; font-family: var(--font); font-size: 14px; }
+.direct-tools :is(.ldg-chooser__btn, .ldg-toggle__btn).is-active { background: var(--accent); color: white; box-shadow: none; }
+.direct-tools :is(.workbench-palette, .ldg-palette-drawer, .ldg-debug) { background: var(--surface-2); border: 1px solid var(--rule); border-radius: 10px; }
+.direct-tools .ldg-palette-drawer { background: var(--surface); }
+.direct-tools .ldg-meld { background: var(--surface); border-color: var(--rule); border-radius: 10px; box-shadow: none; }
+.direct-tools .ldg-meld--active { background: var(--accent-soft); border-color: var(--accent); }
+.direct-tools .ldg-chip { border-radius: 6px; background: var(--surface); color: var(--ink-2); }
+.direct-tools .ldg-chip--active { background: var(--accent); color: white; }
+.direct-tools .ldg-tile--sel { box-shadow: 0 0 0 3px var(--accent), var(--tile-shadow); }
+.direct-tools .ldg-tile__badge { background: var(--ink); color: white; }
+.direct-tools .ldg-big-stat { background: var(--surface-2); border: 1px solid var(--rule); border-radius: 10px; padding: 20px; }
+.direct-tools .ldg-big-stat__label { color: var(--ink-3); }
+.direct-tools .ldg-big-stat__value { color: var(--accent); font-family: var(--font); }
+.direct-tools .ldg-note--err { color: var(--danger); }
+.direct-tools .ldg-actions-row { background: var(--surface); border-color: var(--rule); box-shadow: none; }
+.direct-tools .ldg-input-row { align-items: stretch; }
+.direct-tools .ldg-input-row .ldg-btn { width: auto; }
+@media (max-width: 700px) {
+  .direct-tools-header { padding: 16px 20px; gap: 16px; }
+  .direct-tools-header .direct-tools-nav { display: none; }
+  .direct-tools-main { padding: 20px 12px 28px; }
+  .direct-tools .ldg-page { padding: 18px 14px; border-radius: 12px; }
+  .direct-tools .tool-tabs { width: 100%; }
+  .direct-tools .tool-tabs a { flex: 1; padding: 12px 8px; }
+  .direct-tools .ldg-actions-row { flex-wrap: wrap; gap: 12px; }
+  .direct-tools .ldg-actions-row > .ldg-btn { width: 100%; }
+  .direct-tools .workbench-palette { padding: 12px; }
+  .direct-tools .ldg-palette-drawer { padding: 10px; }
+  .direct-tools .ldg-discard-row { flex-wrap: wrap; gap: 12px; }
+  .direct-tools .ldg-discard-row__draws { min-width: 0; }
+  .direct-tools-mobile-nav { display: block; position: sticky; bottom: 0; z-index: 20; padding: 0 16px env(safe-area-inset-bottom); background: var(--surface); border-top: 1px solid var(--rule); }
+  .direct-tools-mobile-nav .direct-tools-nav { justify-content: space-around; gap: 12px; }
+  .direct-tools-mobile-nav a { padding: 16px 4px; }
+}
