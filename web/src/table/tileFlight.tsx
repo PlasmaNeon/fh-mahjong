@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { getTileName, getTileSvgName } from '../utils/tileDisplay'
+import { getTileName, getTileSvgName, getTileSvgUrl } from '../utils/tileDisplay'
 import type { PlayerTableView, SeatLaneDirection, TileLike } from './types'
 import {
   planTileFlights,
@@ -130,7 +130,7 @@ function FloatingTile({
             }}
           >
             <img
-              src={`/Regular_shortnames/${svgName}`}
+              src={getTileSvgUrl(svgName)}
               alt={animation.asBack ? 'tile back' : getTileName(animation.tile)}
               style={{
                 width: '85%',

@@ -17,7 +17,7 @@ This directory owns the reusable Mahjong table renderer. The live game and repla
 ## Key Files
 
 - **CenterHud.tsx** — The center match HUD: seat names, winds, and scores.
-- **Tile.tsx** — `TileComponent`, the single tile renderer.
+- **Tile.tsx** — `TileComponent`, the single tile renderer. Both it and `tileFlight.tsx` obtain versioned image URLs through `getTileSvgUrl()` so stationary and flying tiles use the same colored Hong Kong artwork.
 - **tileFlight.tsx** / **tileFlightPlan.ts** — The table-level flying-tile overlay and its pure flight planner.
 - **handOrdering.ts** / **meldOrdering.ts** — Concealed-hand sort order and meld recap ordering (`orderMeldsForRecap`).
 - **tileId.ts** — `tileIdsEqual`, the wrapper-tolerant tile-id comparison.

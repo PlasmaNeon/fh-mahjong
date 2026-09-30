@@ -35,7 +35,7 @@ Every component here consumes tokens from `../tokens.css` through the structural
 
 The ledger-workbench tile widgets shared by the calc and shanten tool pages:
 
-- `LedgerTile` — the `.ldg-tile` button (face image, size/selected/dimmed modifiers, optional badge)
+- `LedgerTile` — the `.ldg-tile` button (face image, size/selected/dimmed modifiers, optional badge); uses `getTileSvgUrl()` for the same versioned Hong Kong faces as the table and preloader
 - `LedgerTileRow` — a row of drafted tiles, or the empty-state note
 - `LedgerPaletteGrid` — the full `TILE_LIBRARY` palette
 

@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { getTileName, getTileSvgName } from '../utils/tileDisplay'
+import { getTileName, getTileSvgName, getTileSvgUrl } from '../utils/tileDisplay'
 import type { TileLike } from './types'
 
 type TileComponentProps = {
@@ -37,7 +37,7 @@ export const TileComponent = memo(function TileComponent({
       }}
     >
       <img
-        src={`/Regular_shortnames/${svgName}`}
+        src={getTileSvgUrl(svgName)}
         alt={getTileName(tile)}
         style={{ width: '85%', height: '85%', display: 'block', position: 'absolute', top: '7.5%', left: '7.5%', zIndex: 2 }}
         draggable="false"
