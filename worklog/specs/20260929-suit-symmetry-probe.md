@@ -29,3 +29,22 @@ are passed through unpermuted.
 - A pass makes suit averaging a candidate serving rule for the champion (latency ~6× the forward, still
   well inside the 200 ms budget); deployment is a separate decision. A fail closes this probe; the maps
   stay available for training-time augmentation, which is a separate question.
+
+## Outcome — 2026-09-29: PASS
+
+Seeds 2,500,000–2,504,999 (5,000 × 4), commit `4bc5a73`, one bridge build (`48ec4d00…`), batched evaluator
+(256 slots) on both sides.
+
+| | suit-averaged | plain |
+|---|---|---|
+| Mean placement | **+0.4823** | +0.4454 |
+| Large-loss rate | 0.0426 | 0.0505 |
+| Deal-in rate | 0.0992 | 0.1006 |
+
+- Paired delta **+0.0369 ± 0.0107** (clustered CI95 [+0.0262, +0.0476]) — the placement gate passes.
+- Large-loss 0.0426 ≤ 0.0505 + 0.015 — passes (and is lower). 4th-share Δ −0.0116 [−0.0165, −0.0067],
+  large-loss Δ −0.0078 [−0.0115, −0.0042], training-utility Δ +0.0329 [+0.0231, +0.0426].
+- Evaluation wall time: plain 808 s, suit-averaged 1,002 s (6× rows, one batched forward per round).
+
+`anchor075` + suit averaging is a gate-qualified serving rule. Deployment is a separate decision and needs
+`fh-mj-serve-policy` to apply the same averaging. Reports: `/root/fh-mahjong-runs/symmetry-probe-20260929/`.
