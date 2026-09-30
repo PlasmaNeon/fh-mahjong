@@ -1,0 +1,195 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="1536" viewBox="0 0 1536 1536"><rect width="1536" height="1536" fill="#edf0f2"/>
+<text x="32" y="48" fill="#253343" font-family="Arial, sans-serif" font-size="29" font-weight="700">Fenghua Mahjong / home, rooms and navigation</text>
+<text x="32" y="80" fill="#253343" font-family="Arial, sans-serif" font-size="16" font-weight="400">Desktop and phone have equal priority. Draft wireframes; no observed usability results.</text>
+<rect x="24" y="108" width="480" height="1370" rx="12" fill="#ffffff"/>
+<text x="44" y="145" fill="#22559c" font-family="Arial, sans-serif" font-size="24" font-weight="700">A · Direct play</text>
+<text x="44" y="173" fill="#253343" font-family="Arial, sans-serif" font-size="15" font-weight="400">Shortest path to a game.</text>
+<text x="44" y="220" fill="#253343" font-family="Arial, sans-serif" font-size="17" font-weight="700">Home / desktop</text>
+<rect x="40" y="238" width="448" height="212" rx="7" fill="#f7f9fb"/>
+<text x="54" y="268" fill="#22559c" font-family="Arial, sans-serif" font-size="19" font-weight="700">奉化麻将</text>
+<text x="229" y="266" fill="#253343" font-family="Arial, sans-serif" font-size="12" font-weight="400">Play    Replays    Tools    Account</text>
+<text x="54" y="307" fill="#253343" font-family="Arial, sans-serif" font-size="23" font-weight="700">How would you like to play?</text>
+<rect x="54" y="326" width="170" height="30" rx="5" fill="#22559c"/>
+<text x="64" y="346" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Find a game</text>
+<rect x="235" y="326" width="170" height="30" rx="5" fill="#22559c"/>
+<text x="245" y="346" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Create a room</text>
+<text x="54" y="380" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Classic Fenghua · Change rules</text>
+<rect x="54" y="397" width="272" height="34" rx="4" fill="#e3e9ef"/>
+<text x="64" y="419" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Paste an invitation link</text>
+<rect x="338" y="399" width="90" height="30" rx="5" fill="#22559c"/>
+<text x="348" y="419" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Open</text>
+<text x="44" y="490" fill="#253343" font-family="Arial, sans-serif" font-size="17" font-weight="700">Waiting room / desktop</text>
+<rect x="40" y="508" width="448" height="325" rx="7" fill="#f7f9fb"/>
+<text x="54" y="539" fill="#253343" font-family="Arial, sans-serif" font-size="18" font-weight="700">Your room · 2 of 4 seats filled</text>
+<rect x="54" y="555" width="145" height="30" rx="5" fill="#22559c"/>
+<text x="64" y="575" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Copy invitation</text>
+<text x="54" y="606" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Classic Fenghua · Host can change rules</text>
+<text x="54" y="630" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">East · You (host)</text>
+<text x="54" y="656" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">South · Friend</text>
+<text x="54" y="682" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">West · Empty       Add bot</text>
+<text x="54" y="708" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">North · Empty      Add bot</text>
+<text x="54" y="764" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Invite 2 players or fill empty seats with bots.</text>
+<rect x="54" y="780" width="180" height="30" rx="5" fill="#687482"/>
+<text x="64" y="800" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Waiting for 2 seats</text>
+<text x="257" y="799" fill="#22559c" font-family="Arial, sans-serif" font-size="13" font-weight="400">Back to Play</text>
+<text x="44" y="875" fill="#253343" font-family="Arial, sans-serif" font-size="17" font-weight="700">Phone / same hierarchy, upright screens</text>
+<rect x="44" y="895" width="210" height="404" rx="14" fill="#f7f9fb"/>
+<rect x="274" y="895" width="210" height="404" rx="14" fill="#f7f9fb"/>
+<text x="58" y="925" fill="#22559c" font-family="Arial, sans-serif" font-size="18" font-weight="700">奉化麻将</text>
+<text x="58" y="967" fill="#253343" font-family="Arial, sans-serif" font-size="21" font-weight="700">Start playing</text>
+<rect x="58" y="987" width="182" height="30" rx="5" fill="#22559c"/>
+<text x="68" y="1007" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Find a game</text>
+<rect x="58" y="1029" width="182" height="30" rx="5" fill="#22559c"/>
+<text x="68" y="1049" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Create a room</text>
+<text x="58" y="1095" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Classic Fenghua</text>
+<rect x="58" y="1111" width="182" height="34" rx="4" fill="#e1e6eb"/>
+<text x="68" y="1133" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Invitation link</text>
+<rect x="58" y="1155" width="182" height="30" rx="5" fill="#22559c"/>
+<text x="68" y="1175" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Open invitation</text>
+<text x="58" y="1273" fill="#22559c" font-family="Arial, sans-serif" font-size="13" font-weight="400">Play    Replays    Tools</text>
+<text x="288" y="925" fill="#253343" font-family="Arial, sans-serif" font-size="20" font-weight="700">Your room</text>
+<text x="288" y="954" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">2 of 4 seats filled</text>
+<rect x="288" y="975" width="182" height="30" rx="5" fill="#22559c"/>
+<text x="298" y="995" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Copy invitation</text>
+<text x="288" y="1042" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">East · You (host)</text>
+<text x="288" y="1076" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">South · Friend</text>
+<text x="288" y="1110" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">West · Empty</text>
+<text x="288" y="1144" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">North · Empty</text>
+<text x="288" y="1175" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Classic Fenghua</text>
+<text x="288" y="1203" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Invite 2 or add bots</text>
+<rect x="288" y="1230" width="182" height="30" rx="5" fill="#687482"/>
+<text x="298" y="1250" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Waiting for 2 seats</text>
+<text x="44" y="1340" fill="#253343" font-family="Arial, sans-serif" font-size="16" font-weight="700">Tradeoff</text>
+<text x="44" y="1370" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">Recommended starting point for navigation.</text>
+<text x="44" y="1394" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">Direct actions; limited room atmosphere.</text>
+<text x="44" y="1434" fill="#22559c" font-family="Arial, sans-serif" font-size="13" font-weight="400">Host starts when filled; guests wait for host.</text>
+<rect x="528" y="108" width="480" height="1370" rx="12" fill="#ffffff"/>
+<text x="548" y="145" fill="#236b54" font-family="Arial, sans-serif" font-size="24" font-weight="700">B · Room first</text>
+<text x="548" y="173" fill="#253343" font-family="Arial, sans-serif" font-size="15" font-weight="400">Friends and seats lead the experience.</text>
+<text x="548" y="220" fill="#253343" font-family="Arial, sans-serif" font-size="17" font-weight="700">Home / desktop</text>
+<rect x="544" y="238" width="448" height="212" rx="7" fill="#f2f4ee"/>
+<text x="558" y="268" fill="#236b54" font-family="Arial, sans-serif" font-size="19" font-weight="700">奉化麻将</text>
+<text x="733" y="266" fill="#253343" font-family="Arial, sans-serif" font-size="12" font-weight="400">Play    Replays    Tools    Account</text>
+<text x="558" y="307" fill="#253343" font-family="Arial, sans-serif" font-size="23" font-weight="700">Play with friends</text>
+<rect x="558" y="326" width="170" height="30" rx="5" fill="#236b54"/>
+<text x="568" y="346" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Create a room</text>
+<text x="747" y="346" fill="#236b54" font-family="Arial, sans-serif" font-size="15" font-weight="400">Or find a game</text>
+<rect x="558" y="367" width="272" height="34" rx="4" fill="#e2e8df"/>
+<text x="568" y="389" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Paste an invitation link</text>
+<rect x="842" y="369" width="90" height="30" rx="5" fill="#236b54"/>
+<text x="852" y="389" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Open</text>
+<text x="558" y="429" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Room rules are shown before the game starts.</text>
+<text x="548" y="490" fill="#253343" font-family="Arial, sans-serif" font-size="17" font-weight="700">Waiting room / desktop</text>
+<rect x="544" y="508" width="448" height="325" rx="7" fill="#f2f4ee"/>
+<text x="558" y="539" fill="#253343" font-family="Arial, sans-serif" font-size="18" font-weight="700">Your room · 2 of 4 seats filled</text>
+<rect x="558" y="555" width="145" height="30" rx="5" fill="#236b54"/>
+<text x="568" y="575" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Copy invitation</text>
+<text x="558" y="606" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Classic Fenghua · Host can change rules</text>
+<rect x="558" y="625" width="187" height="49" rx="5" fill="#e1e9df"/>
+<text x="568" y="654" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">East · You (host)</text>
+<rect x="763" y="625" width="187" height="49" rx="5" fill="#e1e9df"/>
+<text x="773" y="654" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">South · Friend</text>
+<rect x="558" y="686" width="187" height="49" rx="5" fill="#e1e9df"/>
+<text x="568" y="715" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">West · Empty</text>
+<rect x="763" y="686" width="187" height="49" rx="5" fill="#e1e9df"/>
+<text x="773" y="715" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">North · Empty</text>
+<text x="558" y="764" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Invite 2 players or fill empty seats with bots.</text>
+<rect x="558" y="780" width="180" height="30" rx="5" fill="#687482"/>
+<text x="568" y="800" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Waiting for 2 seats</text>
+<text x="761" y="799" fill="#236b54" font-family="Arial, sans-serif" font-size="13" font-weight="400">Back to Play</text>
+<text x="548" y="875" fill="#253343" font-family="Arial, sans-serif" font-size="17" font-weight="700">Phone / same hierarchy, upright screens</text>
+<rect x="548" y="895" width="210" height="404" rx="14" fill="#f2f4ee"/>
+<rect x="778" y="895" width="210" height="404" rx="14" fill="#f2f4ee"/>
+<text x="562" y="925" fill="#236b54" font-family="Arial, sans-serif" font-size="18" font-weight="700">奉化麻将</text>
+<text x="562" y="967" fill="#253343" font-family="Arial, sans-serif" font-size="21" font-weight="700">Play with friends</text>
+<rect x="562" y="987" width="182" height="30" rx="5" fill="#236b54"/>
+<text x="572" y="1007" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Create a room</text>
+<rect x="562" y="1029" width="182" height="30" rx="5" fill="#236b54"/>
+<text x="572" y="1049" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Find a game</text>
+<text x="562" y="1095" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Classic Fenghua</text>
+<rect x="562" y="1111" width="182" height="34" rx="4" fill="#e1e6eb"/>
+<text x="572" y="1133" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Invitation link</text>
+<rect x="562" y="1155" width="182" height="30" rx="5" fill="#236b54"/>
+<text x="572" y="1175" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Open invitation</text>
+<text x="562" y="1273" fill="#236b54" font-family="Arial, sans-serif" font-size="13" font-weight="400">Play    Replays    Tools</text>
+<text x="792" y="925" fill="#253343" font-family="Arial, sans-serif" font-size="20" font-weight="700">Your room</text>
+<text x="792" y="954" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">2 of 4 seats filled</text>
+<rect x="792" y="975" width="182" height="30" rx="5" fill="#236b54"/>
+<text x="802" y="995" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Copy invitation</text>
+<text x="792" y="1042" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">East · You (host)</text>
+<text x="792" y="1076" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">South · Friend</text>
+<text x="792" y="1110" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">West · Empty</text>
+<text x="792" y="1144" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">North · Empty</text>
+<text x="792" y="1175" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Classic Fenghua</text>
+<text x="792" y="1203" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Invite 2 or add bots</text>
+<rect x="792" y="1230" width="182" height="30" rx="5" fill="#687482"/>
+<text x="802" y="1250" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Waiting for 2 seats</text>
+<text x="548" y="1340" fill="#253343" font-family="Arial, sans-serif" font-size="16" font-weight="700">Tradeoff</text>
+<text x="548" y="1370" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">Best if private invitations dominate usage.</text>
+<text x="548" y="1394" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">Quick matchmaking becomes less prominent.</text>
+<text x="548" y="1434" fill="#236b54" font-family="Arial, sans-serif" font-size="13" font-weight="400">Host starts when filled; guests wait for host.</text>
+<rect x="1032" y="108" width="480" height="1370" rx="12" fill="#ffffff"/>
+<text x="1052" y="145" fill="#4c59a5" font-family="Arial, sans-serif" font-size="24" font-weight="700">C · Activity hub</text>
+<text x="1052" y="173" fill="#253343" font-family="Arial, sans-serif" font-size="15" font-weight="400">Play, replay and tools are peers.</text>
+<text x="1052" y="220" fill="#253343" font-family="Arial, sans-serif" font-size="17" font-weight="700">Home / desktop</text>
+<rect x="1048" y="238" width="448" height="212" rx="7" fill="#f6f8fc"/>
+<text x="1062" y="268" fill="#4c59a5" font-family="Arial, sans-serif" font-size="19" font-weight="700">奉化麻将</text>
+<text x="1237" y="266" fill="#253343" font-family="Arial, sans-serif" font-size="12" font-weight="400">Play    Replays    Tools    Account</text>
+<text x="1062" y="307" fill="#4c59a5" font-family="Arial, sans-serif" font-size="21" font-weight="700">Play    Replays    Tools</text>
+<rect x="1062" y="326" width="170" height="30" rx="5" fill="#4c59a5"/>
+<text x="1072" y="346" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Find a game</text>
+<rect x="1243" y="326" width="170" height="30" rx="5" fill="#4c59a5"/>
+<text x="1253" y="346" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Create a room</text>
+<rect x="1062" y="367" width="272" height="34" rx="4" fill="#e3e7f3"/>
+<text x="1072" y="389" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Paste an invitation link</text>
+<rect x="1346" y="369" width="90" height="30" rx="5" fill="#4c59a5"/>
+<text x="1356" y="389" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Open</text>
+<text x="1062" y="429" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Recent completed games sit below Play.</text>
+<text x="1052" y="490" fill="#253343" font-family="Arial, sans-serif" font-size="17" font-weight="700">Waiting room / desktop</text>
+<rect x="1048" y="508" width="448" height="325" rx="7" fill="#f6f8fc"/>
+<text x="1062" y="539" fill="#253343" font-family="Arial, sans-serif" font-size="18" font-weight="700">Your room · 2 of 4 seats filled</text>
+<rect x="1062" y="555" width="145" height="30" rx="5" fill="#4c59a5"/>
+<text x="1072" y="575" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Copy invitation</text>
+<text x="1062" y="606" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Classic Fenghua · Host can change rules</text>
+<text x="1062" y="630" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">East · You (host)</text>
+<text x="1062" y="656" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">South · Friend</text>
+<text x="1062" y="682" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">West · Empty       Add bot</text>
+<text x="1062" y="708" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">North · Empty      Add bot</text>
+<text x="1319" y="665" fill="#4c59a5" font-family="Arial, sans-serif" font-size="13" font-weight="400">Rules summary</text>
+<text x="1062" y="764" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Invite 2 players or fill empty seats with bots.</text>
+<rect x="1062" y="780" width="180" height="30" rx="5" fill="#687482"/>
+<text x="1072" y="800" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Waiting for 2 seats</text>
+<text x="1265" y="799" fill="#4c59a5" font-family="Arial, sans-serif" font-size="13" font-weight="400">Back to Play</text>
+<text x="1052" y="875" fill="#253343" font-family="Arial, sans-serif" font-size="17" font-weight="700">Phone / same hierarchy, upright screens</text>
+<rect x="1052" y="895" width="210" height="404" rx="14" fill="#f6f8fc"/>
+<rect x="1282" y="895" width="210" height="404" rx="14" fill="#f6f8fc"/>
+<text x="1066" y="925" fill="#4c59a5" font-family="Arial, sans-serif" font-size="18" font-weight="700">奉化麻将</text>
+<text x="1066" y="967" fill="#253343" font-family="Arial, sans-serif" font-size="21" font-weight="700">Play</text>
+<rect x="1066" y="987" width="182" height="30" rx="5" fill="#4c59a5"/>
+<text x="1076" y="1007" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Find a game</text>
+<rect x="1066" y="1029" width="182" height="30" rx="5" fill="#4c59a5"/>
+<text x="1076" y="1049" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Create a room</text>
+<text x="1066" y="1095" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Classic Fenghua</text>
+<rect x="1066" y="1111" width="182" height="34" rx="4" fill="#e1e6eb"/>
+<text x="1076" y="1133" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Invitation link</text>
+<rect x="1066" y="1155" width="182" height="30" rx="5" fill="#4c59a5"/>
+<text x="1076" y="1175" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Open invitation</text>
+<text x="1066" y="1273" fill="#4c59a5" font-family="Arial, sans-serif" font-size="13" font-weight="400">Play    Replays    Tools</text>
+<text x="1296" y="925" fill="#253343" font-family="Arial, sans-serif" font-size="20" font-weight="700">Your room</text>
+<text x="1296" y="954" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">2 of 4 seats filled</text>
+<rect x="1296" y="975" width="182" height="30" rx="5" fill="#4c59a5"/>
+<text x="1306" y="995" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Copy invitation</text>
+<text x="1296" y="1042" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">East · You (host)</text>
+<text x="1296" y="1076" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">South · Friend</text>
+<text x="1296" y="1110" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">West · Empty</text>
+<text x="1296" y="1144" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">North · Empty</text>
+<text x="1296" y="1175" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Classic Fenghua</text>
+<text x="1296" y="1203" fill="#253343" font-family="Arial, sans-serif" font-size="13" font-weight="400">Invite 2 or add bots</text>
+<rect x="1296" y="1230" width="182" height="30" rx="5" fill="#687482"/>
+<text x="1306" y="1250" fill="#ffffff" font-family="Arial, sans-serif" font-size="12" font-weight="600">Waiting for 2 seats</text>
+<text x="1052" y="1340" fill="#253343" font-family="Arial, sans-serif" font-size="16" font-weight="700">Tradeoff</text>
+<text x="1052" y="1370" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">Best if all three destinations are used often.</text>
+<text x="1052" y="1394" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">Adds choices before the main play task.</text>
+<text x="1052" y="1434" fill="#4c59a5" font-family="Arial, sans-serif" font-size="13" font-weight="400">Host starts when filled; guests wait for host.</text>
+<text x="32" y="1511" fill="#253343" font-family="Arial, sans-serif" font-size="14" font-weight="400">No new pre-game readiness system is proposed. Invitation paste is a proposed shortcut to existing room links.</text>
+</svg>

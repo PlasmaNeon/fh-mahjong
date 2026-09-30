@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getApiUrl } from '../../config'
-import { ClubShell, InputApplyRow, LedgerPaletteGrid, LedgerTile, LedgerTileRow, ToolTabs } from '../../theme'
+import { InputApplyRow, LedgerPaletteGrid, LedgerTile, LedgerTileRow, ToolTabs } from '../../theme'
+import ToolsShell from '../../theme/components/ToolsShell'
 import { useI18n } from '../../i18n/I18nContext'
 import {
   countTiles,
@@ -22,7 +23,7 @@ import {
 // ─── Main page ───
 
 export default function Shanten() {
-  const { t, shortLanguage: lang, toggleLanguage } = useI18n()
+  const { t, shortLanguage: lang } = useI18n()
   const [hand, setHand] = useState<TileDraft[]>([])
   const [wildTile, setWildTile] = useState<TileValue | null>(null)
   const [openMelds, setOpenMelds] = useState(0)
@@ -165,29 +166,10 @@ export default function Shanten() {
   }, [result, t])
 
   return (
-    <ClubShell title={t('nav.tools')}>
+    <ToolsShell title={t('shanten.title')}>
         <article className="ldg-page ldg-page--workbench">
 
           <ToolTabs />
-
-          {/* Header */}
-          <div className="ldg-page-head">
-            <div>
-              <h1 className="ldg-page-head__title">
-                {t('shanten.title')}
-                <small>{lang === 'en' ? '奉化向听' : 'Shanten Calculator'}</small>
-              </h1>
-            </div>
-            <div className="ldg-page-head__nav">
-              <button
-                type="button"
-                className="ldg-link"
-                onClick={toggleLanguage}
-              >
-                {t('shanten.language')}
-              </button>
-            </div>
-          </div>
 
           {/* Closed hand */}
           <section className="ldg-section">
@@ -393,6 +375,6 @@ export default function Shanten() {
           </section>
 
         </article>
-    </ClubShell>
+    </ToolsShell>
   )
 }

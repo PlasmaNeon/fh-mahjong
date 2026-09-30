@@ -1,3 +1,4 @@
+import './tableSampleUnified.css'
 import { useState } from 'react'
 import { useGameStageLayout } from '../../table/stage/useGameStageLayout'
 import { game } from '../../proto/game'
@@ -107,14 +108,46 @@ const demoChiiActions = [
   },
 ]
 
+// Dense synthetic state for geometry checks; not a rules-engine scenario.
+const crowdedPlayers = players.map((player, seat) => ({
+  ...player,
+  discards: discardsFor(seat, 30),
+}))
+
+const flowerHeavyPlayers = players.map(player => ({
+  ...player,
+  openMelds: [],
+  closedHand: player.seat === 0 ? [...selfConcealed, selfDrawn] : [],
+  handBackCount: 14,
+  flowerMelds: Array.from({ length: 8 }, (_, index) => t(5, index + 1)),
+}))
+
+const meldHeavyPlayers = players.map((player, seat) => ({
+  ...player,
+  closedHand: seat === 0 ? [t(4, 5), t(4, 5)] : [],
+  handBackCount: 2,
+  drawnTileId: null,
+  openMelds: Array.from({ length: 4 }, (_, index) => {
+    const tiles = Array.from({ length: 4 }, () => t((index % 3) + 1, index + 1))
+    return { tiles, calledTileId: tiles[0].id, calledDirection: 1 }
+  }),
+  flowerMelds: Array.from({ length: 8 }, (_, index) => t(5, index + 1)),
+}))
+
 export default function TableSample() {
-  const stageLayout = useGameStageLayout()
-  const [fixture, setFixture] = useState<Fixture>('idle')
+  const previewParams = new URLSearchParams(window.location.search)
+  const initialFixture = previewParams.get('fixture')
+  const cleanPreview = previewParams.get('clean') === '1'
+  const rotatedPreview = previewParams.get('rotate') === '1'
+
+  const unifiedPreview = previewParams.get('layout') === 'unified'
+  const stageLayout = useGameStageLayout(unifiedPreview ? { baseHeight: 720, compactMaxHeight: Infinity } : {})
+  const [fixture, setFixture] = useState<Fixture>(FIXTURES.some(f => f.value === initialFixture) ? initialFixture as Fixture : 'idle')
   const [liftedTileId, setLiftedTileId] = useState<number | null>(null)
   const [demoChiiChoiceOpen, setDemoChiiChoiceOpen] = useState(false)
   const [demoChiiSelectedTileId, setDemoChiiSelectedTileId] = useState<number | null>(null)
-  const handInteractive = fixture === 'active' || fixture === 'called-hand'
-  const tablePlayers = fixture === 'called-hand' ? calledPlayers : players
+  const handInteractive = fixture === 'active' || fixture === 'called-hand' || fixture === 'crowded' || fixture === 'wild-hand' || fixture === 'flower-heavy'
+  const tablePlayers = fixture === 'flower-heavy' ? flowerHeavyPlayers : fixture === 'called-hand' ? calledPlayers : fixture === 'crowded' ? crowdedPlayers : fixture === 'meld-heavy' ? meldHeavyPlayers : players
   const demoChiiEligibleIds = demoChiiChoiceOpen
     ? eligibleChiiTileIds(demoChiiActions, selfConcealed, demoChiiSelectedTileId)
     : new Set<number>()
@@ -129,7 +162,7 @@ export default function TableSample() {
 
   const { shellStyle: stageShellStyle, stageStyle } = stageLayout
 
-  const actionBar = fixture === 'active' || fixture === 'interrupt' || fixture === 'multi-chii' ? (
+  const actionBar = fixture === 'active' || fixture === 'crowded' || fixture === 'interrupt' || fixture === 'multi-chii' ? (
     <div className="table-action-bar">
       {fixture === 'interrupt' && <button className="table-action-btn table-action-btn-pon">PON</button>}
       {fixture === 'interrupt' && <button className="table-action-btn table-action-btn-ron">RON!</button>}
@@ -160,8 +193,8 @@ export default function TableSample() {
         </button>
       )}
       {fixture === 'multi-chii' && !demoChiiChoiceOpen && <button className="table-action-btn table-action-btn-pon">PON</button>}
-      {fixture === 'active' && <button className="table-action-btn table-action-btn-kan">KAN</button>}
-      {fixture === 'active' && <button className="table-action-btn table-action-btn-tsumo">TSUMO!</button>}
+      {(fixture === 'active' || fixture === 'crowded') && <button className="table-action-btn table-action-btn-kan">KAN</button>}
+      {(fixture === 'active' || fixture === 'crowded') && <button className="table-action-btn table-action-btn-tsumo">TSUMO!</button>}
       {!(fixture === 'multi-chii' && demoChiiChoiceOpen) && <button className="table-action-btn table-action-btn-skip">SKIP</button>}
     </div>
   ) : null
@@ -194,8 +227,11 @@ export default function TableSample() {
   const callableTile = southDiscards[southDiscards.length - 1]!
 
   return (
-    <div className="stage-rotator">
-      <FixtureToolbar
+    <div className="stage-rotator" style={rotatedPreview ? {
+      position: 'fixed', top: '50%', left: '50%', width: '100dvh', height: '100dvw',
+      transform: 'translate(-50%, -50%) rotate(90deg)', transformOrigin: 'center center', overflow: 'hidden',
+    } : undefined}>
+      {!cleanPreview && <FixtureToolbar
         value={fixture}
         onChange={(nextFixture) => {
           setFixture(nextFixture)
@@ -203,11 +239,12 @@ export default function TableSample() {
           setDemoChiiChoiceOpen(false)
           setDemoChiiSelectedTileId(null)
         }}
-      />
+      />}
       <div className="game-stage-shell" ref={stageLayout.containerRef} style={stageShellStyle}>
         <div className="game-stage-frame">
           <div
             className="game-stage"
+            data-unified={unifiedPreview ? 'true' : undefined}
             data-discard-mode={handInteractive || demoChiiChoiceOpen ? 'double' : undefined}
             data-chii-choice={demoChiiChoiceOpen ? 'true' : undefined}
             data-compact={stageLayout.compact ? 'true' : undefined}
@@ -217,7 +254,11 @@ export default function TableSample() {
               viewSeat={0}
               players={tablePlayers}
               activeSeat={fixture === 'interrupt' || fixture === 'callable' || fixture === 'multi-chii' ? 1 : 0}
-              wildTiles={wildTiles}
+              wildTiles={fixture === 'wild-hand' ? [selfConcealed[10]] : wildTiles}
+              isWildTile={(tile) => {
+                const indicator = fixture === 'wild-hand' ? selfConcealed[10] : wildTiles[0]
+                return tile.suit === indicator.suit && tile.value === indicator.value
+              }}
               hudChips={[{ label: 'East 2' }, { label: '58 tiles' }]}
               actionBar={actionBar}
               liftedTileId={liftedTileId}
@@ -240,7 +281,6 @@ export default function TableSample() {
                   : undefined}
               handTileChoice={demoHandChoice}
               callableDiscard={fixture === 'callable' || fixture === 'multi-chii' ? { seat: 1, tileId: callableTile.id } : null}
-              cornerInfo={<div className="wild-tile-corner-info-tag">Fenghua</div>}
             />
           </div>
         </div>
@@ -252,11 +292,15 @@ export default function TableSample() {
   )
 }
 
-type Fixture = 'idle' | 'active' | 'called-hand' | 'interrupt' | 'multi-chii' | 'callable' | 'round-result' | 'match-end' | 'exit'
+type Fixture = 'flower-heavy' | 'wild-hand' | 'meld-heavy' | 'crowded' | 'idle' | 'active' | 'called-hand' | 'interrupt' | 'multi-chii' | 'callable' | 'round-result' | 'match-end' | 'exit'
 
 const FIXTURES: Array<{ value: Fixture; label: string }> = [
   { value: 'idle', label: 'Idle' },
+  { value: 'crowded', label: 'Crowded table' },
+  { value: 'meld-heavy', label: 'Four kans' },
   { value: 'active', label: 'Active turn' },
+  { value: 'wild-hand', label: 'Wild tiles in hand' },
+  { value: 'flower-heavy', label: 'Eight flowers' },
   { value: 'called-hand', label: 'Called hand' },
   { value: 'interrupt', label: 'Interrupt' },
   { value: 'multi-chii', label: 'Multi CHII' },

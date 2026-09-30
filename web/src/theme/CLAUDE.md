@@ -51,3 +51,9 @@ import { Page, Shell, Card, PageHeader, Section, Button } from '../theme'
   </Section>
 </Card></Shell></Page>
 ```
+
+## Direct play tools
+
+`components/ToolsShell.tsx` wraps calc/shanten with a text-only brand, shared navigation and a single language control. `tokens.css` scopes the light palette to `[data-theme="direct-tools"]`; `direct-tools.css` overrides workbench materials and responsive layout inside that shell only. Other routes retain Rainy Club. Development navigation returns to the isolated prototype; production links target existing Play/Replays routes.
+
+`index.css` imports `table/direct-table.css` after the legacy table skin. This scoped presentation layer also refreshes game dialogs and final standings without changing ordinary ClubShell routes.

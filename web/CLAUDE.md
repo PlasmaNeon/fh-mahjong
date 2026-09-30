@@ -29,3 +29,7 @@ A single-page React application built with Vite and TypeScript. Renders the mahj
 - All game state arrives as Protobuf binary via WebSocket; decoded by `protobufjs`.
 - `src/proto/game.js` and `src/proto/game.d.ts` are generated from `proto/game.proto`; regenerate them whenever proto schemas change.
 - Tile rendering uses layered SVG images: `Front.svg` (background) + tile face SVG.
+
+## Local design prototype
+
+`ui-prototype.html` is a separate Vite dev entry for the Direct play navigation concept. Open `/ui-prototype.html`; it mounts `src/features/dev/DirectPlayPrototype.tsx` without production providers. It is not an input to the production build or linked from the application.

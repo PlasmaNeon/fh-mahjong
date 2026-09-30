@@ -22,17 +22,16 @@ export function reorderMeldTiles(meld: MeldLike) {
   return displayTiles
 }
 
-// Melds arrive in formation order (index 0 = first formed). The seat line places
-// the meld zone directly next to the closed hand, so the first-formed meld sits
-// nearest the hand and each new meld is appended on the far side — existing melds
-// keep their position. Formation order (identity) is correct for every direction;
-// the per-direction CSS flex-direction handles which way "away from the hand" is.
+// Preserve formation order (index 0 = first formed). The live seat's row-reverse
+// meld zone places the first-formed meld farthest from the concealed hand and
+// newer melds inward toward it. The seat pivot rotates this same arrangement
+// for each direction; the data order does not change.
 export function orderMelds(melds: MeldLike[], _direction: SeatLaneDirection): MeldLike[] {
   return [...melds]
 }
 
 // The live seat lays its open-meld zone out `row-reverse` (`.zone-melds` in
-// index.css): formation order [m0, m1, ...] renders with the first-formed meld on
+// table-geometry.css): formation order [m0, m1, ...] renders with the first-formed meld on
 // the far-from-hand end and newer melds growing inward toward the closed hand. The
 // round-result recap instead renders melds in a plain left-to-right `row`
 // (`.round-result-melds-divider`), so without reversing it would show the melds in

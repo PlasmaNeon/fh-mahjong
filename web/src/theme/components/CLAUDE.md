@@ -45,3 +45,5 @@ exhausted tiles while the calc palette dims the selected tile but stays clickabl
 badge, exhausted tiles dimmed and disabled).
 
 Tool pages must not re-implement these — extend the primitives instead.
+
+`ToolsShell.tsx` is the Direct play shell used by calc/shanten. It owns shared navigation, language switching and a screen-reader page title; tool state stays in each feature. Its light styles are scoped to `data-theme="direct-tools"`, and it imports `../direct-tools.css`.

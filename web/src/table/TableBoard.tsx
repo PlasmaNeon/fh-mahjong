@@ -15,7 +15,6 @@ import type {
   RoundResultPayout,
   RoundResultView,
 } from './types'
-import { useI18n } from '../i18n/I18nContext'
 import { WIND_KANJI } from '../utils/winds'
 
 export { TileComponent }
@@ -67,7 +66,6 @@ export function TableBoard({
   animateDiscardTileIds,
   callableDiscard = null,
 }: TableBoardProps) {
-  const { t } = useI18n()
   const tableRef = useRef<HTMLDivElement | null>(null)
   const seatViews = useMemo(() => players.map((player) => ({
     player,
@@ -82,19 +80,14 @@ export function TableBoard({
 
   return (
     <div className="mahjong-table" ref={tableRef}>
-      {wildTiles.length > 0 && (
+      {cornerInfo && (
         <div className="wild-tile-corner">
-          <div className="wild-tile-corner-main">
-            <div className="wild-tile-corner-label">{t('game.wildTile')}</div>
-            <div className="wild-tile-corner-face">
-              <TileComponent tile={wildTiles[0]} size="small" noGlow />
-            </div>
-          </div>
-          {cornerInfo && <div className="wild-tile-corner-info">{cornerInfo}</div>}
+          <div className="wild-tile-corner-info">{cornerInfo}</div>
         </div>
       )}
 
       <CenterHud
+        wildTile={wildTiles[0]}
         hudChips={hudChips}
         seats={POSITIONS.map((direction) => {
           const seat = players.find((player) => getSeatDirection(player.seat, viewSeat) === direction)

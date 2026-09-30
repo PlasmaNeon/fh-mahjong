@@ -1,4 +1,6 @@
-import type { HudChip } from './types'
+import type { HudChip, TileLike } from './types'
+import { TileComponent } from './Tile'
+import { useI18n } from '../i18n/I18nContext'
 
 export type CenterHudSeat = {
   direction: 'bottom' | 'right' | 'top' | 'left'
@@ -8,23 +10,35 @@ export type CenterHudSeat = {
 }
 
 type CenterHudProps = {
+  wildTile?: TileLike
   hudChips: HudChip[]
   seats: CenterHudSeat[]
 }
 
-export function CenterHud({ hudChips, seats }: CenterHudProps) {
+export function CenterHud({ wildTile, hudChips, seats }: CenterHudProps) {
+  const { t } = useI18n()
   return (
     <div className="center-info text-white text-center">
       <div className="center-info-panel">
-        <div className="center-info-stats">
-          {hudChips.map((chip, index) => (
-            <span
-              key={`${chip.label}-${index}`}
-              className={`center-info-chip${chip.tone === 'danger' ? ' center-info-chip--danger' : ''}`}
-            >
-              {chip.label}
-            </span>
-          ))}
+        <div className="center-info-content">
+          {wildTile && (
+            <div className="center-wild" role="group" aria-label={t('game.wildTile')}>
+              <span className="center-wild-label">{t('game.wildTile')}</span>
+              <div className="center-wild-face">
+                <TileComponent tile={wildTile} size="small" noGlow />
+              </div>
+            </div>
+          )}
+          <div className="center-info-stats">
+            {hudChips.map((chip, index) => (
+              <span
+                key={`${chip.label}-${index}`}
+                className={`center-info-chip${chip.tone === 'danger' ? ' center-info-chip--danger' : ''}`}
+              >
+                {chip.label}
+              </span>
+            ))}
+          </div>
         </div>
 
         {seats.map((seat) => (

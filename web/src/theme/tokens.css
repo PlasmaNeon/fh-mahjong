@@ -61,3 +61,35 @@
   --shadow-paper: 0 24px 70px rgba(0, 0, 0, 0.32), 0 2px 0 rgba(255, 255, 255, 0.7) inset;
   --shadow-lacquer: 0 22px 60px rgba(0, 0, 0, 0.38), 0 1px 0 rgba(255, 255, 255, 0.07) inset;
 }
+
+/* Direct play workbenches: scoped so gameplay and other routes keep their theme. */
+[data-theme="direct-tools"] {
+  color-scheme: light;
+  --page: #f7f9fb;
+  --surface: #ffffff;
+  --surface-2: #edf3f8;
+  --surface-3: #e4e8ee;
+  --ink: #273346;
+  --ink-2: #49586b;
+  --ink-3: #606e80;
+  --ink-4: #657186;
+  --rule: #d5dfe7;
+  --rule-soft: #e7ebef;
+  --accent: #22559c;
+  --accent-strong: #194780;
+  --accent-soft: #edf3f8;
+  --danger: #b8323c;
+  --danger-soft: #fff0f1;
+  --focus: #ad6320;
+  --on-dark: #ffffff;
+  --btn-bg: #ffffff;
+  --btn-bg-hover: #edf3f8;
+  --tile-face: #ffffff;
+  --tile-shadow: 0 2px 0 #b8c9c3;
+  --tile-shadow-h: 0 3px 0 #a4bcb3;
+  --font: 'Source Sans 3', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: var(--font);
+  --radius-sm: 7px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+}
