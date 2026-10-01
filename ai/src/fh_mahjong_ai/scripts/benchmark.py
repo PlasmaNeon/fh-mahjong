@@ -3,19 +3,31 @@
 A YARDSTICK, not a gate (the heuristic bots are far weaker than the champion,
 so gate use would saturate). The paired protocol (fh-mj-compare /
 fh-mj-evaluate --duplicate-seats) remains the promotion gate.
+
+`--opponent-checkpoint` seats a frozen checkpoint's greedy policy in the other
+three seats instead (a strong table), `--symmetry-average suits` plays the
+suit-averaged policy, and `--workers N` splits each seat's seeds into chunks
+run in N spawn processes. Greedy play on a seeded env is deterministic, so the
+chunked report equals the sequential one.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import math
+import multiprocessing
+import time
+from collections import Counter
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from fh_mahjong_ai.evaluate import evaluate_policy_online
+from fh_mahjong_ai.evaluate import evaluate_policy_online, reward_summary
 from fh_mahjong_ai.hand_stats import bootstrap_hand_stats_ci, summarize_hand_stats
-from fh_mahjong_ai.policies import TorchGreedyPolicy
-from fh_mahjong_ai.scripts.evaluate import resolve_max_steps_per_episode
+from fh_mahjong_ai.policies import SuitAveragedGreedyPolicy, TorchGreedyPolicy
+from fh_mahjong_ai.scripts.evaluate import load_opponent_policy, resolve_max_steps_per_episode
 from fh_mahjong_ai.serving import CheckpointPolicy
 
 _SEATS = (0, 1, 2, 3)
@@ -85,6 +97,79 @@ def merge_seat_reports(
     }
 
 
+def combine_chunk_reports(chunks: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """One seat's report from its seed chunks (given in seed order), carrying the
+    fields `merge_seat_reports` reads."""
+    records = [m for c in chunks for m in c["per_match_hand_records"]]
+    unknown = sum(int(c["hand_stats"]["unknown_hands"]) for c in chunks)
+    placements = [p for c in chunks for p in c.get("per_episode_placements", [])]
+    episodes = sum(int(c["episodes"]) for c in chunks)
+    truncations = sum(int(c.get("truncation_count", 0)) for c in chunks)
+    outcomes: Counter[str] = Counter()
+    for c in chunks:
+        outcomes.update(c.get("round_outcome_counts", {}))
+    return {
+        "episodes": episodes,
+        "hand_stats": summarize_hand_stats(records, unknown),
+        "per_match_hand_records": records,
+        "per_episode_placements": placements,
+        "mean_placement": reward_summary(placements)["mean"],
+        "truncation_count": truncations,
+        "truncation_rate": truncations / episodes if episodes else 0.0,
+        "round_outcome_counts": dict(sorted(outcomes.items())),
+    }
+
+
+def plan_chunks(seed_base: int, episodes_per_seat: int, workers: int) -> list[tuple[int, list[int]]]:
+    """(seat, seeds) jobs: each seat's disjoint seed range cut into chunks, about
+    four per worker so uneven match lengths still balance."""
+    chunk = max(1, math.ceil(episodes_per_seat * len(_SEATS) / (4 * workers)))
+    jobs = []
+    for seat in _SEATS:
+        start = seed_base + seat * episodes_per_seat
+        seeds = list(range(start, start + episodes_per_seat))
+        jobs.extend((seat, seeds[i:i + chunk]) for i in range(0, len(seeds), chunk))
+    return jobs
+
+
+# Per-process policies for the spawn workers, built once by _init_worker.
+_WORKER: dict[str, Any] = {}
+
+
+def _build_policies(checkpoint: Path, device: str, symmetry: str,
+                    opponent_checkpoint: Optional[Path]) -> tuple[Any, Optional[Any], Optional[dict], int]:
+    model = CheckpointPolicy.from_checkpoint(checkpoint, device=device).model
+    event_window = int(model.model_config.event_window)
+    policy = (SuitAveragedGreedyPolicy(model, device=device) if symmetry == "suits"
+              else TorchGreedyPolicy(model, device=device))
+    opponent_policy = opponents = None
+    if opponent_checkpoint is not None:
+        opponent_policy, opponents = load_opponent_policy(opponent_checkpoint, device, event_window)
+    return policy, opponent_policy, opponents, event_window
+
+
+def _init_worker(checkpoint: Path, device: str, symmetry: str,
+                 opponent_checkpoint: Optional[Path], eval_kwargs: dict[str, Any]) -> None:
+    import torch
+    torch.set_num_threads(1)
+    policy, opponent_policy, _, event_window = _build_policies(
+        checkpoint, device, symmetry, opponent_checkpoint)
+    _WORKER.update(policy=policy, opponent_policy=opponent_policy,
+                   event_window=event_window, eval_kwargs=eval_kwargs)
+
+
+def _run_chunk(seat: int, seeds: list[int]) -> dict[str, Any]:
+    return evaluate_policy_online(
+        policy=_WORKER["policy"],
+        episodes=len(seeds),
+        seeds=seeds,
+        learning_seat=seat,
+        event_history_window=_WORKER["event_window"],
+        opponent_policy=_WORKER["opponent_policy"],
+        **_WORKER["eval_kwargs"],
+    )
+
+
 def _fmt_rate(value: Optional[float], ci: Optional[list[float]] = None) -> str:
     if value is None:
         return "n/a"
@@ -148,8 +233,8 @@ def format_stat_table(merged: dict[str, Any]) -> str:
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Benchmark a checkpoint vs 3 heuristic bots (absolute-strength "
-                    "yardstick; NOT a promotion gate)")
+        description="Benchmark a checkpoint vs 3 heuristic bots or a frozen checkpoint "
+                    "(absolute-strength yardstick; NOT a promotion gate)")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--episodes-per-seat", type=int, default=100,
                         help="matches per seat; the policy plays every seat 0-3")
@@ -170,42 +255,80 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     parser.add_argument("--bootstrap-seed", type=int, default=0)
     parser.add_argument("--out", type=Path, default=None,
                         help="JSON report path (default: <checkpoint>.benchmark.json)")
+    parser.add_argument("--opponent-checkpoint", type=Path, default=None,
+                        help="play the three other seats with this checkpoint's greedy policy "
+                             "instead of the heuristic bots (a strong table)")
+    parser.add_argument("--symmetry-average", choices=("none", "suits"), default="none",
+                        help="play the policy averaged over the 6 suit permutations")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="spawn processes; each seat's seeds are split into chunks "
+                             "(same report as --workers 1)")
     args = parser.parse_args(argv)
 
     if args.episodes_per_seat < 1:
         parser.error("--episodes-per-seat must be >= 1")
     if args.bootstrap_iters < 1:
         parser.error("--bootstrap-iters must be >= 1")
+    if args.workers < 1:
+        parser.error("--workers must be >= 1")
+    if args.opponent_checkpoint is not None and not args.opponent_checkpoint.is_file():
+        parser.error(f"--opponent-checkpoint {args.opponent_checkpoint} is not a file")
 
     # Metadata-driven load: architecture (incl. event window) is recovered from
     # the checkpoint itself — no model flags to get wrong. Missing/odd payloads
     # fail loudly inside the loader (checkpoint-metadata invariants).
     max_steps = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
 
-    checkpoint_policy = CheckpointPolicy.from_checkpoint(args.checkpoint, device=args.device)
-    model = checkpoint_policy.model
-    event_window = int(model.model_config.event_window)
-    policy = TorchGreedyPolicy(model, device=args.device)
+    policy, opponent_policy, opponents, event_window = _build_policies(
+        args.checkpoint, args.device, args.symmetry_average, args.opponent_checkpoint)
+    opponent_label = opponents["checkpoint"] if opponents is not None else "3 heuristic bots"
+    eval_kwargs = dict(
+        bridge_library_path=args.bridge_library_path,
+        match_mode=args.match_mode,
+        chongci_starting_score=args.chongci_starting_score,
+        chongci_bust_threshold=args.chongci_bust_threshold,
+        chongci_max_hands=args.chongci_max_hands,
+        max_steps_per_episode=max_steps,
+    )
 
     seat_reports: dict[int, dict[str, Any]] = {}
-    for seat in _SEATS:
-        start = args.seed_base + seat * args.episodes_per_seat
-        seeds = list(range(start, start + args.episodes_per_seat))
-        print(f"[benchmark] seat {seat}: {args.episodes_per_seat} {args.match_mode} "
-              f"matches, seeds {seeds[0]}..{seeds[-1]}", flush=True)
-        seat_reports[seat] = evaluate_policy_online(
-            policy=policy,
-            episodes=args.episodes_per_seat,
-            seeds=seeds,
-            bridge_library_path=args.bridge_library_path,
-            learning_seat=seat,
-            match_mode=args.match_mode,
-            chongci_starting_score=args.chongci_starting_score,
-            chongci_bust_threshold=args.chongci_bust_threshold,
-            chongci_max_hands=args.chongci_max_hands,
-            max_steps_per_episode=max_steps,
-            event_history_window=event_window,
-        )
+    if args.workers == 1:
+        for seat in _SEATS:
+            start = args.seed_base + seat * args.episodes_per_seat
+            seeds = list(range(start, start + args.episodes_per_seat))
+            print(f"[benchmark] seat {seat}: {args.episodes_per_seat} {args.match_mode} "
+                  f"matches vs {opponent_label}, seeds {seeds[0]}..{seeds[-1]}", flush=True)
+            seat_reports[seat] = evaluate_policy_online(
+                policy=policy,
+                episodes=args.episodes_per_seat,
+                seeds=seeds,
+                learning_seat=seat,
+                event_history_window=event_window,
+                opponent_policy=opponent_policy,
+                **eval_kwargs,
+            )
+    else:
+        jobs = plan_chunks(args.seed_base, args.episodes_per_seat, args.workers)
+        print(f"[benchmark] {len(jobs)} chunks over {args.workers} workers, "
+              f"{args.episodes_per_seat} {args.match_mode} matches/seat vs {opponent_label}", flush=True)
+        chunk_reports: dict[int, dict[str, Any]] = {}
+        started = time.perf_counter()
+        with ProcessPoolExecutor(
+            max_workers=args.workers, mp_context=multiprocessing.get_context("spawn"),
+            initializer=_init_worker,
+            initargs=(args.checkpoint, args.device, args.symmetry_average,
+                      args.opponent_checkpoint, eval_kwargs),
+        ) as pool:
+            futures = {pool.submit(_run_chunk, seat, seeds): i for i, (seat, seeds) in enumerate(jobs)}
+            for future in as_completed(futures):
+                i = futures[future]
+                chunk_reports[i] = future.result()
+                seat, seeds = jobs[i]
+                print(f"[benchmark] chunk {len(chunk_reports)}/{len(jobs)} done: seat {seat} "
+                      f"seeds {seeds[0]}..{seeds[-1]} ({time.perf_counter() - started:.0f}s)", flush=True)
+        for seat in _SEATS:
+            seat_reports[seat] = combine_chunk_reports(
+                [chunk_reports[i] for i, (s, _) in enumerate(jobs) if s == seat])
 
     merged = merge_seat_reports(seat_reports, args.bootstrap_iters, args.bootstrap_seed)
 
@@ -222,6 +345,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         "seed_base": args.seed_base,
         "max_steps_per_episode": max_steps,
         "event_history_window": event_window,
+        "checkpoint_sha256": hashlib.sha256(args.checkpoint.read_bytes()).hexdigest(),
+        "policy_transform": {"symmetry": args.symmetry_average},
+        "opponents": opponents if opponents is not None else {"kind": "heuristic"},
         "bootstrap": {"iters": args.bootstrap_iters, "seed": args.bootstrap_seed},
         "overall": merged["overall"],
         "per_seat": {str(seat): entry for seat, entry in merged["per_seat"].items()},
