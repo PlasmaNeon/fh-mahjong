@@ -32,3 +32,22 @@ Only the new `iter_150` is evaluated, through the batched evaluator (256 slots),
 
 A pass makes the new `iter_150` (suit-averaged) the strongest policy. A fail keeps aug `iter_150`; the run is
 not extended, re-evaluated on another window, or reselected.
+
+## Outcome — 2026-09-30: PASS
+
+Commit `bc6b3cec`, the first lap's bridge build (`3142fe71…`); 150 iterations, exited cleanly. Seeds
+2,710,000–2,714,999 (5,000 × 4), batched evaluator (256 slots), all suit-averaged.
+
+| | mean placement | large-loss |
+|---|---|---|
+| new `iter_150` | **+0.5021** | 0.0420 |
+| aug `iter_150` | +0.4862 | 0.0439 |
+| `anchor075` | +0.4832 | 0.0452 |
+
+- **Primary:** new − aug `iter_150` **+0.0159 ± 0.0101** (CI95 [+0.0058, +0.0260]); large-loss 0.0420 ≤
+  0.0439 + 0.015. **PASS.**
+- Secondary: new − `anchor075` +0.0189 ± 0.0106; training-utility Δ +0.0160 [+0.0063, +0.0256].
+
+The new `iter_150` (`3fdfe246…`), played suit-averaged, is the strongest policy:
+`/root/fh-mahjong-runs/suit-augment-ext-20260930/aug/ckpt/iter_150.pt`. 300 iterations from `anchor075`
+are still gaining.

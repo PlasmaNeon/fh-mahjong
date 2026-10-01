@@ -33,3 +33,15 @@ other symmetries likely carry the same kind of noise.
   0.015.
 - A pass makes face averaging the evaluation and serving rule for the strongest policy (72 rows per
   decision; CPU serving latency must be measured before deployment). A fail keeps suit averaging.
+
+## Outcome — 2026-09-30: FAIL
+
+Commit `a4bca0b7` (includes the wild-run fix), one bridge build (`5d04b35a…`). Seeds 2,720,000–2,724,999.
+
+| aug `iter_150` | mean placement | large-loss |
+|---|---|---|
+| `faces` (72 views) | +0.4630 | 0.0523 |
+| `suits` (6 views) | +0.4543 | 0.0519 |
+
+Paired delta **+0.0087 ± 0.0102** (CI95 [−0.0015, +0.0189]): the lower bound is below 0, so the probe fails.
+Suit averaging stays the decision rule.
