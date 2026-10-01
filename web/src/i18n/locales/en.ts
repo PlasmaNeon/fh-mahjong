@@ -1,6 +1,11 @@
 export const en = {
   'language.name': 'English',
   'language.switch': '中文',
+  'brand.direct': 'Fenghua Mahjong',
+  'lobby.invitation': 'Join an invitation',
+  'lobby.invitationPlaceholder': 'Paste a room invitation link',
+  'lobby.joinInvitation': 'Join',
+  'lobby.invalidInvitation': 'Paste an invitation to an existing room on this site.',
   'brand.name': 'Rainy Mahjong Club',
   'nav.mainMenu': 'Rainy Mahjong Club main menu',
   'nav.club': 'Club navigation',

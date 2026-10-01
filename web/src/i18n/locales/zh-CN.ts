@@ -3,6 +3,11 @@ import type { TranslationKey } from './en'
 export const zhCN: Record<TranslationKey, string> = {
   'language.name': '简体中文',
   'language.switch': 'EN',
+  'brand.direct': '奉化麻将',
+  'lobby.invitation': '通过邀请加入',
+  'lobby.invitationPlaceholder': '粘贴房间邀请链接',
+  'lobby.joinInvitation': '加入',
+  'lobby.invalidInvitation': '请粘贴本站已有房间的邀请链接。',
   'brand.name': '烟雨麻将馆',
   'nav.mainMenu': '烟雨麻将馆主菜单',
   'nav.club': '麻将馆导航',

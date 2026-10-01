@@ -73,7 +73,8 @@ export default function AuthDialog({
 
   return (
     <div
-      className="auth-dialog-backdrop"
+      className="auth-dialog-backdrop direct-tools direct-auth"
+      data-theme="direct-tools"
       onMouseDown={(event) => {
         if (dismissible && onCancel && event.target === event.currentTarget) onCancel()
       }}
@@ -88,7 +89,6 @@ export default function AuthDialog({
         tabIndex={-1}
         onKeyDown={trapFocus}
       >
-        <div className="auth-dialog__compass" aria-hidden="true"><span>東</span></div>
         {dismissible && onCancel && (
           <button type="button" className="auth-dialog__close" aria-label={t('auth.close')} onClick={onCancel}>×</button>
         )}

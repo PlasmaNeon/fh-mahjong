@@ -48,7 +48,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.lang = language
-    document.title = resources[language]['brand.name']
+    document.title = resources[language]['brand.direct']
   }, [language])
 
   const value = useMemo<I18nValue>(() => ({

@@ -13,3 +13,5 @@
 - Interpolation uses named `{variable}` placeholders. **Keep placeholder names identical in both files** — the type only checks that a key exists and is a string, not that its placeholders match.
 - Both files have the same line count; a difference is a useful smell that one drifted.
 - Consumers use `useI18n()` from `../I18nContext.tsx` rather than importing these directly.
+
+Direct play adds `brand.direct` and localized invitation-entry labels/errors under `lobby.*`.

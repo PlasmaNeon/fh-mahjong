@@ -12,3 +12,5 @@
 ## Tests
 
 `I18nContext.test.ts` protects locale normalization, preference ordering, and the English fallback. Server-rendered component tests that consume `useI18n()` must wrap their subject in `I18nProvider`.
+
+The browser document title uses the localized `brand.direct` identity (Fenghua Mahjong / 奉化麻将), matching the production entry shell.

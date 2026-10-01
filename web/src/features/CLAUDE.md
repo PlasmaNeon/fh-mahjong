@@ -6,7 +6,7 @@
 
 Route page components are organized into feature folders corresponding to app domains. Each feature folder owns all source files for that domain: the React page component(s) rendered by React Router, plus co-located helpers, sub-components, and tests. `App.tsx` imports from these folders.
 
-Every page uses the shared Rainy Mahjong Club theme from `web/src/theme/`: ink/rain backdrops, bone-paper work surfaces, jade controls, brass emphasis, and seal-red danger states. Menu pages compose typed primitives from `../../theme`; the live board adds the visual-only `table/table-theme.css` skin while retaining shared geometry.
+Menu pages use the shared light Direct play shell from `web/src/theme/`, with blue controls and real Play/Replays/Tools navigation. They compose typed primitives from `../../theme`; the live board keeps its independently scoped table skin and shared geometry.
 
 User-facing feature copy uses the shared `useI18n()` context. English and Simplified Chinese follow the device's first supported language preference, while language controls in the club shell and tool/review pages update that same global context.
 
@@ -17,7 +17,7 @@ Each folder has its own `CLAUDE.md` with per-file detail — open the one you ar
 | Folder | Routes | What it owns |
 |---|---|---|
 | [`auth/`](auth/CLAUDE.md) | `/login`, `/account` | Sign-in/register ticket, account editing, credentialed-fetch and CSRF helpers |
-| [`lobby/`](lobby/CLAUDE.md) | `/`, `/play`, `/room/new` | Club switchboard, Quick Match / Private Table, room creation |
+| [`lobby/`](lobby/CLAUDE.md) | `/`, `/play`, `/room/new` | Direct play entry, Quick Match / Private Table, validated invitation entry, room creation |
 | [`game/`](game/CLAUDE.md) | `/room/:roomId`, `/match/:matchId` | Live match controller, waiting room, and the pure interaction helpers (chii choice, discard mode, rejoin) |
 | [`replay/`](replay/CLAUDE.md) | `/replay`, `/replay/:matchId` | Paipu library, replay engine, and the post-game review overlay |
 | [`calc/`](calc/CLAUDE.md) | `/tools/calc` | Fenghua scoring debugger |
