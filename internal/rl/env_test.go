@@ -447,6 +447,72 @@ func TestChongciStepEmitsDensePerHandReward(t *testing.T) {
 	}
 }
 
+func TestRoundOutcomeCarriesScoringBreakdown(t *testing.T) {
+	state := &pb.GameState{RoundResult: &pb.RoundResult{
+		WinnerSeat: 2,
+		WinType:    pb.ActionType_ACTION_TSUMO,
+		TotalScore: 5,
+		Breakdown: []*pb.ScoreEntry{
+			{PatternName: "Base Point (坐台)", Points: 1, PatternId: "base_point"},
+			{PatternName: "Pure One Suit (清一色)", Points: 4, PatternId: "pure_one_suit"},
+		},
+	}}
+	outcome := roundOutcome(state)
+	if !proto.Equal(&pb.RoundResult{Breakdown: outcome.Breakdown}, &pb.RoundResult{Breakdown: state.RoundResult.Breakdown}) {
+		t.Fatalf("breakdown not copied: %v", outcome.Breakdown)
+	}
+	cloned := cloneRoundOutcome(outcome)
+	outcome.Breakdown[0].Points = 99
+	if cloned.Breakdown[0].Points != 1 {
+		t.Fatalf("clone shares breakdown entries with its source")
+	}
+	if roundOutcome(&pb.GameState{RoundResult: &pb.RoundResult{IsDraw: true}}).Breakdown != nil {
+		t.Fatalf("a draw has no breakdown")
+	}
+}
+
+func TestChongciStepOutcomesCarryBreakdownForEveryWin(t *testing.T) {
+	env := New(&pb.EnvConfig{
+		LearningSeats:      []uint32{0, 1, 2, 3},
+		AutoPlayHeuristics: false,
+		MaxDecisions:       8192,
+		MatchMode:          pb.MatchMode_MATCH_MODE_CHONGCI,
+		ChongciConfig:      &pb.ChongciConfig{StartingScore: 2000, BustThreshold: 0, MaxHands: 6},
+	})
+	reset, err := env.Reset(&pb.EnvResetRequest{Seed: 12345, Config: env.config})
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	wins := 0
+	obs, done := reset.Observation, reset.Terminated || reset.Truncated
+	for !done {
+		action := env.heuristic.ChooseAction(env.game.State, obs.Seat)
+		actionID, ok := encodeAction(env.game.State, obs.Seat, action)
+		if action == nil || !ok {
+			t.Fatalf("no encodable heuristic action for seat %d", obs.Seat)
+		}
+		step, err := env.Step(&pb.EnvStepRequest{ActionId: uint32(actionID)})
+		if err != nil {
+			t.Fatalf("step: %v", err)
+		}
+		if outcome := step.RoundOutcome; outcome != nil && !outcome.IsDraw {
+			wins++
+			if len(outcome.Breakdown) == 0 {
+				t.Fatalf("win outcome without breakdown: %v", outcome)
+			}
+			for _, entry := range outcome.Breakdown {
+				if entry.PatternId == "" {
+					t.Fatalf("breakdown entry without pattern_id: %v", entry)
+				}
+			}
+		}
+		obs, done = step.Observation, step.Terminated || step.Truncated
+	}
+	if wins == 0 {
+		t.Fatalf("expected at least one win in a 6-hand match")
+	}
+}
+
 func TestEvaluateBranchesUsesCloneAndPreservesLiveEnvironment(t *testing.T) {
 	config := &pb.EnvConfig{
 		LearningSeats:      []uint32{0, 1, 2, 3},

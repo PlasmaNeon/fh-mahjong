@@ -1216,6 +1216,9 @@ export namespace game {
 
         /** RoundOutcome payouts */
         payouts?: (game.IPlayerPayout[]|undefined);
+
+        /** RoundOutcome breakdown */
+        breakdown?: (game.IScoreEntry[]|undefined);
     }
 
     /** Represents a RoundOutcome. */
@@ -1244,6 +1247,9 @@ export namespace game {
 
         /** RoundOutcome payouts. */
         public payouts: game.PlayerPayout[];
+
+        /** RoundOutcome breakdown. */
+        public breakdown: game.ScoreEntry[];
 
         /**
          * Creates a new RoundOutcome instance using the specified properties.

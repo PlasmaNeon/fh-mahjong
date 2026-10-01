@@ -221,5 +221,28 @@ class StrongTableMainTest(unittest.TestCase):
             self.assertEqual(payload["policy_transform"], {"symmetry": "suits"})
 
 
+
+class WinPatternTableTest(unittest.TestCase):
+    def test_merge_pools_seat_tallies_and_table_lists_patterns(self) -> None:
+        from fh_mahjong_ai.hand_stats import new_win_pattern_tally, tally_win_patterns
+        reports = {}
+        for seat in range(4):
+            tally = new_win_pattern_tally()
+            tally_win_patterns(tally, {"is_draw": False, "winner_seat": seat, "win_type_name": "ACTION_TSUMO",
+                                       "total_score": 5, "breakdown": [
+                                           {"pattern_id": "base_point", "pattern_name": "Base Point (坐台)", "points": 1},
+                                           {"pattern_id": "pure_one_suit", "pattern_name": "Pure One Suit (清一色)", "points": 4}]},
+                               seat)
+            reports[seat] = {**_seat_report(seat, [[_win(seat)]]), "win_pattern_stats": tally}
+        merged = benchmark_cli.merge_seat_reports(reports, bootstrap_iters=10, bootstrap_seed=0)
+        patterns = merged["overall"]["win_patterns"]
+        self.assertEqual(patterns["learner"]["wins"], 4)
+        self.assertEqual(patterns["learner"]["patterns"]["pure_one_suit"]["count"], 4)
+        table = benchmark_cli.format_win_pattern_table(patterns)
+        self.assertIn("Pure One Suit (清一色)", table)
+        self.assertIn("100.0%", table)
+        self.assertIn("opponents (no wins)", table)
+
+
 if __name__ == "__main__":
     unittest.main()

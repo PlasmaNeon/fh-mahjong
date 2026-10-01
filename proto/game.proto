@@ -256,6 +256,7 @@ message RoundOutcome {
   uint32 discarder_seat = 4;
   int32 total_score = 5;
   repeated PlayerPayout payouts = 6;
+  repeated ScoreEntry breakdown = 7; // Winner's pattern-by-pattern scoring; empty on a draw
 }
 
 // ---------------------------------------------------------

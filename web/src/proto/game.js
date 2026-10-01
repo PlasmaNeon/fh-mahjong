@@ -3926,6 +3926,7 @@ export const game = $root.game = (() => {
          * @property {number|undefined} [discarderSeat] RoundOutcome discarderSeat
          * @property {number|undefined} [totalScore] RoundOutcome totalScore
          * @property {Array.<game.IPlayerPayout>|undefined} [payouts] RoundOutcome payouts
+         * @property {Array.<game.IScoreEntry>|undefined} [breakdown] RoundOutcome breakdown
          */
 
         /**
@@ -3938,6 +3939,7 @@ export const game = $root.game = (() => {
          */
         function RoundOutcome(properties) {
             this.payouts = [];
+            this.breakdown = [];
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null)
@@ -3993,6 +3995,14 @@ export const game = $root.game = (() => {
         RoundOutcome.prototype.payouts = $util.emptyArray;
 
         /**
+         * RoundOutcome breakdown.
+         * @member {Array.<game.ScoreEntry>} breakdown
+         * @memberof game.RoundOutcome
+         * @instance
+         */
+        RoundOutcome.prototype.breakdown = $util.emptyArray;
+
+        /**
          * Creates a new RoundOutcome instance using the specified properties.
          * @function create
          * @memberof game.RoundOutcome
@@ -4029,6 +4039,9 @@ export const game = $root.game = (() => {
             if (message.payouts != null && message.payouts.length)
                 for (let i = 0; i < message.payouts.length; ++i)
                     $root.game.PlayerPayout.encode(message.payouts[i], writer.uint32(/* id 6, wireType 2 =*/50).fork()).ldelim();
+            if (message.breakdown != null && message.breakdown.length)
+                for (let i = 0; i < message.breakdown.length; ++i)
+                    $root.game.ScoreEntry.encode(message.breakdown[i], writer.uint32(/* id 7, wireType 2 =*/58).fork()).ldelim();
             return writer;
         };
 
@@ -4089,6 +4102,12 @@ export const game = $root.game = (() => {
                         if (!(message.payouts && message.payouts.length))
                             message.payouts = [];
                         message.payouts.push($root.game.PlayerPayout.decode(reader, reader.uint32()));
+                        break;
+                    }
+                case 7: {
+                        if (!(message.breakdown && message.breakdown.length))
+                            message.breakdown = [];
+                        message.breakdown.push($root.game.ScoreEntry.decode(reader, reader.uint32()));
                         break;
                     }
                 default:
@@ -4164,6 +4183,15 @@ export const game = $root.game = (() => {
                     let error = $root.game.PlayerPayout.verify(message.payouts[i]);
                     if (error)
                         return "payouts." + error;
+                }
+            }
+            if (message.breakdown != null && message.hasOwnProperty("breakdown")) {
+                if (!Array.isArray(message.breakdown))
+                    return "breakdown: array expected";
+                for (let i = 0; i < message.breakdown.length; ++i) {
+                    let error = $root.game.ScoreEntry.verify(message.breakdown[i]);
+                    if (error)
+                        return "breakdown." + error;
                 }
             }
             return null;
@@ -4259,6 +4287,16 @@ export const game = $root.game = (() => {
                     message.payouts[i] = $root.game.PlayerPayout.fromObject(object.payouts[i]);
                 }
             }
+            if (object.breakdown) {
+                if (!Array.isArray(object.breakdown))
+                    throw TypeError(".game.RoundOutcome.breakdown: array expected");
+                message.breakdown = [];
+                for (let i = 0; i < object.breakdown.length; ++i) {
+                    if (typeof object.breakdown[i] !== "object")
+                        throw TypeError(".game.RoundOutcome.breakdown: object expected");
+                    message.breakdown[i] = $root.game.ScoreEntry.fromObject(object.breakdown[i]);
+                }
+            }
             return message;
         };
 
@@ -4275,8 +4313,10 @@ export const game = $root.game = (() => {
             if (!options)
                 options = {};
             let object = {};
-            if (options.arrays || options.defaults)
+            if (options.arrays || options.defaults) {
                 object.payouts = [];
+                object.breakdown = [];
+            }
             if (options.defaults) {
                 object.isDraw = false;
                 object.winnerSeat = 0;
@@ -4298,6 +4338,11 @@ export const game = $root.game = (() => {
                 object.payouts = [];
                 for (let j = 0; j < message.payouts.length; ++j)
                     object.payouts[j] = $root.game.PlayerPayout.toObject(message.payouts[j], options);
+            }
+            if (message.breakdown && message.breakdown.length) {
+                object.breakdown = [];
+                for (let j = 0; j < message.breakdown.length; ++j)
+                    object.breakdown[j] = $root.game.ScoreEntry.toObject(message.breakdown[j], options);
             }
             return object;
         };

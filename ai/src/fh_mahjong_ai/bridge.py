@@ -424,6 +424,11 @@ class CtypesGoBridge(MahjongBridge):
                 {"seat": int(payout.seat), "amount": int(payout.amount)}
                 for payout in outcome.payouts
             ],
+            "breakdown": [
+                {"pattern_id": entry.pattern_id, "pattern_name": entry.pattern_name,
+                 "points": int(entry.points)}
+                for entry in outcome.breakdown
+            ],
         }
 
     def _decode_transition(self, sample: game_pb2.TrajectorySample) -> Transition:

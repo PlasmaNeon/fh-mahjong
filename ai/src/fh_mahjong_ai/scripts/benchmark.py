@@ -25,7 +25,12 @@ from pathlib import Path
 from typing import Any, Optional, Sequence
 
 from fh_mahjong_ai.evaluate import evaluate_policy_online, reward_summary
-from fh_mahjong_ai.hand_stats import bootstrap_hand_stats_ci, summarize_hand_stats
+from fh_mahjong_ai.hand_stats import (
+    bootstrap_hand_stats_ci,
+    merge_win_pattern_tallies,
+    new_win_pattern_tally,
+    summarize_hand_stats,
+)
 from fh_mahjong_ai.policies import SuitAveragedGreedyPolicy, TorchGreedyPolicy
 from fh_mahjong_ai.scripts.evaluate import load_opponent_policy, resolve_max_steps_per_episode
 from fh_mahjong_ai.serving import CheckpointPolicy
@@ -68,6 +73,7 @@ def merge_seat_reports(
     per_seat: dict[int, dict[str, Any]] = {}
     overall_placement_counts = {label: 0 for label, _ in _PLACEMENT_RANKS}
     overall_placement_counts["tied"] = 0
+    tallies: list[dict[str, Any]] = []
     for seat, report in sorted(seat_reports.items()):
         pooled.extend(report["per_match_hand_records"])
         unknown += int(report["hand_stats"]["unknown_hands"])
@@ -76,6 +82,7 @@ def merge_seat_reports(
         )
         for label, count in seat_placement_counts.items():
             overall_placement_counts[label] += count
+        tallies.append(report.get("win_pattern_stats", new_win_pattern_tally()))
         per_seat[seat] = {
             "hand_stats": report["hand_stats"],
             "mean_placement": report.get("mean_placement"),
@@ -92,6 +99,7 @@ def merge_seat_reports(
             "ci95": ci95,
             "placement_counts": overall_placement_counts,
             "placement_rates": _rates_from_counts(overall_placement_counts),
+            "win_patterns": merge_win_pattern_tallies(tallies),
         },
         "per_seat": per_seat,
     }
@@ -117,6 +125,8 @@ def combine_chunk_reports(chunks: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "truncation_count": truncations,
         "truncation_rate": truncations / episodes if episodes else 0.0,
         "round_outcome_counts": dict(sorted(outcomes.items())),
+        "win_pattern_stats": merge_win_pattern_tallies(
+            [c.get("win_pattern_stats", new_win_pattern_tally()) for c in chunks]),
     }
 
 
@@ -228,6 +238,39 @@ def format_stat_table(merged: dict[str, Any]) -> str:
     if rates["tied"]:
         placement_line += f"  tied {rates['tied'] * 100:.1f}%"
     lines.append(placement_line)
+    return "\n".join(lines)
+
+
+def format_win_pattern_table(win_patterns: dict[str, Any]) -> str:
+    """Scoring patterns of the learning seat's wins vs the other seats' wins: the share of
+    wins carrying each pattern and its average points, sorted by the learner's share."""
+    sides = [win_patterns[name] for name in ("learner", "opponents")]
+
+    def side_header(label: str, side: dict[str, Any]) -> str:
+        wins = side["wins"]
+        if not wins:
+            return f"{label} (no wins)"
+        return (f"{label}: {wins} wins, tsumo {side['tsumo_wins'] / wins * 100:.0f}%, "
+                f"avg total {side['total_score_sum'] / wins:.1f}")
+
+    def cell(side: dict[str, Any], pattern_id: str) -> str:
+        stats = side["patterns"].get(pattern_id)
+        if not stats or not side["wins"]:
+            return f"{'-':>8}{'':>9}"
+        return f"{stats['count'] / side['wins'] * 100:>7.1f}%{stats['points_sum'] / stats['count']:>9.1f}"
+
+    names: dict[str, str] = {}
+    for side in sides:
+        for pattern_id, stats in side["patterns"].items():
+            names.setdefault(pattern_id, stats["name"])
+    order = sorted(names, key=lambda pid: tuple(
+        -(side["patterns"].get(pid, {}).get("count", 0)) for side in sides))
+    header = f"{'pattern':<40}{'learner':>17}{'opponents':>19}"
+    lines = [side_header("learner", sides[0]), side_header("opponents", sides[1]),
+             header, f"{'':<40}{'% wins':>8}{'avg pts':>9}{'% wins':>10}{'avg pts':>9}",
+             "-" * len(header)]
+    for pattern_id in order:
+        lines.append(f"{names[pattern_id][:39]:<40}{cell(sides[0], pattern_id)}  {cell(sides[1], pattern_id)}")
     return "\n".join(lines)
 
 
@@ -356,6 +399,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     print()
     print(format_stat_table(merged))
+    print()
+    print(format_win_pattern_table(merged["overall"]["win_patterns"]))
     unknown = merged["overall"]["hand_stats"]["unknown_hands"]
     if unknown:
         print(f"WARNING: {unknown} match(es) completed without any observed hand outcome; "
