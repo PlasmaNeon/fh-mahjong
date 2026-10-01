@@ -63,5 +63,5 @@ Contains all React components, context providers, custom hooks, and utility func
 - `Game.tsx` defensively auto-submits backend `ACTION_FLOWER_REVEAL` messages and hides that action from the button bar, matching the intended auto-reveal flower UX.
 - Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with `small` modifier for different viewpoints and sizes.
 - Network calls should use `getApiUrl()` / `getWebSocketUrl()` instead of hard-coded same-origin `/api` paths so the frontend can run behind Vercel while talking to a separate backend host.
-- Every route shares the Rainy Mahjong Club identity: ink/rain backdrops, bone-paper work surfaces, jade controls, brass details, and seal-red danger treatment. Home is a compact club switchboard with the compass and four literal actions.
+- Menu routes use Direct play light surfaces and blue controls; live/replay tables use the scoped slate-blue table skin. Home and `/play` now share the production Direct play entry; ordinary menu routes use the light DirectShell while table materials remain scoped to gameplay.
 - Private-room identity is account-backed. Browser storage never contains a session token; multi-tab play uses the same signed-in account.

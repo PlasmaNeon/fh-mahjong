@@ -3,6 +3,7 @@ import { SocketProvider } from './contexts/SocketContext'
 import { AuthProvider } from './contexts/AuthContext'
 import { GameProvider } from './contexts/GameContext'
 import Home from './features/lobby/Home'
+import { ClubShell } from './theme'
 import Login from './features/auth/Login'
 import Lobby from './features/lobby/Lobby'
 import PrivateRoom from './features/game/PrivateRoom'
@@ -26,7 +27,7 @@ function PrivateRoomRoute() {
 }
 
 function LoginBackdrop() {
-    return <main className="ledger-page auth-login-stage"><div className="auth-login-stage__compass" aria-hidden="true"><span>東</span></div></main>
+    return <ClubShell><div className="auth-login-stage" /></ClubShell>
 }
 
 function AppRoutes() {

@@ -1,13 +1,10 @@
 # web/src/theme/
 
-> The app's shared Rainy Mahjong Club theme: design tokens, structural CSS, and typed React primitives.
+> Shared design tokens, typed React primitives, Direct play menu surfaces, and scoped table skins.
 
 ## Overview
 
-Single source of truth for the app-wide material language: Fraunces/Noto Serif display
-type, IBM Plex UI type, ink/rain backdrops, bone-paper surfaces, jade controls, brass
-focus and victory details, and seal-red danger treatment. The identity is intentionally
-single-theme rather than following `prefers-color-scheme`.
+Production menu pages use Direct play's light surfaces, blue controls, and Source Sans/Noto Sans typography via `DirectShell`. The root Rainy Club tokens remain the base for legacy consumers; shared tables override their materials through `direct-table.css`. These authored themes do not follow `prefers-color-scheme`.
 The CSS is imported once globally from `web/src/main.tsx` (`import './theme/index.css'`);
 the barrel `index.ts` also side-effect-imports it so importing any primitive pulls the styles.
 
@@ -54,6 +51,8 @@ import { Page, Shell, Card, PageHeader, Section, Button } from '../theme'
 
 ## Direct play tools
 
-`components/ToolsShell.tsx` wraps calc/shanten with a text-only brand, shared navigation and a single language control. `tokens.css` scopes the light palette to `[data-theme="direct-tools"]`; `direct-tools.css` overrides workbench materials and responsive layout inside that shell only. Other routes retain Rainy Club. Development navigation returns to the isolated prototype; production links target existing Play/Replays routes.
+`components/ToolsShell.tsx` wraps calc/shanten with a text-only brand, shared navigation and a single language control. `tokens.css` scopes the light palette to `[data-theme="direct-tools"]`; `direct-tools.css` overrides workbench materials and responsive layout inside that shell only. Ordinary menu routes now use the same light palette through `DirectShell`, including production Home, Lobby, rooms, account, and replay library. Navigation always targets real Play/Replays/Tools routes in both development and production.
 
-`index.css` imports `table/direct-table.css` after the legacy table skin. This scoped presentation layer also refreshes game dialogs and final standings without changing ordinary ClubShell routes.
+`index.css` imports `table/direct-table.css` after the legacy table skin. This scoped presentation layer refreshes game dialogs and final standings independently of ordinary menu surfaces.
+
+`direct-shell.css` adapts entry panels, ordinary menu primitives, waiting rooms, replay slips, and the auth dialog to Direct play. `components/DirectShell.tsx` owns text-only branding and responsive Play/Replays/Tools navigation; all links, including brand/Profile, become non-navigation text during a queued search.

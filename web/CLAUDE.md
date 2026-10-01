@@ -13,7 +13,7 @@ A single-page React application built with Vite and TypeScript. Renders the mahj
 - **.env.example** — Optional same-site backend URLs. Preferred deployments proxy `/api` and WebSocket traffic through the frontend’s public origin so persistent cookies remain first-party
 - Client-side routes (`/play`, `/room/:roomId`, `/match/:matchId`, `/tools/calc`, etc.) rely on an SPA fallback to `index.html`. The Go server's `NoRoute` handler provides this for the bundled deploy; a static host (e.g. Vercel) needs its own rewrite-to-`index.html` rule.
 - **tsconfig.json** — TypeScript configuration
-- **index.html** — HTML entry point; declares the authored dark color scheme and Night Ink browser theme color used by Rainy Mahjong Club
+- **index.html** — HTML entry point; declares the light entry-page color scheme and Direct play browser theme color
 
 ## Subdirectories
 

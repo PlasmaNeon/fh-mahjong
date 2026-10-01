@@ -1,6 +1,6 @@
 # web/src/theme/components/
 
-> The typed React primitives that make up the Rainy Mahjong Club design system's public API.
+> Typed React primitives and shared Direct play navigation for ordinary application pages.
 
 ## Overview
 
@@ -11,7 +11,7 @@ Every component here consumes tokens from `../tokens.css` through the structural
 ### Layout
 - **Page.tsx** / **Shell.tsx** / **Card.tsx** / **Section.tsx** — The page → shell → card → section nesting every route uses.
 - **PageHeader.tsx** — Title, subtitle, and optional `nav` slot.
-- **ClubShell.tsx** — Ordinary-page localized club identity, the global language override, and Profile navigation. **Deliberately has no Back/breadcrumb control** — history navigation is left to the browser. Route pages must not recreate ad-hoc Home/Play/Account link clusters.
+- **ClubShell.tsx** — Auth-aware wrapper around the shared light `DirectShell` with Profile navigation. **Deliberately has no Back/breadcrumb control** — history navigation is left to the browser. Route pages must not recreate ad-hoc Home/Play/Account link clusters.
 - **ButtonRow.tsx** — Horizontal row of buttons/links; `end` right-aligns them. Used on account, lobby, room and replay pages.
 - **ToolTabs.tsx** — The localized Scoring/Shanten switcher, preserving both tool deep links.
 
@@ -46,9 +46,11 @@ badge, exhausted tiles dimmed and disabled).
 
 Tool pages must not re-implement these — extend the primitives instead.
 
-`ToolsShell.tsx` is the Direct play shell used by calc/shanten. It owns shared navigation, language switching and a screen-reader page title; tool state stays in each feature. Its light styles are scoped to `data-theme="direct-tools"`, and it imports `../direct-tools.css`.
+`ToolsShell.tsx` is the Direct play shell used by calc/shanten. It owns shared navigation, language switching and a screen-reader page title; tool state stays in each feature. It delegates to `DirectShell`, sharing real route navigation and the scoped `data-theme="direct-tools"` palette.
 
 ## InputApplyRow.tsx
 
 `InputApplyRow` — the `.ldg-input-row` text input plus Apply button used by the calc and shanten
 notation fields. Covered by `InputApplyRow.test.ts`.
+
+`DirectShell.tsx` is shared by ClubShell and ToolsShell. It owns text-only localized branding, active-route navigation, desktop/phone placement and queue navigation locking. It accepts an optional Profile slot so tools remain usable without auth dependencies.

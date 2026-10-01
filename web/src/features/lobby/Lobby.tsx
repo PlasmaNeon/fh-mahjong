@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useSocket } from '../../contexts/SocketContext'
 import { useGameState } from '../../contexts/GameContext'
-import { Button, Card, ClubShell, Note, PageHeader, Section, Toggle, ButtonRow } from '../../theme'
+import { Button, ClubShell, Note, Section, Toggle, ButtonRow } from '../../theme'
 import { useAuth } from '../../contexts/AuthContext'
 import type { AuthRouteState } from '../auth/authRouteState'
 import { consumePlayIntent, rememberPlayIntent } from './playIntent'
 import { useI18n } from '../../i18n/I18nContext'
 import { errorMessage, readJsonBody } from '../../utils/apiJson'
+import { invitationRoomPath } from './invitationLink'
 
 type Ruleset = 'fenghua' | 'chongci-fh'
 
@@ -16,6 +17,8 @@ export default function Lobby() {
   const [ruleset, setRuleset] = useState<Ruleset>('fenghua')
   const [showModes, setShowModes] = useState(false)
   const [error, setError] = useState('')
+  const [invitation, setInvitation] = useState('')
+  const [invitationError, setInvitationError] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
   const { isConnected, connect } = useSocket()
@@ -33,7 +36,7 @@ export default function Lobby() {
     if (authStatus !== 'authenticated') {
       if (typeof window !== 'undefined') rememberPlayIntent(window.sessionStorage, 'quick-match')
       const state: AuthRouteState = { backgroundLocation: location, optionalAuth: true, cancelIntent: 'quick-match' }
-      navigate(`/login?returnTo=${encodeURIComponent('/play')}`, { state })
+      navigate(`/login?returnTo=${encodeURIComponent(location.pathname === '/' ? '/' : '/play')}`, { state })
       return
     }
     setError('')
@@ -92,18 +95,17 @@ export default function Lobby() {
 
   return (
     <ClubShell title={t('nav.play')} navigationLocked={searching}>
-      <Card>
-        <PageHeader title={t('lobby.choose')} subtitle={t('lobby.subtitle')} />
+      <div className="direct-play">
+        <h1 className="direct-tools-sr-only">{t('nav.play')}</h1>
         {error && <Note tone="error">{error}</Note>}
 
         {searching ? (
           <Section title={t('lobby.listening')} subtitle={t(ruleset === 'fenghua' ? 'lobby.classicTable' : 'lobby.chongciTable')}>
-            <div className="queue-compass" aria-hidden="true"><span>東</span></div>
             <Note>{t(queueState === 'joining' ? 'lobby.joining' : queueState === 'leaving' ? 'lobby.leaving' : 'lobby.searching')}</Note>
             <ButtonRow><Button onClick={cancelQueue} disabled={queueState !== 'queued'}>{t('lobby.cancel')}</Button></ButtonRow>
           </Section>
         ) : (
-          <>
+          <div className="direct-play-grid">
             <Section title={t('lobby.quick')} subtitle={t('lobby.quickHelp')}>
               <Button variant="primary" onClick={() => void joinQueue()} disabled={authStatus === 'authenticated' && !isConnected}>{t('lobby.find')}</Button>
               {authStatus === 'authenticated' && !isConnected && <Note>{t('lobby.connecting')}</Note>}
@@ -112,10 +114,23 @@ export default function Lobby() {
             </Section>
             <Section title={t('lobby.private')} subtitle={t('lobby.privateHelp')}>
               <Button onClick={() => navigate('/room/new')}>{t('lobby.createPrivate')}</Button>
+              <form className="direct-invitation" onSubmit={event => {
+                event.preventDefault()
+                const path = invitationRoomPath(invitation, window.location.origin)
+                if (path) navigate(path)
+                else setInvitationError(true)
+              }}>
+                <label htmlFor="invitation-link">{t('lobby.invitation')}</label>
+                <div>
+                  <input id="invitation-link" className="ldg-input" type="text" value={invitation} placeholder={t('lobby.invitationPlaceholder')} onChange={event => { setInvitation(event.target.value); setInvitationError(false) }} aria-invalid={Boolean(invitationError)} aria-describedby={invitationError ? 'invitation-error' : undefined} />
+                  <Button type="submit">{t('lobby.joinInvitation')}</Button>
+                </div>
+                {invitationError && <div id="invitation-error"><Note tone="error">{t('lobby.invalidInvitation')}</Note></div>}
+              </form>
             </Section>
-          </>
+          </div>
         )}
-      </Card>
+      </div>
     </ClubShell>
   )
 }
