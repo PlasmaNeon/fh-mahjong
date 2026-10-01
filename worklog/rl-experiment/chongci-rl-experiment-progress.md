@@ -1061,6 +1061,27 @@ Interpretation: the edge is hand value, not frequency: same win rate, wins worth
                 the seed-noise floor. A descriptive yardstick on a reused window, not a gate, and
                 head-to-head vs one opponent.
 
+### 2026-10-01 — benchmark vs anchor075: current best +0.097 at a champion table, by win frequency
+
+Setup:          as the production-table entry above, with 3 seats of `anchor075` (`ce9d867f`, greedy,
+                plain) and win-pattern counts (`RoundOutcome.breakdown`, PR #266). Same seeds, zero
+                truncations. Report: `~/fh-mahjong-models/benchmarks/saug-ext-iter150-suits-vs-anchor075-1600m.*`
+
+| 1600 matches | current best vs 3× anchor075 |
+|---|---|
+| 1st / 2nd / 3rd / 4th | 30.5 / 24.4 / 24.4 / 20.8% |
+| mean placement (±CI95) | +0.097 ± 0.037 |
+| win rate (per seat: opponents 24.4%) | 26.7% [26.4, 27.0] |
+| deal-in rate | 11.6% [11.4, 11.8] |
+| avg win value / avg deal-in loss | 225.4 / 116.5 |
+| avg total points per win (opponents) | 46.6 (47.7) |
+| Independence 大大胡 share of wins (opponents) | 47.8% (53.7%) |
+
+Interpretation: against anchor075 the edge is win frequency (+2.3pp per hand), with slightly
+                smaller hands: it chases Independence less. Against production it was win value.
+                Independence (50 pts) is in about half of all wins for every policy at these
+                tables. Descriptive yardstick on a reused window, not a gate.
+
 ## Maintenance Protocol
 
 Record a lap twice: a pre-registration entry before any training compute is spent, and an
