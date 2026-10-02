@@ -18,6 +18,7 @@ from .config import EnvConfig
 from .data import placement_shaped_returns
 from .env import MahjongEnv
 from .hand_stats import hand_record, new_win_pattern_tally, summarize_hand_stats, tally_win_patterns
+from .route_study import RouteStudyRecorder
 from .placement_bonus import eval_episode_tail
 from .policies import TorchGreedyPolicy
 from .types import Transition
@@ -944,6 +945,7 @@ def evaluate_policy_online(
     event_history_window: int = 0,
     policy_factory: Optional[Any] = None,
     opponent_policy: Optional[Any] = None,
+    route_study_shard: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Run a policy for one seat against heuristic opponents.
 
@@ -959,8 +961,14 @@ def evaluate_policy_online(
     exist until this function builds it below, so it cannot be threaded
     through an eagerly-constructed ``policy`` argument.
 
+    With ``route_study_shard`` set (Go bridge only) every decision of every seat
+    this loop plays is probed for the route study; the report gains
+    ``route_study`` and raw records go to that gzip JSONL path.
+
     Returns aggregate reward and action-frequency metrics.
     """
+    if route_study_shard is not None and bridge_kind != "go":
+        raise ValueError("route study needs the Go bridge (bridge_kind='go')")
     normalized_match_mode = _normalize_match_mode(match_mode)
     resolved_large_loss_threshold = (
         float(large_loss_threshold)
@@ -992,6 +1000,14 @@ def evaluate_policy_online(
                                resolved_large_loss_threshold, chongci_starting_score,
                                chongci_bust_threshold, chongci_max_hands)
     record_episode = acc.record_episode
+    route_recorder = None
+    if route_study_shard is not None:
+        route_recorder = RouteStudyRecorder(
+            learning_seat,
+            probe=bridge.route_probe,
+            recorded_seats=(0, 1, 2, 3) if opponent_policy is not None else (learning_seat,),
+            shard_path=Path(route_study_shard),
+        )
 
     try:
         for i in range(episodes):
@@ -1000,6 +1016,8 @@ def evaluate_policy_online(
             episode_choice_infos: list[dict[str, Any]] = []
             learner_action_ids: list[int] = []
             observation = env.reset(seed=seed)
+            if route_recorder is not None:
+                route_recorder.start_match(seed)
             reset_result = env.last_reset_result
             episode_reset_rewards = (
                 np.asarray(reset_result.rewards, dtype=np.float32)
@@ -1028,7 +1046,15 @@ def evaluate_policy_online(
                     episode_choice_infos.append(choice_info)
                     action_id = choice.action_id
                     learner_action_ids.append(action_id)
+                if route_recorder is not None:
+                    route_recorder.on_decision(observation, action_id)
                 step_result = env.step(action_id)
+                if route_recorder is not None:
+                    hand_outcome = step_result.info.get("round_outcome")
+                    if hand_outcome is not None:
+                        route_recorder.on_hand_end(hand_outcome)
+                    if step_result.terminated or step_result.truncated:
+                        route_recorder.on_match_end(bool(step_result.truncated))
                 episode.append(
                     Transition(
                         observation=observation,
@@ -1055,11 +1081,18 @@ def evaluate_policy_online(
                     )
                     break
                 if not observation.legal_actions:
+                    if route_recorder is not None:
+                        route_recorder.on_match_end(True)
                     break
     finally:
         env.close()
+        if route_recorder is not None:
+            route_recorder.close()
 
-    return acc.report()
+    report = acc.report()
+    if route_recorder is not None:
+        report["route_study"] = route_recorder.summary()
+    return report
 
 
 def evaluate_online(
