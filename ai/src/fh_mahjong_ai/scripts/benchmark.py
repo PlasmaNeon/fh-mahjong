@@ -8,7 +8,9 @@ fh-mj-evaluate --duplicate-seats) remains the promotion gate.
 three seats instead (a strong table), `--symmetry-average suits` plays the
 suit-averaged policy, and `--workers N` splits each seat's seeds into chunks
 run in N spawn processes. Greedy play on a seeded env is deterministic, so the
-chunked report equals the sequential one.
+chunked report equals the sequential one. `--route-study` records route shanten
+at every decision of every seat the loop plays (`route_study.py`) and prints
+Independence-vs-standard charts.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from fh_mahjong_ai.hand_stats import (
     summarize_hand_stats,
 )
 from fh_mahjong_ai.policies import SuitAveragedGreedyPolicy, TorchGreedyPolicy
+from fh_mahjong_ai.route_study import format_route_study, merge_route_study
 from fh_mahjong_ai.scripts.evaluate import load_opponent_policy, resolve_max_steps_per_episode
 from fh_mahjong_ai.serving import CheckpointPolicy
 
@@ -93,7 +96,7 @@ def merge_seat_reports(
         }
     overall_stats = summarize_hand_stats(pooled, unknown)
     ci95 = bootstrap_hand_stats_ci(pooled, iters=bootstrap_iters, seed=bootstrap_seed)
-    return {
+    merged = {
         "overall": {
             "hand_stats": overall_stats,
             "ci95": ci95,
@@ -103,6 +106,10 @@ def merge_seat_reports(
         },
         "per_seat": per_seat,
     }
+    route_studies = [r["route_study"] for _, r in sorted(seat_reports.items()) if "route_study" in r]
+    if route_studies:
+        merged["overall"]["route_study"] = merge_route_study(route_studies)
+    return merged
 
 
 def combine_chunk_reports(chunks: Sequence[dict[str, Any]]) -> dict[str, Any]:
@@ -116,7 +123,7 @@ def combine_chunk_reports(chunks: Sequence[dict[str, Any]]) -> dict[str, Any]:
     outcomes: Counter[str] = Counter()
     for c in chunks:
         outcomes.update(c.get("round_outcome_counts", {}))
-    return {
+    combined = {
         "episodes": episodes,
         "hand_stats": summarize_hand_stats(records, unknown),
         "per_match_hand_records": records,
@@ -128,6 +135,10 @@ def combine_chunk_reports(chunks: Sequence[dict[str, Any]]) -> dict[str, Any]:
         "win_pattern_stats": merge_win_pattern_tallies(
             [c.get("win_pattern_stats", new_win_pattern_tally()) for c in chunks]),
     }
+    route_studies = [c["route_study"] for c in chunks if "route_study" in c]
+    if route_studies:
+        combined["route_study"] = merge_route_study(route_studies)
+    return combined
 
 
 def plan_chunks(seed_base: int, episodes_per_seat: int, workers: int) -> list[tuple[int, list[int]]]:
@@ -140,6 +151,14 @@ def plan_chunks(seed_base: int, episodes_per_seat: int, workers: int) -> list[tu
         seeds = list(range(start, start + episodes_per_seat))
         jobs.extend((seat, seeds[i:i + chunk]) for i in range(0, len(seeds), chunk))
     return jobs
+
+
+def route_study_shard_path(route_study_dir: Optional[Path], seat: int,
+                           seeds: Sequence[int]) -> Optional[Path]:
+    """One gzip JSONL shard per (seat, seed range); None when the study is off."""
+    if route_study_dir is None:
+        return None
+    return route_study_dir / f"seat{seat}-seeds{seeds[0]}-{seeds[-1]}.jsonl.gz"
 
 
 # Per-process policies for the spawn workers, built once by _init_worker.
@@ -168,7 +187,7 @@ def _init_worker(checkpoint: Path, device: str, symmetry: str,
                    event_window=event_window, eval_kwargs=eval_kwargs)
 
 
-def _run_chunk(seat: int, seeds: list[int]) -> dict[str, Any]:
+def _run_chunk(seat: int, seeds: list[int], route_study_dir: Optional[Path] = None) -> dict[str, Any]:
     return evaluate_policy_online(
         policy=_WORKER["policy"],
         episodes=len(seeds),
@@ -176,6 +195,7 @@ def _run_chunk(seat: int, seeds: list[int]) -> dict[str, Any]:
         learning_seat=seat,
         event_history_window=_WORKER["event_window"],
         opponent_policy=_WORKER["opponent_policy"],
+        route_study_shard=route_study_shard_path(route_study_dir, seat, seeds),
         **_WORKER["eval_kwargs"],
     )
 
@@ -306,6 +326,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     parser.add_argument("--workers", type=int, default=1,
                         help="spawn processes; each seat's seeds are split into chunks "
                              "(same report as --workers 1)")
+    parser.add_argument("--route-study", action="store_true",
+                        help="record route shanten at every decision (Independence vs standard) "
+                             "and print route charts; raw records go to <out stem>.route-study/")
     args = parser.parse_args(argv)
 
     if args.episodes_per_seat < 1:
@@ -316,6 +339,13 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         parser.error("--workers must be >= 1")
     if args.opponent_checkpoint is not None and not args.opponent_checkpoint.is_file():
         parser.error(f"--opponent-checkpoint {args.opponent_checkpoint} is not a file")
+
+    out_path = args.out if args.out is not None else Path(str(args.checkpoint) + ".benchmark.json")
+    route_study_dir = out_path.parent / (out_path.stem + ".route-study") if args.route_study else None
+    if route_study_dir is not None:
+        if route_study_dir.exists() and any(route_study_dir.iterdir()):
+            parser.error(f"{route_study_dir} is not empty; remove it or choose another --out")
+        route_study_dir.mkdir(parents=True, exist_ok=True)
 
     # Metadata-driven load: architecture (incl. event window) is recovered from
     # the checkpoint itself — no model flags to get wrong. Missing/odd payloads
@@ -348,6 +378,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 learning_seat=seat,
                 event_history_window=event_window,
                 opponent_policy=opponent_policy,
+                route_study_shard=route_study_shard_path(route_study_dir, seat, seeds),
                 **eval_kwargs,
             )
     else:
@@ -362,7 +393,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             initargs=(args.checkpoint, args.device, args.symmetry_average,
                       args.opponent_checkpoint, eval_kwargs),
         ) as pool:
-            futures = {pool.submit(_run_chunk, seat, seeds): i for i, (seat, seeds) in enumerate(jobs)}
+            futures = {pool.submit(_run_chunk, seat, seeds, route_study_dir): i
+                       for i, (seat, seeds) in enumerate(jobs)}
             for future in as_completed(futures):
                 i = futures[future]
                 chunk_reports[i] = future.result()
@@ -375,7 +407,6 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     merged = merge_seat_reports(seat_reports, args.bootstrap_iters, args.bootstrap_seed)
 
-    out_path = args.out if args.out is not None else Path(str(args.checkpoint) + ".benchmark.json")
     payload = {
         "checkpoint": str(args.checkpoint),
         "match_mode": args.match_mode,
@@ -395,12 +426,19 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         "overall": merged["overall"],
         "per_seat": {str(seat): entry for seat, entry in merged["per_seat"].items()},
     }
+    if route_study_dir is not None:
+        payload["route_study_records"] = str(route_study_dir)
     out_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
     print()
     print(format_stat_table(merged))
     print()
     print(format_win_pattern_table(merged["overall"]["win_patterns"]))
+    if "route_study" in merged["overall"]:
+        print()
+        print(format_route_study(merged["overall"]["route_study"],
+                                 {"learner": str(args.checkpoint), "opponents": opponent_label}))
+        print(f"route-study records in {route_study_dir}")
     unknown = merged["overall"]["hand_stats"]["unknown_hands"]
     if unknown:
         print(f"WARNING: {unknown} match(es) completed without any observed hand outcome; "

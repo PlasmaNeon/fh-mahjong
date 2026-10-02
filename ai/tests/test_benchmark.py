@@ -246,3 +246,83 @@ class WinPatternTableTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RouteStudyMainTest(unittest.TestCase):
+    def _run_main(self, tmp, extra_args, fake_eval):
+        fake_model = mock.Mock()
+        fake_model.model_config.event_window = 0
+        ckpt = Path(tmp) / "champion.pt"
+        ckpt.write_bytes(b"fake")
+        with mock.patch.object(
+            benchmark_cli.CheckpointPolicy, "from_checkpoint", return_value=mock.Mock(model=fake_model),
+        ), mock.patch.object(
+            benchmark_cli, "evaluate_policy_online", side_effect=fake_eval,
+        ), mock.patch.object(
+            benchmark_cli, "TorchGreedyPolicy", return_value=mock.Mock(),
+        ):
+            benchmark_cli.main(["--checkpoint", str(ckpt), "--episodes-per-seat", "2",
+                                "--bootstrap-iters", "10", *extra_args])
+        return ckpt
+
+    def test_flag_gives_each_seat_a_shard_and_merges_summaries(self) -> None:
+        from fh_mahjong_ai.route_study import new_route_study_summary
+        calls = []
+
+        def fake_eval(**kwargs):
+            calls.append(kwargs)
+            report = _seat_report(kwargs["learning_seat"], [[_win(kwargs["learning_seat"])]])
+            study = new_route_study_summary()
+            study["learner"]["hands_recorded"] = 1
+            report["route_study"] = study
+            return report
+
+        with TemporaryDirectory() as tmp:
+            ckpt = self._run_main(tmp, ["--route-study"], fake_eval)
+            shard_dir = Path(tmp) / "champion.pt.benchmark.route-study"
+            shards = [c["route_study_shard"] for c in calls]
+            self.assertEqual(len(set(shards)), 4)
+            self.assertTrue(all(s.parent == shard_dir for s in shards))
+            self.assertEqual(shards[0].name, "seat0-seeds1000-1001.jsonl.gz")
+            payload = json.loads(Path(str(ckpt) + ".benchmark.json").read_text())
+            self.assertEqual(payload["overall"]["route_study"]["learner"]["hands_recorded"], 4)
+            self.assertEqual(payload["route_study_records"], str(shard_dir))
+
+    def test_flag_off_adds_nothing(self) -> None:
+        calls = []
+
+        def fake_eval(**kwargs):
+            calls.append(kwargs)
+            return _seat_report(kwargs["learning_seat"], [[_win(kwargs["learning_seat"])]])
+
+        with TemporaryDirectory() as tmp:
+            ckpt = self._run_main(tmp, [], fake_eval)
+            payload = json.loads(Path(str(ckpt) + ".benchmark.json").read_text())
+            self.assertNotIn("route_study", payload["overall"])
+            self.assertNotIn("route_study_records", payload)
+            self.assertTrue(all(c["route_study_shard"] is None for c in calls))
+            self.assertFalse((Path(tmp) / "champion.pt.benchmark.route-study").exists())
+
+    def test_refuses_a_non_empty_route_study_dir(self) -> None:
+        with TemporaryDirectory() as tmp:
+            shard_dir = Path(tmp) / "champion.pt.benchmark.route-study"
+            shard_dir.mkdir()
+            (shard_dir / "old.jsonl.gz").write_bytes(b"x")
+            with self.assertRaises(SystemExit):
+                self._run_main(tmp, ["--route-study"], lambda **kwargs: None)
+
+    def test_combine_chunk_reports_merges_route_study(self) -> None:
+        from fh_mahjong_ai.route_study import new_route_study_summary
+        chunks = []
+        for n in (1, 2):
+            study = new_route_study_summary()
+            study["opponents"]["hands_recorded"] = n
+            chunks.append({**_seat_report(0, [[_win(0)]]), "route_study": study})
+        combined = benchmark_cli.combine_chunk_reports(chunks)
+        self.assertEqual(combined["route_study"]["opponents"]["hands_recorded"], 3)
+        self.assertNotIn("route_study", benchmark_cli.combine_chunk_reports([_seat_report(0, [[_win(0)]])]))
+
+    def test_shard_path_is_none_without_a_dir(self) -> None:
+        self.assertIsNone(benchmark_cli.route_study_shard_path(None, 0, [1, 2]))
+        self.assertEqual(benchmark_cli.route_study_shard_path(Path("d"), 3, [7, 8, 9]),
+                         Path("d") / "seat3-seeds7-9.jsonl.gz")
