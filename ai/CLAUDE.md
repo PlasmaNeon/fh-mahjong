@@ -143,7 +143,7 @@ Quick map of what is where:
 | Training | `ppo.py`, `ach.py`, `oracle.py`, `train_b2b.py`, `train_state.py`, `offline_trainers.py`, `batched_selfplay.py`, `batched_b2b.py`, `parallel_rollouts.py`, `selfplay_loop.py` |
 | Data and storage | `data.py`, `buffer.py`, `streaming_buffer.py`, `storage.py`, `checkpoint_manifest.py` |
 | Policies, search, serving | `policies.py`, `search.py`, `serving.py` |
-| Evaluation and diagnostics | `evaluate.py`, `hand_stats.py`, `placement_bonus*.py`, `reward_calibration.py`, `global_ev*.py`, `paired_trace*.py`, `branch_c*.py`, `near_state_counterfactuals.py`, `risk_filter.py` |
+| Evaluation and diagnostics | `evaluate.py`, `hand_stats.py`, `route_study.py`, `placement_bonus*.py`, `reward_calibration.py`, `global_ev*.py`, `paired_trace*.py`, `branch_c*.py`, `near_state_counterfactuals.py`, `risk_filter.py` |
 | Infrastructure | `mlflow_tracking.py`, `memprobe.py`, `fdlimit.py`, `generated/proto/` |
 | Scripts | `scripts/` — see the Commands section above for the CLI each one backs |
 | Deployment | `checkpoints/deploy/`, `Dockerfile.compose`, `Dockerfile.deploy` |
