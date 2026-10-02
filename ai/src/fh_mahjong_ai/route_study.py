@@ -261,3 +261,68 @@ class RouteStudyRecorder:
         if self._shard is not None:
             self._shard.close()
             self._shard = None
+
+
+_SHANTEN_LABELS = {"6": "6+"}
+_GAP_LABELS = {"-3": "<=-3", "3": ">=+3"}
+_CELL_WIDTH = 14
+
+
+def _rate_cell(numerator: int, denominator: int) -> str:
+    return f"{100.0 * numerator / denominator:.1f}% ({denominator})" if denominator else "."
+
+
+def _grid(title: str, corner: str, rows: Sequence[str], cols: Sequence[str],
+          cell: Callable[[str, str], str], row_labels: dict[str, str],
+          col_labels: dict[str, str]) -> list[str]:
+    lines = [title, f"{corner:>8}" + "".join(f"{col_labels.get(c, c):>{_CELL_WIDTH}}" for c in cols)]
+    for row in rows:
+        lines.append(f"{row_labels.get(row, row):>8}"
+                     + "".join(f"{cell(row, col):>{_CELL_WIDTH}}" for col in cols))
+    return lines
+
+
+def format_route_study(summary: dict[str, Any], labels: dict[str, str]) -> str:
+    """Per-side charts: deal pivots, fork pivot, call row."""
+    lines: list[str] = []
+    for side in WIN_PATTERN_SIDES:
+        stats = summary[side]
+        if not stats["hands_recorded"]:
+            continue
+        deal = stats["deal"]
+
+        def deal_counts(row: str, col: str) -> dict[str, int]:
+            return deal.get(row, {}).get(col, {})
+
+        def deal_rate(key: str) -> Callable[[str, str], str]:
+            return lambda r, c: _rate_cell(deal_counts(r, c).get(key, 0), deal_counts(r, c).get("hands", 0))
+
+        def mean_payout(r: str, c: str) -> str:
+            counts = deal_counts(r, c)
+            return f"{counts['payout_sum'] / counts['hands']:+.1f}" if counts.get("hands") else "."
+
+        def fork_rate(r: str, c: str) -> str:
+            counts = stats["fork"].get(r, {}).get(c, {})
+            return _rate_cell(counts.get("independence", 0), counts.get("forks", 0))
+
+        def call_rate(_: str, c: str) -> str:
+            counts = stats["call"].get(c, {})
+            return _rate_cell(counts.get("called", 0), counts.get("offers", 0))
+
+        rows, cols = SHANTEN_BUCKETS[:-1], SHANTEN_BUCKETS
+        lines += [f"Route study — {side} ({labels.get(side, side)}): {stats['hands_recorded']} hands, "
+                  f"{stats['hands_without_deal']} without a deal, {stats['truncated_hands']} truncated",
+                  "Deal charts: rows = standard shanten at the deal, columns = Independence shanten "
+                  "('-' = called before the first discard)", ""]
+        lines += _grid("Won by Independence, % of hands (hands)", "std\\ind", rows, cols,
+                       deal_rate("win_independence"), _SHANTEN_LABELS, _SHANTEN_LABELS) + [""]
+        lines += _grid("Ended on the Independence route, % of hands (hands)", "std\\ind", rows, cols,
+                       deal_rate("end_independence"), _SHANTEN_LABELS, _SHANTEN_LABELS) + [""]
+        lines += _grid("Mean hand payout", "std\\ind", rows, cols, mean_payout,
+                       _SHANTEN_LABELS, _SHANTEN_LABELS) + [""]
+        lines += _grid("Forks: % choosing the Independence side (forks); rows = Independence minus "
+                       "standard shanten, columns = discard number", "gap", GAP_BUCKETS, TURN_BUCKETS,
+                       fork_rate, _GAP_LABELS, {}) + [""]
+        lines += _grid("Closed-hand chii/pon offers: % called (offers); columns = Independence shanten",
+                       "", ("called",), SHANTEN_BUCKETS[:-1], call_rate, {}, _SHANTEN_LABELS) + [""]
+    return "\n".join(lines).rstrip() + "\n"

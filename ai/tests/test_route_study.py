@@ -187,3 +187,28 @@ def test_merge_sums_nested_counts():
     assert merged["learner"]["deal"] == {"3": {"2": {"hands": 3, "payout_sum": 6}, "1": {"hands": 1}}}
     assert merged["learner"]["hands_recorded"] == 4
     assert merged["opponents"]["hands_recorded"] == 0
+
+from fh_mahjong_ai.route_study import format_route_study
+
+
+def test_format_route_study_renders_each_chart():
+    summary = new_route_study_summary()
+    learner = summary["learner"]
+    learner["hands_recorded"] = 4
+    learner["deal"] = {"3": {"1": {"hands": 4, "end_independence": 3, "win_independence": 2,
+                                   "payout_sum": 120}}}
+    learner["fork"] = {"-2": {"4-6": {"forks": 5, "independence": 4, "standard": 1}}}
+    learner["call"] = {"1": {"offers": 10, "called": 1}}
+    text = format_route_study(summary, {"learner": "ckpt/a.pt", "opponents": "ckpt/b.pt"})
+
+    assert "learner (ckpt/a.pt): 4 hands" in text
+    assert "opponents" not in text            # a side with no hands is skipped
+    assert "50.0% (4)" in text                # won by Independence: 2 of 4
+    assert "75.0% (4)" in text                # ended on Independence: 3 of 4
+    assert "+30.0" in text                    # mean payout 120 / 4
+    assert "80.0% (5)" in text                # fork: 4 of 5 on the Independence side
+    assert "10.0% (10)" in text               # call: 1 of 10 called
+    assert "6+" in text and "<=-3" in text and ">=+3" in text
+    # Gap labels apply to the fork chart only: shanten 3 stays "3" in the deal charts.
+    assert any(line.split()[:1] == ["3"] and "50.0% (4)" in line for line in text.splitlines())
+    assert all(">=+3" not in line for line in text.splitlines() if "50.0% (4)" in line)
