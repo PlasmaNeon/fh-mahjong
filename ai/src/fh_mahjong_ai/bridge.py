@@ -190,11 +190,21 @@ class FHBytesResult(ctypes.Structure):
     ]
 
 
+def _decode_route_shanten(routes: game_pb2.RouteShanten) -> dict[str, int]:
+    return {
+        "overall": int(routes.overall),
+        "standard": int(routes.standard),
+        "seven_pairs": int(routes.seven_pairs),
+        "independence": int(routes.independence),
+    }
+
+
 class CtypesGoBridge(MahjongBridge):
     """Go RL bridge loaded from the c-shared library via ctypes."""
 
     def __init__(self, config: EnvConfig) -> None:
         super().__init__(config)
+        self._route_probe_fn = None
         self._handle = 0
         self._library = ctypes.CDLL(str(resolve_bridge_library(config)))
         self._configure_signatures()
@@ -291,6 +301,32 @@ class CtypesGoBridge(MahjongBridge):
             self._call_bytes(self._library.FHEnvEvaluateBranches, self._handle, self._serialize(request))
         )
         return [self._decode_branch_result(result) for result in response.results]
+
+    def route_probe(self, seat: int) -> dict[str, object]:
+        """Route shanten of `seat` now and after each legal discard (FHEnvRouteProbe,
+        read-only). Bound on first use so a library built before the export still
+        loads for everything else."""
+        if self._route_probe_fn is None:
+            fn = getattr(self._library, "FHEnvRouteProbe", None)
+            if fn is None:
+                raise BridgeError("bridge library has no FHEnvRouteProbe; rebuild it from cmd/rlbridge")
+            fn.argtypes = [ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+            fn.restype = FHBytesResult
+            self._route_probe_fn = fn
+        request = game_pb2.RouteProbeRequest(seat=int(seat))
+        response = game_pb2.RouteProbe()
+        response.ParseFromString(self._call_bytes(self._route_probe_fn, self._handle, self._serialize(request)))
+        return {
+            "seat": int(response.seat),
+            "routes": _decode_route_shanten(response.routes),
+            "wild_count": int(response.wild_count),
+            "open_meld_count": int(response.open_meld_count),
+            "discards": [
+                {"action_id": int(d.action_id), "is_wild": bool(d.is_wild),
+                 "after": _decode_route_shanten(d.after)}
+                for d in response.discards
+            ],
+        }
 
     def _configure_signatures(self) -> None:
         self._library.FHEnvNew.argtypes = [ctypes.c_void_p, ctypes.c_int]

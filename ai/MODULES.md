@@ -23,7 +23,7 @@
 
 ### Bridge and environment
 
-- **bridge.py** — Abstract bridge contract, mock bridge, and `CtypesGoBridge` implementation for the Go RL library.
+- **bridge.py** — Abstract bridge contract, mock bridge, and `CtypesGoBridge` implementation for the Go RL library. `CtypesGoBridge.route_probe(seat)` decodes `FHEnvRouteProbe` (route shanten now and per legal discard; bound lazily so an older library still loads).
   - `MockMahjongBridge` retains the last emitted observation so `step()` validates actions against the real current legal-action mask instead of sampling a fresh one. It remains available for smoke tests, but `bridge_kind="go"` is the default for real work.
   - Bridges preserve `last_reset_result` so evaluation can count rounds that terminate during reset before the learning seat receives a decision.
   - `evaluate_branches()` asks the Go bridge to clone the current simulator state, apply candidate action ids, and finish each branch with deterministic heuristics; use this for exact same-state counterfactual label generation.
