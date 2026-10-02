@@ -374,6 +374,26 @@ func TestDirectKong_BuddingPersistsAcrossDiscard(t *testing.T) {
 	}
 }
 
+func TestPrevailingWindIsEastEveryHand(t *testing.T) {
+	modes := map[string]engine.MatchOptions{
+		"classic": {},
+		"chongci": {Mode: pb.MatchMode_MATCH_MODE_CHONGCI,
+			ChongciConfig: &pb.ChongciConfig{StartingScore: 2000, MaxHands: 50}},
+	}
+	for name, opts := range modes {
+		g := engine.NewGame("test-prevailing-"+name, &rules.FenghuaRuleset{}, opts)
+		if err := g.Start(); err != nil {
+			t.Fatalf("%s: Start failed: %v", name, err)
+		}
+		for hand := 1; hand <= 5; hand++ {
+			if g.State.PrevailingWind != 1 {
+				t.Fatalf("%s hand %d: PrevailingWind = %d, want 1 (East)", name, hand, g.State.PrevailingWind)
+			}
+			g.DealForNextHand()
+		}
+	}
+}
+
 func TestSetNextDealer_ConsumedOnce(t *testing.T) {
 	r := &rules.FenghuaRuleset{}
 	g := engine.NewGame("test-override", r, engine.MatchOptions{})

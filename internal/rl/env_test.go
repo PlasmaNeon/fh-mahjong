@@ -158,6 +158,26 @@ func TestObservationIncludesVisibleLookaheadScalars(t *testing.T) {
 	}
 }
 
+func TestObservationPrevailingWindIsRelativeToEast(t *testing.T) {
+	config := &pb.EnvConfig{LearningSeats: []uint32{0, 1, 2, 3}, MaxDecisions: 128}
+	env := New(config)
+	if _, err := env.Reset(&pb.EnvResetRequest{Seed: 43, Config: config}); err != nil {
+		t.Fatalf("reset failed: %v", err)
+	}
+	// East encodes as 0, the value every checkpoint was trained on while the
+	// engine left the prevailing wind unset.
+	for wind, want := range map[uint32]float32{0: 0, 1: 0, 2: 0.25, 4: 0.75} {
+		env.game.State.PrevailingWind = wind
+		observation, err := encodeObservation(env.game.State, 0, 0, false, nil, 0)
+		if err != nil {
+			t.Fatalf("encode observation failed: %v", err)
+		}
+		if got := observation.Scalars[1]; got != want {
+			t.Fatalf("prevailing wind %d: scalar 1 = %v, want %v", wind, got, want)
+		}
+	}
+}
+
 func TestObservationIncludesChongciMatchContextScalars(t *testing.T) {
 	config := &pb.EnvConfig{
 		LearningSeats:      []uint32{0, 1, 2, 3},

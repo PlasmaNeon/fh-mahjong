@@ -87,6 +87,7 @@ Fenghua Mahjong perfectly simulates a physical, two-tiered Mahjong wall. The sta
 - **Pung of Seat Wind (位风)**: +1.
 - **Pung of Prevailing Wind (圈风)**: +1.
 - **Pung of Right Wind (正风)**: +2 (When seat wind and prevailing wind coincide).
+- Seat winds follow turn order from the dealer: dealer East, next South, then West, then North. The prevailing wind is East for every hand (a chongci match is played entirely in the East round), so an East pung scores Right Wind (+2) for the dealer and Prevailing Wind (+1) for anyone else.
 
 ### Wait Pattern Bonuses
 - **Single Call (边，嵌，单吊)**: +1 (Gap, edge, or single eye wait).
