@@ -7431,6 +7431,1068 @@ export const game = $root.game = (() => {
         return BranchEvaluationResponse;
     })();
 
+    game.RouteShanten = (function() {
+
+        /**
+         * Properties of a RouteShanten.
+         * @memberof game
+         * @interface IRouteShanten
+         * @property {number|undefined} [overall] RouteShanten overall
+         * @property {number|undefined} [standard] RouteShanten standard
+         * @property {number|undefined} [sevenPairs] RouteShanten sevenPairs
+         * @property {number|undefined} [independence] RouteShanten independence
+         */
+
+        /**
+         * Constructs a new RouteShanten.
+         * @memberof game
+         * @classdesc Represents a RouteShanten.
+         * @implements IRouteShanten
+         * @constructor
+         * @param {game.IRouteShanten=} [properties] Properties to set
+         */
+        function RouteShanten(properties) {
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * RouteShanten overall.
+         * @member {number} overall
+         * @memberof game.RouteShanten
+         * @instance
+         */
+        RouteShanten.prototype.overall = 0;
+
+        /**
+         * RouteShanten standard.
+         * @member {number} standard
+         * @memberof game.RouteShanten
+         * @instance
+         */
+        RouteShanten.prototype.standard = 0;
+
+        /**
+         * RouteShanten sevenPairs.
+         * @member {number} sevenPairs
+         * @memberof game.RouteShanten
+         * @instance
+         */
+        RouteShanten.prototype.sevenPairs = 0;
+
+        /**
+         * RouteShanten independence.
+         * @member {number} independence
+         * @memberof game.RouteShanten
+         * @instance
+         */
+        RouteShanten.prototype.independence = 0;
+
+        /**
+         * Creates a new RouteShanten instance using the specified properties.
+         * @function create
+         * @memberof game.RouteShanten
+         * @static
+         * @param {game.IRouteShanten=} [properties] Properties to set
+         * @returns {game.RouteShanten} RouteShanten instance
+         */
+        RouteShanten.create = function create(properties) {
+            return new RouteShanten(properties);
+        };
+
+        /**
+         * Encodes the specified RouteShanten message. Does not implicitly {@link game.RouteShanten.verify|verify} messages.
+         * @function encode
+         * @memberof game.RouteShanten
+         * @static
+         * @param {game.IRouteShanten} message RouteShanten message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        RouteShanten.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.overall != null && Object.hasOwnProperty.call(message, "overall"))
+                writer.uint32(/* id 1, wireType 0 =*/8).int32(message.overall);
+            if (message.standard != null && Object.hasOwnProperty.call(message, "standard"))
+                writer.uint32(/* id 2, wireType 0 =*/16).int32(message.standard);
+            if (message.sevenPairs != null && Object.hasOwnProperty.call(message, "sevenPairs"))
+                writer.uint32(/* id 3, wireType 0 =*/24).int32(message.sevenPairs);
+            if (message.independence != null && Object.hasOwnProperty.call(message, "independence"))
+                writer.uint32(/* id 4, wireType 0 =*/32).int32(message.independence);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified RouteShanten message, length delimited. Does not implicitly {@link game.RouteShanten.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.RouteShanten
+         * @static
+         * @param {game.IRouteShanten} message RouteShanten message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        RouteShanten.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a RouteShanten message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.RouteShanten
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.RouteShanten} RouteShanten
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        RouteShanten.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.RouteShanten();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.overall = reader.int32();
+                        break;
+                    }
+                case 2: {
+                        message.standard = reader.int32();
+                        break;
+                    }
+                case 3: {
+                        message.sevenPairs = reader.int32();
+                        break;
+                    }
+                case 4: {
+                        message.independence = reader.int32();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a RouteShanten message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.RouteShanten
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.RouteShanten} RouteShanten
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        RouteShanten.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a RouteShanten message.
+         * @function verify
+         * @memberof game.RouteShanten
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        RouteShanten.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.overall != null && message.hasOwnProperty("overall"))
+                if (!$util.isInteger(message.overall))
+                    return "overall: integer expected";
+            if (message.standard != null && message.hasOwnProperty("standard"))
+                if (!$util.isInteger(message.standard))
+                    return "standard: integer expected";
+            if (message.sevenPairs != null && message.hasOwnProperty("sevenPairs"))
+                if (!$util.isInteger(message.sevenPairs))
+                    return "sevenPairs: integer expected";
+            if (message.independence != null && message.hasOwnProperty("independence"))
+                if (!$util.isInteger(message.independence))
+                    return "independence: integer expected";
+            return null;
+        };
+
+        /**
+         * Creates a RouteShanten message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.RouteShanten
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.RouteShanten} RouteShanten
+         */
+        RouteShanten.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.RouteShanten)
+                return object;
+            let message = new $root.game.RouteShanten();
+            if (object.overall != null)
+                message.overall = object.overall | 0;
+            if (object.standard != null)
+                message.standard = object.standard | 0;
+            if (object.sevenPairs != null)
+                message.sevenPairs = object.sevenPairs | 0;
+            if (object.independence != null)
+                message.independence = object.independence | 0;
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a RouteShanten message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.RouteShanten
+         * @static
+         * @param {game.RouteShanten} message RouteShanten
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        RouteShanten.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.defaults) {
+                object.overall = 0;
+                object.standard = 0;
+                object.sevenPairs = 0;
+                object.independence = 0;
+            }
+            if (message.overall != null && message.hasOwnProperty("overall"))
+                object.overall = message.overall;
+            if (message.standard != null && message.hasOwnProperty("standard"))
+                object.standard = message.standard;
+            if (message.sevenPairs != null && message.hasOwnProperty("sevenPairs"))
+                object.sevenPairs = message.sevenPairs;
+            if (message.independence != null && message.hasOwnProperty("independence"))
+                object.independence = message.independence;
+            return object;
+        };
+
+        /**
+         * Converts this RouteShanten to JSON.
+         * @function toJSON
+         * @memberof game.RouteShanten
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        RouteShanten.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for RouteShanten
+         * @function getTypeUrl
+         * @memberof game.RouteShanten
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        RouteShanten.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.RouteShanten";
+        };
+
+        return RouteShanten;
+    })();
+
+    game.DiscardRoute = (function() {
+
+        /**
+         * Properties of a DiscardRoute.
+         * @memberof game
+         * @interface IDiscardRoute
+         * @property {number|undefined} [actionId] DiscardRoute actionId
+         * @property {game.IRouteShanten|undefined} [after] DiscardRoute after
+         * @property {boolean|undefined} [isWild] DiscardRoute isWild
+         */
+
+        /**
+         * Constructs a new DiscardRoute.
+         * @memberof game
+         * @classdesc Represents a DiscardRoute.
+         * @implements IDiscardRoute
+         * @constructor
+         * @param {game.IDiscardRoute=} [properties] Properties to set
+         */
+        function DiscardRoute(properties) {
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * DiscardRoute actionId.
+         * @member {number} actionId
+         * @memberof game.DiscardRoute
+         * @instance
+         */
+        DiscardRoute.prototype.actionId = 0;
+
+        /**
+         * DiscardRoute after.
+         * @member {game.RouteShanten} after
+         * @memberof game.DiscardRoute
+         * @instance
+         */
+        DiscardRoute.prototype.after = null;
+
+        /**
+         * DiscardRoute isWild.
+         * @member {boolean} isWild
+         * @memberof game.DiscardRoute
+         * @instance
+         */
+        DiscardRoute.prototype.isWild = false;
+
+        /**
+         * Creates a new DiscardRoute instance using the specified properties.
+         * @function create
+         * @memberof game.DiscardRoute
+         * @static
+         * @param {game.IDiscardRoute=} [properties] Properties to set
+         * @returns {game.DiscardRoute} DiscardRoute instance
+         */
+        DiscardRoute.create = function create(properties) {
+            return new DiscardRoute(properties);
+        };
+
+        /**
+         * Encodes the specified DiscardRoute message. Does not implicitly {@link game.DiscardRoute.verify|verify} messages.
+         * @function encode
+         * @memberof game.DiscardRoute
+         * @static
+         * @param {game.IDiscardRoute} message DiscardRoute message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        DiscardRoute.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.actionId != null && Object.hasOwnProperty.call(message, "actionId"))
+                writer.uint32(/* id 1, wireType 0 =*/8).uint32(message.actionId);
+            if (message.after != null && Object.hasOwnProperty.call(message, "after"))
+                $root.game.RouteShanten.encode(message.after, writer.uint32(/* id 2, wireType 2 =*/18).fork()).ldelim();
+            if (message.isWild != null && Object.hasOwnProperty.call(message, "isWild"))
+                writer.uint32(/* id 3, wireType 0 =*/24).bool(message.isWild);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified DiscardRoute message, length delimited. Does not implicitly {@link game.DiscardRoute.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.DiscardRoute
+         * @static
+         * @param {game.IDiscardRoute} message DiscardRoute message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        DiscardRoute.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a DiscardRoute message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.DiscardRoute
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.DiscardRoute} DiscardRoute
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        DiscardRoute.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.DiscardRoute();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.actionId = reader.uint32();
+                        break;
+                    }
+                case 2: {
+                        message.after = $root.game.RouteShanten.decode(reader, reader.uint32());
+                        break;
+                    }
+                case 3: {
+                        message.isWild = reader.bool();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a DiscardRoute message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.DiscardRoute
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.DiscardRoute} DiscardRoute
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        DiscardRoute.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a DiscardRoute message.
+         * @function verify
+         * @memberof game.DiscardRoute
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        DiscardRoute.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.actionId != null && message.hasOwnProperty("actionId"))
+                if (!$util.isInteger(message.actionId))
+                    return "actionId: integer expected";
+            if (message.after != null && message.hasOwnProperty("after")) {
+                let error = $root.game.RouteShanten.verify(message.after);
+                if (error)
+                    return "after." + error;
+            }
+            if (message.isWild != null && message.hasOwnProperty("isWild"))
+                if (typeof message.isWild !== "boolean")
+                    return "isWild: boolean expected";
+            return null;
+        };
+
+        /**
+         * Creates a DiscardRoute message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.DiscardRoute
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.DiscardRoute} DiscardRoute
+         */
+        DiscardRoute.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.DiscardRoute)
+                return object;
+            let message = new $root.game.DiscardRoute();
+            if (object.actionId != null)
+                message.actionId = object.actionId >>> 0;
+            if (object.after != null) {
+                if (typeof object.after !== "object")
+                    throw TypeError(".game.DiscardRoute.after: object expected");
+                message.after = $root.game.RouteShanten.fromObject(object.after);
+            }
+            if (object.isWild != null)
+                message.isWild = Boolean(object.isWild);
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a DiscardRoute message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.DiscardRoute
+         * @static
+         * @param {game.DiscardRoute} message DiscardRoute
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        DiscardRoute.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.defaults) {
+                object.actionId = 0;
+                object.after = null;
+                object.isWild = false;
+            }
+            if (message.actionId != null && message.hasOwnProperty("actionId"))
+                object.actionId = message.actionId;
+            if (message.after != null && message.hasOwnProperty("after"))
+                object.after = $root.game.RouteShanten.toObject(message.after, options);
+            if (message.isWild != null && message.hasOwnProperty("isWild"))
+                object.isWild = message.isWild;
+            return object;
+        };
+
+        /**
+         * Converts this DiscardRoute to JSON.
+         * @function toJSON
+         * @memberof game.DiscardRoute
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        DiscardRoute.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for DiscardRoute
+         * @function getTypeUrl
+         * @memberof game.DiscardRoute
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        DiscardRoute.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.DiscardRoute";
+        };
+
+        return DiscardRoute;
+    })();
+
+    game.RouteProbeRequest = (function() {
+
+        /**
+         * Properties of a RouteProbeRequest.
+         * @memberof game
+         * @interface IRouteProbeRequest
+         * @property {number|undefined} [seat] RouteProbeRequest seat
+         */
+
+        /**
+         * Constructs a new RouteProbeRequest.
+         * @memberof game
+         * @classdesc Represents a RouteProbeRequest.
+         * @implements IRouteProbeRequest
+         * @constructor
+         * @param {game.IRouteProbeRequest=} [properties] Properties to set
+         */
+        function RouteProbeRequest(properties) {
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * RouteProbeRequest seat.
+         * @member {number} seat
+         * @memberof game.RouteProbeRequest
+         * @instance
+         */
+        RouteProbeRequest.prototype.seat = 0;
+
+        /**
+         * Creates a new RouteProbeRequest instance using the specified properties.
+         * @function create
+         * @memberof game.RouteProbeRequest
+         * @static
+         * @param {game.IRouteProbeRequest=} [properties] Properties to set
+         * @returns {game.RouteProbeRequest} RouteProbeRequest instance
+         */
+        RouteProbeRequest.create = function create(properties) {
+            return new RouteProbeRequest(properties);
+        };
+
+        /**
+         * Encodes the specified RouteProbeRequest message. Does not implicitly {@link game.RouteProbeRequest.verify|verify} messages.
+         * @function encode
+         * @memberof game.RouteProbeRequest
+         * @static
+         * @param {game.IRouteProbeRequest} message RouteProbeRequest message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        RouteProbeRequest.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.seat != null && Object.hasOwnProperty.call(message, "seat"))
+                writer.uint32(/* id 1, wireType 0 =*/8).uint32(message.seat);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified RouteProbeRequest message, length delimited. Does not implicitly {@link game.RouteProbeRequest.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.RouteProbeRequest
+         * @static
+         * @param {game.IRouteProbeRequest} message RouteProbeRequest message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        RouteProbeRequest.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a RouteProbeRequest message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.RouteProbeRequest
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.RouteProbeRequest} RouteProbeRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        RouteProbeRequest.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.RouteProbeRequest();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.seat = reader.uint32();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a RouteProbeRequest message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.RouteProbeRequest
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.RouteProbeRequest} RouteProbeRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        RouteProbeRequest.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a RouteProbeRequest message.
+         * @function verify
+         * @memberof game.RouteProbeRequest
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        RouteProbeRequest.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.seat != null && message.hasOwnProperty("seat"))
+                if (!$util.isInteger(message.seat))
+                    return "seat: integer expected";
+            return null;
+        };
+
+        /**
+         * Creates a RouteProbeRequest message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.RouteProbeRequest
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.RouteProbeRequest} RouteProbeRequest
+         */
+        RouteProbeRequest.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.RouteProbeRequest)
+                return object;
+            let message = new $root.game.RouteProbeRequest();
+            if (object.seat != null)
+                message.seat = object.seat >>> 0;
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a RouteProbeRequest message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.RouteProbeRequest
+         * @static
+         * @param {game.RouteProbeRequest} message RouteProbeRequest
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        RouteProbeRequest.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.defaults)
+                object.seat = 0;
+            if (message.seat != null && message.hasOwnProperty("seat"))
+                object.seat = message.seat;
+            return object;
+        };
+
+        /**
+         * Converts this RouteProbeRequest to JSON.
+         * @function toJSON
+         * @memberof game.RouteProbeRequest
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        RouteProbeRequest.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for RouteProbeRequest
+         * @function getTypeUrl
+         * @memberof game.RouteProbeRequest
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        RouteProbeRequest.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.RouteProbeRequest";
+        };
+
+        return RouteProbeRequest;
+    })();
+
+    game.RouteProbe = (function() {
+
+        /**
+         * Properties of a RouteProbe.
+         * @memberof game
+         * @interface IRouteProbe
+         * @property {number|undefined} [seat] RouteProbe seat
+         * @property {game.IRouteShanten|undefined} [routes] RouteProbe routes
+         * @property {Array.<game.IDiscardRoute>|undefined} [discards] RouteProbe discards
+         * @property {number|undefined} [wildCount] RouteProbe wildCount
+         * @property {number|undefined} [openMeldCount] RouteProbe openMeldCount
+         */
+
+        /**
+         * Constructs a new RouteProbe.
+         * @memberof game
+         * @classdesc Represents a RouteProbe.
+         * @implements IRouteProbe
+         * @constructor
+         * @param {game.IRouteProbe=} [properties] Properties to set
+         */
+        function RouteProbe(properties) {
+            this.discards = [];
+            if (properties)
+                for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
+                    if (properties[keys[i]] != null)
+                        this[keys[i]] = properties[keys[i]];
+        }
+
+        /**
+         * RouteProbe seat.
+         * @member {number} seat
+         * @memberof game.RouteProbe
+         * @instance
+         */
+        RouteProbe.prototype.seat = 0;
+
+        /**
+         * RouteProbe routes.
+         * @member {game.RouteShanten} routes
+         * @memberof game.RouteProbe
+         * @instance
+         */
+        RouteProbe.prototype.routes = null;
+
+        /**
+         * RouteProbe discards.
+         * @member {Array.<game.DiscardRoute>} discards
+         * @memberof game.RouteProbe
+         * @instance
+         */
+        RouteProbe.prototype.discards = $util.emptyArray;
+
+        /**
+         * RouteProbe wildCount.
+         * @member {number} wildCount
+         * @memberof game.RouteProbe
+         * @instance
+         */
+        RouteProbe.prototype.wildCount = 0;
+
+        /**
+         * RouteProbe openMeldCount.
+         * @member {number} openMeldCount
+         * @memberof game.RouteProbe
+         * @instance
+         */
+        RouteProbe.prototype.openMeldCount = 0;
+
+        /**
+         * Creates a new RouteProbe instance using the specified properties.
+         * @function create
+         * @memberof game.RouteProbe
+         * @static
+         * @param {game.IRouteProbe=} [properties] Properties to set
+         * @returns {game.RouteProbe} RouteProbe instance
+         */
+        RouteProbe.create = function create(properties) {
+            return new RouteProbe(properties);
+        };
+
+        /**
+         * Encodes the specified RouteProbe message. Does not implicitly {@link game.RouteProbe.verify|verify} messages.
+         * @function encode
+         * @memberof game.RouteProbe
+         * @static
+         * @param {game.IRouteProbe} message RouteProbe message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        RouteProbe.encode = function encode(message, writer) {
+            if (!writer)
+                writer = $Writer.create();
+            if (message.seat != null && Object.hasOwnProperty.call(message, "seat"))
+                writer.uint32(/* id 1, wireType 0 =*/8).uint32(message.seat);
+            if (message.routes != null && Object.hasOwnProperty.call(message, "routes"))
+                $root.game.RouteShanten.encode(message.routes, writer.uint32(/* id 2, wireType 2 =*/18).fork()).ldelim();
+            if (message.discards != null && message.discards.length)
+                for (let i = 0; i < message.discards.length; ++i)
+                    $root.game.DiscardRoute.encode(message.discards[i], writer.uint32(/* id 3, wireType 2 =*/26).fork()).ldelim();
+            if (message.wildCount != null && Object.hasOwnProperty.call(message, "wildCount"))
+                writer.uint32(/* id 4, wireType 0 =*/32).uint32(message.wildCount);
+            if (message.openMeldCount != null && Object.hasOwnProperty.call(message, "openMeldCount"))
+                writer.uint32(/* id 5, wireType 0 =*/40).uint32(message.openMeldCount);
+            return writer;
+        };
+
+        /**
+         * Encodes the specified RouteProbe message, length delimited. Does not implicitly {@link game.RouteProbe.verify|verify} messages.
+         * @function encodeDelimited
+         * @memberof game.RouteProbe
+         * @static
+         * @param {game.IRouteProbe} message RouteProbe message or plain object to encode
+         * @param {$protobuf.Writer} [writer] Writer to encode to
+         * @returns {$protobuf.Writer} Writer
+         */
+        RouteProbe.encodeDelimited = function encodeDelimited(message, writer) {
+            return this.encode(message, writer).ldelim();
+        };
+
+        /**
+         * Decodes a RouteProbe message from the specified reader or buffer.
+         * @function decode
+         * @memberof game.RouteProbe
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @param {number} [length] Message length if known beforehand
+         * @returns {game.RouteProbe} RouteProbe
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        RouteProbe.decode = function decode(reader, length, error) {
+            if (!(reader instanceof $Reader))
+                reader = $Reader.create(reader);
+            let end = length === undefined ? reader.len : reader.pos + length, message = new $root.game.RouteProbe();
+            while (reader.pos < end) {
+                let tag = reader.uint32();
+                if (tag === error)
+                    break;
+                switch (tag >>> 3) {
+                case 1: {
+                        message.seat = reader.uint32();
+                        break;
+                    }
+                case 2: {
+                        message.routes = $root.game.RouteShanten.decode(reader, reader.uint32());
+                        break;
+                    }
+                case 3: {
+                        if (!(message.discards && message.discards.length))
+                            message.discards = [];
+                        message.discards.push($root.game.DiscardRoute.decode(reader, reader.uint32()));
+                        break;
+                    }
+                case 4: {
+                        message.wildCount = reader.uint32();
+                        break;
+                    }
+                case 5: {
+                        message.openMeldCount = reader.uint32();
+                        break;
+                    }
+                default:
+                    reader.skipType(tag & 7);
+                    break;
+                }
+            }
+            return message;
+        };
+
+        /**
+         * Decodes a RouteProbe message from the specified reader or buffer, length delimited.
+         * @function decodeDelimited
+         * @memberof game.RouteProbe
+         * @static
+         * @param {$protobuf.Reader|Uint8Array} reader Reader or buffer to decode from
+         * @returns {game.RouteProbe} RouteProbe
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        RouteProbe.decodeDelimited = function decodeDelimited(reader) {
+            if (!(reader instanceof $Reader))
+                reader = new $Reader(reader);
+            return this.decode(reader, reader.uint32());
+        };
+
+        /**
+         * Verifies a RouteProbe message.
+         * @function verify
+         * @memberof game.RouteProbe
+         * @static
+         * @param {Object.<string,*>} message Plain object to verify
+         * @returns {string|null} `null` if valid, otherwise the reason why it is not
+         */
+        RouteProbe.verify = function verify(message) {
+            if (typeof message !== "object" || message === null)
+                return "object expected";
+            if (message.seat != null && message.hasOwnProperty("seat"))
+                if (!$util.isInteger(message.seat))
+                    return "seat: integer expected";
+            if (message.routes != null && message.hasOwnProperty("routes")) {
+                let error = $root.game.RouteShanten.verify(message.routes);
+                if (error)
+                    return "routes." + error;
+            }
+            if (message.discards != null && message.hasOwnProperty("discards")) {
+                if (!Array.isArray(message.discards))
+                    return "discards: array expected";
+                for (let i = 0; i < message.discards.length; ++i) {
+                    let error = $root.game.DiscardRoute.verify(message.discards[i]);
+                    if (error)
+                        return "discards." + error;
+                }
+            }
+            if (message.wildCount != null && message.hasOwnProperty("wildCount"))
+                if (!$util.isInteger(message.wildCount))
+                    return "wildCount: integer expected";
+            if (message.openMeldCount != null && message.hasOwnProperty("openMeldCount"))
+                if (!$util.isInteger(message.openMeldCount))
+                    return "openMeldCount: integer expected";
+            return null;
+        };
+
+        /**
+         * Creates a RouteProbe message from a plain object. Also converts values to their respective internal types.
+         * @function fromObject
+         * @memberof game.RouteProbe
+         * @static
+         * @param {Object.<string,*>} object Plain object
+         * @returns {game.RouteProbe} RouteProbe
+         */
+        RouteProbe.fromObject = function fromObject(object) {
+            if (object instanceof $root.game.RouteProbe)
+                return object;
+            let message = new $root.game.RouteProbe();
+            if (object.seat != null)
+                message.seat = object.seat >>> 0;
+            if (object.routes != null) {
+                if (typeof object.routes !== "object")
+                    throw TypeError(".game.RouteProbe.routes: object expected");
+                message.routes = $root.game.RouteShanten.fromObject(object.routes);
+            }
+            if (object.discards) {
+                if (!Array.isArray(object.discards))
+                    throw TypeError(".game.RouteProbe.discards: array expected");
+                message.discards = [];
+                for (let i = 0; i < object.discards.length; ++i) {
+                    if (typeof object.discards[i] !== "object")
+                        throw TypeError(".game.RouteProbe.discards: object expected");
+                    message.discards[i] = $root.game.DiscardRoute.fromObject(object.discards[i]);
+                }
+            }
+            if (object.wildCount != null)
+                message.wildCount = object.wildCount >>> 0;
+            if (object.openMeldCount != null)
+                message.openMeldCount = object.openMeldCount >>> 0;
+            return message;
+        };
+
+        /**
+         * Creates a plain object from a RouteProbe message. Also converts values to other types if specified.
+         * @function toObject
+         * @memberof game.RouteProbe
+         * @static
+         * @param {game.RouteProbe} message RouteProbe
+         * @param {$protobuf.IConversionOptions} [options] Conversion options
+         * @returns {Object.<string,*>} Plain object
+         */
+        RouteProbe.toObject = function toObject(message, options) {
+            if (!options)
+                options = {};
+            let object = {};
+            if (options.arrays || options.defaults)
+                object.discards = [];
+            if (options.defaults) {
+                object.seat = 0;
+                object.routes = null;
+                object.wildCount = 0;
+                object.openMeldCount = 0;
+            }
+            if (message.seat != null && message.hasOwnProperty("seat"))
+                object.seat = message.seat;
+            if (message.routes != null && message.hasOwnProperty("routes"))
+                object.routes = $root.game.RouteShanten.toObject(message.routes, options);
+            if (message.discards && message.discards.length) {
+                object.discards = [];
+                for (let j = 0; j < message.discards.length; ++j)
+                    object.discards[j] = $root.game.DiscardRoute.toObject(message.discards[j], options);
+            }
+            if (message.wildCount != null && message.hasOwnProperty("wildCount"))
+                object.wildCount = message.wildCount;
+            if (message.openMeldCount != null && message.hasOwnProperty("openMeldCount"))
+                object.openMeldCount = message.openMeldCount;
+            return object;
+        };
+
+        /**
+         * Converts this RouteProbe to JSON.
+         * @function toJSON
+         * @memberof game.RouteProbe
+         * @instance
+         * @returns {Object.<string,*>} JSON object
+         */
+        RouteProbe.prototype.toJSON = function toJSON() {
+            return this.constructor.toObject(this, $protobuf.util.toJSONOptions);
+        };
+
+        /**
+         * Gets the default type url for RouteProbe
+         * @function getTypeUrl
+         * @memberof game.RouteProbe
+         * @static
+         * @param {string} [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns {string} The default type url
+         */
+        RouteProbe.getTypeUrl = function getTypeUrl(typeUrlPrefix) {
+            if (typeUrlPrefix === undefined) {
+                typeUrlPrefix = "type.googleapis.com";
+            }
+            return typeUrlPrefix + "/game.RouteProbe";
+        };
+
+        return RouteProbe;
+    })();
+
     game.TrajectoryRequest = (function() {
 
         /**
