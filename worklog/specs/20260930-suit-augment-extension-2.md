@@ -33,3 +33,22 @@ Only `iter_300` is evaluated, through the batched evaluator (256 slots), on fres
 
 A pass makes `iter_300` (suit-averaged) the strongest policy. A fail keeps extension `iter_150`; the run is
 not extended, re-evaluated on another window, or reselected.
+
+## Outcome — 2026-10-01: FAIL
+
+Commit `25d4b103`, one bridge build (`7861d124…`); 300 iterations, exited cleanly (paused 01:22–09:00 PDT by
+SIGSTOP, which does not change the computation). Seeds 2,900,000–2,904,999 (5,000 × 4), batched evaluator
+(256 slots), all suit-averaged.
+
+| | mean placement | large-loss |
+|---|---|---|
+| `iter_300` | +0.4702 | 0.0487 |
+| extension `iter_150` | +0.4623 | 0.0499 |
+| `anchor075` | +0.4455 | 0.0476 |
+
+- **Primary:** `iter_300` − extension `iter_150` **+0.0079 ± 0.0106** (CI95 [−0.0027, +0.0185]): the lower
+  bound is below 0, so the lap fails.
+- Secondary: `iter_300` − `anchor075` +0.0247 ± 0.0109.
+
+Extension `iter_150` (`3fdfe246…`), played suit-averaged, stays the strongest policy. The gain per lap has
+shrunk (+0.0114 and +0.0159 per 150 iterations, then +0.0079 over 300): this recipe is near its plateau.
