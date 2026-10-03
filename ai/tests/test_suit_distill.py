@@ -13,7 +13,7 @@ from fh_mahjong_ai.batched_b2b import (
 )
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.ppo import PPOConfig, RolloutBatch
+from fh_mahjong_ai.ppo import PPOConfig, RolloutBatch, masked_distill_kl, ppo_update
 from fh_mahjong_ai.scripts.collect_bench import _digest_batch, _semantic_digest_batch
 from fh_mahjong_ai.suit_symmetry import (
     SUIT_PERMUTATIONS, average_view_log_probs, permute_rows, stack_views, suit_averaged_log_probs,
@@ -217,3 +217,87 @@ def test_teacher_rows_stay_aligned_under_pipelining_and_truncation():
     assert one.truncated_matches > 0
     assert len(one.teacher_logprobs) == len(one) and len(two.teacher_logprobs) == len(two)
     assert _digest_batch(SEED, MATCHES, one) == _digest_batch(SEED, MATCHES, two)
+
+
+def _update_batch(n=32, seed=0):
+    """A no-event, no-aux net and a batch whose old_logprobs are that net's own."""
+    torch.manual_seed(seed)
+    model = PolicyValueNet(EnvConfig(), small_model_config())
+    env = EnvConfig()
+    rng = np.random.default_rng(seed)
+    planes = rng.random((n, *env.plane_shape), dtype=np.float32)
+    scalars = rng.random((n, env.scalar_features), dtype=np.float32)
+    mask = (rng.random((n, env.action_space_size)) < 0.2).astype(np.int8)
+    mask[:, 5] = 1
+    with torch.no_grad():
+        logits, values = model(torch.from_numpy(planes), torch.from_numpy(scalars),
+                               torch.from_numpy(mask))
+    logp = torch.log_softmax(logits, dim=-1)
+    actions = np.array([rng.choice(np.flatnonzero(row)) for row in mask], dtype=np.int64)
+    batch = RolloutBatch(planes=planes, scalars=scalars, action_mask=mask, actions=actions,
+                         old_logprobs=logp[torch.arange(n), torch.from_numpy(actions)].numpy(),
+                         values=values.reshape(-1).numpy(), rewards=np.zeros(n, np.float32),
+                         dones=np.ones(n, np.float32))
+    return model, batch, logp.numpy()
+
+
+def _uniform_teacher(mask):
+    legal = mask > 0
+    teacher = np.full(mask.shape, np.finfo(np.float32).min, np.float32)
+    teacher[legal] = np.repeat(-np.log(legal.sum(axis=1)), legal.sum(axis=1)).astype(np.float32)
+    return teacher
+
+
+def _run(model, batch, coef=1.0, lr=0.0, transfer=False):
+    n = len(batch)
+    config = PPOConfig(device="cpu", collector="batched", suit_distill_coef=coef, ppo_epochs=1,
+                       minibatch_size=n, entropy_coef=0.0, minibatch_device_transfer=transfer)
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+    return ppo_update(model, optimizer, batch, np.zeros(n, np.float32), np.zeros(n, np.float32),
+                      config)
+
+
+def test_masked_distill_kl_matches_the_definition_and_has_finite_gradients():
+    mask = torch.tensor([[1, 1, 0, 1], [0, 1, 1, 0]], dtype=torch.int8)
+    logits = torch.randn(2, 4).masked_fill(mask == 0, torch.finfo(torch.float32).min)
+    logits.requires_grad_(True)
+    teacher = torch.tensor([[-1.0, -1.5, torch.finfo(torch.float32).min, -0.9],
+                            [torch.finfo(torch.float32).min, -0.2, -1.7,
+                             torch.finfo(torch.float32).min]])
+    kl = masked_distill_kl(logits, teacher, mask)
+    log_pi = torch.log_softmax(logits.detach(), dim=-1)
+    for r in range(2):
+        legal = mask[r] > 0
+        want = (teacher[r][legal].exp() * (teacher[r][legal] - log_pi[r][legal])).sum()
+        assert torch.allclose(kl[r], want, atol=1e-6)
+    kl.sum().backward()
+    assert torch.isfinite(logits.grad).all()
+
+
+@pytest.mark.parametrize("transfer", [False, True])
+def test_kl_is_zero_when_the_teacher_is_the_policy(transfer):
+    model, batch, logp = _update_batch()
+    teacher = np.where(batch.action_mask > 0, logp, np.finfo(np.float32).min).astype(np.float32)
+    metrics = _run(model, replace(batch, teacher_logprobs=teacher), transfer=transfer)
+    assert abs(metrics["distill_kl"]) < 1e-6
+
+
+@pytest.mark.parametrize("transfer", [False, True])
+def test_kl_is_positive_otherwise_and_a_step_lowers_it(transfer):
+    model, batch, _ = _update_batch()
+    batch = replace(batch, teacher_logprobs=_uniform_teacher(batch.action_mask))
+    first = _run(model, batch, coef=10.0, lr=0.5, transfer=transfer)["distill_kl"]
+    second = _run(model, batch, coef=10.0, lr=0.5, transfer=transfer)["distill_kl"]
+    assert first > 0
+    assert second < first
+
+
+def test_a_distilling_update_refuses_a_batch_without_teacher_rows():
+    model, batch, _ = _update_batch()
+    with pytest.raises(ValueError, match="teacher_logprobs"):
+        _run(model, batch)
+
+
+def test_coefficient_zero_reports_no_distill_metric():
+    model, batch, _ = _update_batch()
+    assert "distill_kl" not in _run(model, batch, coef=0.0)

@@ -2187,9 +2187,11 @@ def train_b2b(env_config: EnvConfig, model_config: ModelConfig, champion_checkpo
                 # instead of silently mixing unrelated runs. Use
                 # `read_b2b_history_rows` to read this file back.
                 _write_history_atomic(checkpoint_dir / "history.json", {"run_id": run_id, "rows": history})
+                distill_note = (f" distill_kl={metrics['distill_kl']:.4f}"
+                                if "distill_kl" in metrics else "")
                 print(f"iter {iteration}: policy_loss={metrics['policy_loss']:.4f} "
                       f"value_loss={metrics['value_loss']:.4f} entropy={metrics['entropy']:.4f} "
-                      f"mean_reward={metrics['mean_reward']:.4f}")
+                      f"mean_reward={metrics['mean_reward']:.4f}{distill_note}")
                 is_last_iteration = iteration == config.iterations
                 if train_state_every > 0 and (iteration % train_state_every == 0 or is_last_iteration):
                     train_state._save_train_state(

@@ -357,6 +357,18 @@ def compute_gae(
     return advantages, returns
 
 
+def masked_distill_kl(masked_logits: torch.Tensor, teacher: torch.Tensor,
+                      action_mask: torch.Tensor) -> torch.Tensor:
+    """Per-row KL(teacher || softmax(masked_logits)) over legal actions. `teacher` holds
+    log-probabilities; its illegal entries may hold anything (float32's finite minimum in a
+    batch). Both selections are torch.where, so no inf or NaN reaches the result or its
+    gradient, and nothing syncs the host (CUDA-graph safe)."""
+    legal = action_mask > 0
+    zeros = torch.zeros_like(teacher)
+    gap = torch.where(legal, teacher - torch.log_softmax(masked_logits, dim=-1), zeros)
+    return (torch.where(legal, teacher.exp(), zeros) * gap).sum(dim=-1)
+
+
 def ppo_update(
     model,
     optimizer,
@@ -428,6 +440,16 @@ def _ppo_update(model, optimizer, batch: RolloutBatch, advantages: np.ndarray,
             events_np = np.asarray(batch.events)
         else:
             events_t = torch.from_numpy(np.asarray(batch.events, dtype=np.int64)).to(device)
+    distill = config.suit_distill_coef > 0
+    teacher_t = teacher_h = None
+    if distill:
+        if batch.teacher_logprobs is None:
+            raise ValueError("suit_distill_coef > 0 but the batch carries no teacher_logprobs")
+        teacher_np = np.asarray(batch.teacher_logprobs, dtype=np.float32)
+        if host_transfer:
+            teacher_h = torch.from_numpy(teacher_np)
+        else:
+            teacher_t = torch.from_numpy(teacher_np).to(device)
     memprobe.probe("ppo_tensors_ready", rows=int(n), device=str(device),
                    host_transfer=host_transfer)
 
@@ -444,7 +466,8 @@ def _ppo_update(model, optimizer, batch: RolloutBatch, advantages: np.ndarray,
             )
         if not host_transfer:
             belief_target = (planes[:, 39:51] > 0).float().squeeze(-1)
-    metric_names = list(_PPO_METRICS) + (list(_AUX_METRICS) if has_aux else [])
+    metric_names = (list(_PPO_METRICS) + (list(_AUX_METRICS) if has_aux else [])
+                    + (["distill_kl"] if distill else []))
 
     def step_losses(mb: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """Loss and the [len(metric_names)] metric vector for one minibatch.
@@ -488,6 +511,10 @@ def _ppo_update(model, optimizer, batch: RolloutBatch, advantages: np.ndarray,
                          / labelled.sum().clamp(min=1).to(rank_ce.dtype))
             loss = loss + AUX_LOSS_WEIGHT * (belief_loss + dealin_loss + rank_loss)
             metrics += [belief_loss, dealin_loss, rank_loss]
+        if distill:
+            distill_kl = masked_distill_kl(masked_logits, mb["teacher"], mb["mask"]).mean()
+            loss = loss + config.suit_distill_coef * distill_kl
+            metrics.append(distill_kl)
         return loss, torch.stack([m.detach() for m in metrics])
 
     # Telemetry is aggregated over ALL minibatches (row-weighted, so the
@@ -542,6 +569,9 @@ def _ppo_update(model, optimizer, batch: RolloutBatch, advantages: np.ndarray,
                                 else (mb["planes"][:, 39:51] > 0).float().squeeze(-1))
                 mb["dealin"] = dealin_t[idx]
                 mb["rank"] = rank_t[idx]
+            if distill:
+                mb["teacher"] = (teacher_h.index_select(0, idx_h).to(device) if host_transfer
+                                 else teacher_t[idx])
             mb_rows = int(idx.shape[0])
             if use_graph and mb_rows == config.minibatch_size:
                 if graphed_step is None:
