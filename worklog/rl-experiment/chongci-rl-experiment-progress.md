@@ -1082,6 +1082,36 @@ Interpretation: against anchor075 the edge is win frequency (+2.3pp per hand), w
                 Independence (50 pts) is in about half of all wins for every policy at these
                 tables. Descriptive yardstick on a reused window, not a gate.
 
+### 2026-10-02 — route study: when the AI goes Independence
+
+Setup:          `fh-mj-benchmark --route-study` (PR #268), same table and seeds as the 2026-10-01
+                anchor075 entry; game outcomes identical to it (the probe is read-only). Records:
+                `~/fh-mahjong-models/benchmarks/saug-ext-iter150-suits-vs-anchor075-1600m-routes.*`
+                (294,240 hand, 1,098,097 fork, 357,229 call). I = Independence shanten, S = standard
+                shanten. A fork is a closed-hand discard where no tile is best for both routes.
+
+Fork choice, % taking the Independence side, discards 1–6, current best / anchor075
+(I ≤ 2: ≥ 99% for both; I = 6: ≤ 3.4%):
+
+| I \ S | 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| 3 | 71 / 86 (n 48 / 103) | 90 / 93 | 97 / 97 | 99 / 99 |
+| 4 | 14 / 31 | 40 / 59 | 68 / 80 | 80 / 89 |
+| 5 | 2 / 3 | 5 / 11 | 10 / 28 | — |
+
+| Other measures (current best) | |
+|---|---|
+| rule "Independence iff I ≤ S + 1": agreement with fork choices | 96.3% (89.6% where I is 3–5) |
+| closed-hand chii/pon offers called, I ≤ 3 / I = 4 / I = 5 / I ≥ 6 | 0–0.2% / 4% / 47% / 65% |
+| hands ending on the Independence route, by I − S at the deal: ≤ −1 / 0 / +1 / +2 / ≥ +3 | 95–100% / 72% / 45% / 12% / ≤ 3% |
+| win payout, Independence vs standard: median / mean | 216 vs 24 / 279 vs 166 |
+
+Interpretation: Independence shanten decides the route more than the gap does. I ≤ 3: go
+                Independence and never call. I = 4: Independence when the standard hand is 3+
+                shanten, standard when it is 1–2. I ≥ 5: standard. Current best is stricter than
+                anchor075 at I = 4–5, matching its higher win frequency. Descriptive: choices, not
+                EV; all-bot table; fork counts are per decision, correlated within a hand.
+
 ## Maintenance Protocol
 
 Record a lap twice: a pre-registration entry before any training compute is spent, and an

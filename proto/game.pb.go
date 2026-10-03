@@ -2066,6 +2066,257 @@ func (x *BranchEvaluationResponse) GetResults() []*BranchEvaluationResult {
 	return nil
 }
 
+// Route study (worklog/specs/20261002-route-study-design.md): a seat's shanten
+// per hand route, read from the live env without changing it. 99 = route
+// unavailable (the seat has an open meld).
+type RouteShanten struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Overall       int32                  `protobuf:"varint,1,opt,name=overall,proto3" json:"overall,omitempty"`
+	Standard      int32                  `protobuf:"varint,2,opt,name=standard,proto3" json:"standard,omitempty"`
+	SevenPairs    int32                  `protobuf:"varint,3,opt,name=seven_pairs,json=sevenPairs,proto3" json:"seven_pairs,omitempty"`
+	Independence  int32                  `protobuf:"varint,4,opt,name=independence,proto3" json:"independence,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RouteShanten) Reset() {
+	*x = RouteShanten{}
+	mi := &file_proto_game_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RouteShanten) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RouteShanten) ProtoMessage() {}
+
+func (x *RouteShanten) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RouteShanten.ProtoReflect.Descriptor instead.
+func (*RouteShanten) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *RouteShanten) GetOverall() int32 {
+	if x != nil {
+		return x.Overall
+	}
+	return 0
+}
+
+func (x *RouteShanten) GetStandard() int32 {
+	if x != nil {
+		return x.Standard
+	}
+	return 0
+}
+
+func (x *RouteShanten) GetSevenPairs() int32 {
+	if x != nil {
+		return x.SevenPairs
+	}
+	return 0
+}
+
+func (x *RouteShanten) GetIndependence() int32 {
+	if x != nil {
+		return x.Independence
+	}
+	return 0
+}
+
+type DiscardRoute struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ActionId      uint32                 `protobuf:"varint,1,opt,name=action_id,json=actionId,proto3" json:"action_id,omitempty"` // DISCARD_BASE + 42-face index
+	After         *RouteShanten          `protobuf:"bytes,2,opt,name=after,proto3" json:"after,omitempty"`                        // route shanten of the 13 tiles left
+	IsWild        bool                   `protobuf:"varint,3,opt,name=is_wild,json=isWild,proto3" json:"is_wild,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DiscardRoute) Reset() {
+	*x = DiscardRoute{}
+	mi := &file_proto_game_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DiscardRoute) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DiscardRoute) ProtoMessage() {}
+
+func (x *DiscardRoute) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DiscardRoute.ProtoReflect.Descriptor instead.
+func (*DiscardRoute) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *DiscardRoute) GetActionId() uint32 {
+	if x != nil {
+		return x.ActionId
+	}
+	return 0
+}
+
+func (x *DiscardRoute) GetAfter() *RouteShanten {
+	if x != nil {
+		return x.After
+	}
+	return nil
+}
+
+func (x *DiscardRoute) GetIsWild() bool {
+	if x != nil {
+		return x.IsWild
+	}
+	return false
+}
+
+type RouteProbeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Seat          uint32                 `protobuf:"varint,1,opt,name=seat,proto3" json:"seat,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RouteProbeRequest) Reset() {
+	*x = RouteProbeRequest{}
+	mi := &file_proto_game_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RouteProbeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RouteProbeRequest) ProtoMessage() {}
+
+func (x *RouteProbeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RouteProbeRequest.ProtoReflect.Descriptor instead.
+func (*RouteProbeRequest) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *RouteProbeRequest) GetSeat() uint32 {
+	if x != nil {
+		return x.Seat
+	}
+	return 0
+}
+
+type RouteProbe struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Seat          uint32                 `protobuf:"varint,1,opt,name=seat,proto3" json:"seat,omitempty"`
+	Routes        *RouteShanten          `protobuf:"bytes,2,opt,name=routes,proto3" json:"routes,omitempty"`
+	Discards      []*DiscardRoute        `protobuf:"bytes,3,rep,name=discards,proto3" json:"discards,omitempty"` // one per legal discard action; empty if none
+	WildCount     uint32                 `protobuf:"varint,4,opt,name=wild_count,json=wildCount,proto3" json:"wild_count,omitempty"`
+	OpenMeldCount uint32                 `protobuf:"varint,5,opt,name=open_meld_count,json=openMeldCount,proto3" json:"open_meld_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RouteProbe) Reset() {
+	*x = RouteProbe{}
+	mi := &file_proto_game_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RouteProbe) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RouteProbe) ProtoMessage() {}
+
+func (x *RouteProbe) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_game_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RouteProbe.ProtoReflect.Descriptor instead.
+func (*RouteProbe) Descriptor() ([]byte, []int) {
+	return file_proto_game_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *RouteProbe) GetSeat() uint32 {
+	if x != nil {
+		return x.Seat
+	}
+	return 0
+}
+
+func (x *RouteProbe) GetRoutes() *RouteShanten {
+	if x != nil {
+		return x.Routes
+	}
+	return nil
+}
+
+func (x *RouteProbe) GetDiscards() []*DiscardRoute {
+	if x != nil {
+		return x.Discards
+	}
+	return nil
+}
+
+func (x *RouteProbe) GetWildCount() uint32 {
+	if x != nil {
+		return x.WildCount
+	}
+	return 0
+}
+
+func (x *RouteProbe) GetOpenMeldCount() uint32 {
+	if x != nil {
+		return x.OpenMeldCount
+	}
+	return 0
+}
+
 type TrajectoryRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Episodes      uint32                 `protobuf:"varint,1,opt,name=episodes,proto3" json:"episodes,omitempty"`
@@ -2077,7 +2328,7 @@ type TrajectoryRequest struct {
 
 func (x *TrajectoryRequest) Reset() {
 	*x = TrajectoryRequest{}
-	mi := &file_proto_game_proto_msgTypes[18]
+	mi := &file_proto_game_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2089,7 +2340,7 @@ func (x *TrajectoryRequest) String() string {
 func (*TrajectoryRequest) ProtoMessage() {}
 
 func (x *TrajectoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[18]
+	mi := &file_proto_game_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2102,7 +2353,7 @@ func (x *TrajectoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrajectoryRequest.ProtoReflect.Descriptor instead.
 func (*TrajectoryRequest) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{18}
+	return file_proto_game_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *TrajectoryRequest) GetEpisodes() uint32 {
@@ -2144,7 +2395,7 @@ type TrajectorySample struct {
 
 func (x *TrajectorySample) Reset() {
 	*x = TrajectorySample{}
-	mi := &file_proto_game_proto_msgTypes[19]
+	mi := &file_proto_game_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2156,7 +2407,7 @@ func (x *TrajectorySample) String() string {
 func (*TrajectorySample) ProtoMessage() {}
 
 func (x *TrajectorySample) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[19]
+	mi := &file_proto_game_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2169,7 +2420,7 @@ func (x *TrajectorySample) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrajectorySample.ProtoReflect.Descriptor instead.
 func (*TrajectorySample) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{19}
+	return file_proto_game_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *TrajectorySample) GetObservation() *SeatObservation {
@@ -2251,7 +2502,7 @@ type TrajectoryDataset struct {
 
 func (x *TrajectoryDataset) Reset() {
 	*x = TrajectoryDataset{}
-	mi := &file_proto_game_proto_msgTypes[20]
+	mi := &file_proto_game_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2263,7 +2514,7 @@ func (x *TrajectoryDataset) String() string {
 func (*TrajectoryDataset) ProtoMessage() {}
 
 func (x *TrajectoryDataset) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[20]
+	mi := &file_proto_game_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2276,7 +2527,7 @@ func (x *TrajectoryDataset) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrajectoryDataset.ProtoReflect.Descriptor instead.
 func (*TrajectoryDataset) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{20}
+	return file_proto_game_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *TrajectoryDataset) GetSamples() []*TrajectorySample {
@@ -2301,7 +2552,7 @@ type SeatConfig struct {
 
 func (x *SeatConfig) Reset() {
 	*x = SeatConfig{}
-	mi := &file_proto_game_proto_msgTypes[21]
+	mi := &file_proto_game_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2313,7 +2564,7 @@ func (x *SeatConfig) String() string {
 func (*SeatConfig) ProtoMessage() {}
 
 func (x *SeatConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[21]
+	mi := &file_proto_game_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2326,7 +2577,7 @@ func (x *SeatConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SeatConfig.ProtoReflect.Descriptor instead.
 func (*SeatConfig) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{21}
+	return file_proto_game_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *SeatConfig) GetKind() string {
@@ -2375,7 +2626,7 @@ type PrivateTableState struct {
 
 func (x *PrivateTableState) Reset() {
 	*x = PrivateTableState{}
-	mi := &file_proto_game_proto_msgTypes[22]
+	mi := &file_proto_game_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2387,7 +2638,7 @@ func (x *PrivateTableState) String() string {
 func (*PrivateTableState) ProtoMessage() {}
 
 func (x *PrivateTableState) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[22]
+	mi := &file_proto_game_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2400,7 +2651,7 @@ func (x *PrivateTableState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PrivateTableState.ProtoReflect.Descriptor instead.
 func (*PrivateTableState) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{22}
+	return file_proto_game_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *PrivateTableState) GetTableId() string {
@@ -2463,7 +2714,7 @@ type ChongciConfig struct {
 
 func (x *ChongciConfig) Reset() {
 	*x = ChongciConfig{}
-	mi := &file_proto_game_proto_msgTypes[23]
+	mi := &file_proto_game_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2475,7 +2726,7 @@ func (x *ChongciConfig) String() string {
 func (*ChongciConfig) ProtoMessage() {}
 
 func (x *ChongciConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[23]
+	mi := &file_proto_game_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2488,7 +2739,7 @@ func (x *ChongciConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChongciConfig.ProtoReflect.Descriptor instead.
 func (*ChongciConfig) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{23}
+	return file_proto_game_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ChongciConfig) GetStartingScore() int32 {
@@ -2524,7 +2775,7 @@ type PlayerStanding struct {
 
 func (x *PlayerStanding) Reset() {
 	*x = PlayerStanding{}
-	mi := &file_proto_game_proto_msgTypes[24]
+	mi := &file_proto_game_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2536,7 +2787,7 @@ func (x *PlayerStanding) String() string {
 func (*PlayerStanding) ProtoMessage() {}
 
 func (x *PlayerStanding) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[24]
+	mi := &file_proto_game_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2549,7 +2800,7 @@ func (x *PlayerStanding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlayerStanding.ProtoReflect.Descriptor instead.
 func (*PlayerStanding) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{24}
+	return file_proto_game_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *PlayerStanding) GetSeat() uint32 {
@@ -2591,7 +2842,7 @@ type MatchEndResult struct {
 
 func (x *MatchEndResult) Reset() {
 	*x = MatchEndResult{}
-	mi := &file_proto_game_proto_msgTypes[25]
+	mi := &file_proto_game_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2603,7 +2854,7 @@ func (x *MatchEndResult) String() string {
 func (*MatchEndResult) ProtoMessage() {}
 
 func (x *MatchEndResult) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[25]
+	mi := &file_proto_game_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2616,7 +2867,7 @@ func (x *MatchEndResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MatchEndResult.ProtoReflect.Descriptor instead.
 func (*MatchEndResult) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{25}
+	return file_proto_game_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *MatchEndResult) GetReason() string {
@@ -2650,7 +2901,7 @@ type EnvPoolNewRequest struct {
 
 func (x *EnvPoolNewRequest) Reset() {
 	*x = EnvPoolNewRequest{}
-	mi := &file_proto_game_proto_msgTypes[26]
+	mi := &file_proto_game_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2662,7 +2913,7 @@ func (x *EnvPoolNewRequest) String() string {
 func (*EnvPoolNewRequest) ProtoMessage() {}
 
 func (x *EnvPoolNewRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[26]
+	mi := &file_proto_game_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2675,7 +2926,7 @@ func (x *EnvPoolNewRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnvPoolNewRequest.ProtoReflect.Descriptor instead.
 func (*EnvPoolNewRequest) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{26}
+	return file_proto_game_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *EnvPoolNewRequest) GetConfig() *EnvConfig {
@@ -2707,7 +2958,7 @@ type SlotCommand struct {
 
 func (x *SlotCommand) Reset() {
 	*x = SlotCommand{}
-	mi := &file_proto_game_proto_msgTypes[27]
+	mi := &file_proto_game_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2719,7 +2970,7 @@ func (x *SlotCommand) String() string {
 func (*SlotCommand) ProtoMessage() {}
 
 func (x *SlotCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[27]
+	mi := &file_proto_game_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2732,7 +2983,7 @@ func (x *SlotCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SlotCommand.ProtoReflect.Descriptor instead.
 func (*SlotCommand) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{27}
+	return file_proto_game_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *SlotCommand) GetSlot() uint32 {
@@ -2807,7 +3058,7 @@ type EnvPoolStepRequest struct {
 
 func (x *EnvPoolStepRequest) Reset() {
 	*x = EnvPoolStepRequest{}
-	mi := &file_proto_game_proto_msgTypes[28]
+	mi := &file_proto_game_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2819,7 +3070,7 @@ func (x *EnvPoolStepRequest) String() string {
 func (*EnvPoolStepRequest) ProtoMessage() {}
 
 func (x *EnvPoolStepRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[28]
+	mi := &file_proto_game_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2832,7 +3083,7 @@ func (x *EnvPoolStepRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnvPoolStepRequest.ProtoReflect.Descriptor instead.
 func (*EnvPoolStepRequest) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{28}
+	return file_proto_game_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *EnvPoolStepRequest) GetCommands() []*SlotCommand {
@@ -2858,7 +3109,7 @@ type SlotState struct {
 
 func (x *SlotState) Reset() {
 	*x = SlotState{}
-	mi := &file_proto_game_proto_msgTypes[29]
+	mi := &file_proto_game_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2870,7 +3121,7 @@ func (x *SlotState) String() string {
 func (*SlotState) ProtoMessage() {}
 
 func (x *SlotState) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[29]
+	mi := &file_proto_game_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2883,7 +3134,7 @@ func (x *SlotState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SlotState.ProtoReflect.Descriptor instead.
 func (*SlotState) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{29}
+	return file_proto_game_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *SlotState) GetSlot() uint32 {
@@ -2970,7 +3221,7 @@ type EnvPoolStepResponse struct {
 
 func (x *EnvPoolStepResponse) Reset() {
 	*x = EnvPoolStepResponse{}
-	mi := &file_proto_game_proto_msgTypes[30]
+	mi := &file_proto_game_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2982,7 +3233,7 @@ func (x *EnvPoolStepResponse) String() string {
 func (*EnvPoolStepResponse) ProtoMessage() {}
 
 func (x *EnvPoolStepResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[30]
+	mi := &file_proto_game_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2995,7 +3246,7 @@ func (x *EnvPoolStepResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnvPoolStepResponse.ProtoReflect.Descriptor instead.
 func (*EnvPoolStepResponse) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{30}
+	return file_proto_game_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *EnvPoolStepResponse) GetSlots() []*SlotState {
@@ -3120,7 +3371,7 @@ type SearchPoolNewRequest struct {
 
 func (x *SearchPoolNewRequest) Reset() {
 	*x = SearchPoolNewRequest{}
-	mi := &file_proto_game_proto_msgTypes[31]
+	mi := &file_proto_game_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3132,7 +3383,7 @@ func (x *SearchPoolNewRequest) String() string {
 func (*SearchPoolNewRequest) ProtoMessage() {}
 
 func (x *SearchPoolNewRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_game_proto_msgTypes[31]
+	mi := &file_proto_game_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3145,7 +3396,7 @@ func (x *SearchPoolNewRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchPoolNewRequest.ProtoReflect.Descriptor instead.
 func (*SearchPoolNewRequest) Descriptor() ([]byte, []int) {
-	return file_proto_game_proto_rawDescGZIP(), []int{31}
+	return file_proto_game_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *SearchPoolNewRequest) GetClones() uint32 {
@@ -3368,7 +3619,27 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x05error\x18\a \x01(\tR\x05error\"\x8b\x01\n" +
 	"\x18BranchEvaluationResponse\x127\n" +
 	"\vobservation\x18\x01 \x01(\v2\x15.game.SeatObservationR\vobservation\x126\n" +
-	"\aresults\x18\x02 \x03(\v2\x1c.game.BranchEvaluationResultR\aresults\"w\n" +
+	"\aresults\x18\x02 \x03(\v2\x1c.game.BranchEvaluationResultR\aresults\"\x89\x01\n" +
+	"\fRouteShanten\x12\x18\n" +
+	"\aoverall\x18\x01 \x01(\x05R\aoverall\x12\x1a\n" +
+	"\bstandard\x18\x02 \x01(\x05R\bstandard\x12\x1f\n" +
+	"\vseven_pairs\x18\x03 \x01(\x05R\n" +
+	"sevenPairs\x12\"\n" +
+	"\findependence\x18\x04 \x01(\x05R\findependence\"n\n" +
+	"\fDiscardRoute\x12\x1b\n" +
+	"\taction_id\x18\x01 \x01(\rR\bactionId\x12(\n" +
+	"\x05after\x18\x02 \x01(\v2\x12.game.RouteShantenR\x05after\x12\x17\n" +
+	"\ais_wild\x18\x03 \x01(\bR\x06isWild\"'\n" +
+	"\x11RouteProbeRequest\x12\x12\n" +
+	"\x04seat\x18\x01 \x01(\rR\x04seat\"\xc3\x01\n" +
+	"\n" +
+	"RouteProbe\x12\x12\n" +
+	"\x04seat\x18\x01 \x01(\rR\x04seat\x12*\n" +
+	"\x06routes\x18\x02 \x01(\v2\x12.game.RouteShantenR\x06routes\x12.\n" +
+	"\bdiscards\x18\x03 \x03(\v2\x12.game.DiscardRouteR\bdiscards\x12\x1d\n" +
+	"\n" +
+	"wild_count\x18\x04 \x01(\rR\twildCount\x12&\n" +
+	"\x0fopen_meld_count\x18\x05 \x01(\rR\ropenMeldCount\"w\n" +
 	"\x11TrajectoryRequest\x12\x1a\n" +
 	"\bepisodes\x18\x01 \x01(\rR\bepisodes\x12\x1d\n" +
 	"\n" +
@@ -3534,7 +3805,7 @@ func file_proto_game_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_game_proto_enumTypes = make([]protoimpl.EnumInfo, 6)
-var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_proto_game_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
 var file_proto_game_proto_goTypes = []any{
 	(Suit)(0),                        // 0: game.Suit
 	(ActionType)(0),                  // 1: game.ActionType
@@ -3560,20 +3831,24 @@ var file_proto_game_proto_goTypes = []any{
 	(*BranchEvaluationRequest)(nil),  // 21: game.BranchEvaluationRequest
 	(*BranchEvaluationResult)(nil),   // 22: game.BranchEvaluationResult
 	(*BranchEvaluationResponse)(nil), // 23: game.BranchEvaluationResponse
-	(*TrajectoryRequest)(nil),        // 24: game.TrajectoryRequest
-	(*TrajectorySample)(nil),         // 25: game.TrajectorySample
-	(*TrajectoryDataset)(nil),        // 26: game.TrajectoryDataset
-	(*SeatConfig)(nil),               // 27: game.SeatConfig
-	(*PrivateTableState)(nil),        // 28: game.PrivateTableState
-	(*ChongciConfig)(nil),            // 29: game.ChongciConfig
-	(*PlayerStanding)(nil),           // 30: game.PlayerStanding
-	(*MatchEndResult)(nil),           // 31: game.MatchEndResult
-	(*EnvPoolNewRequest)(nil),        // 32: game.EnvPoolNewRequest
-	(*SlotCommand)(nil),              // 33: game.SlotCommand
-	(*EnvPoolStepRequest)(nil),       // 34: game.EnvPoolStepRequest
-	(*SlotState)(nil),                // 35: game.SlotState
-	(*EnvPoolStepResponse)(nil),      // 36: game.EnvPoolStepResponse
-	(*SearchPoolNewRequest)(nil),     // 37: game.SearchPoolNewRequest
+	(*RouteShanten)(nil),             // 24: game.RouteShanten
+	(*DiscardRoute)(nil),             // 25: game.DiscardRoute
+	(*RouteProbeRequest)(nil),        // 26: game.RouteProbeRequest
+	(*RouteProbe)(nil),               // 27: game.RouteProbe
+	(*TrajectoryRequest)(nil),        // 28: game.TrajectoryRequest
+	(*TrajectorySample)(nil),         // 29: game.TrajectorySample
+	(*TrajectoryDataset)(nil),        // 30: game.TrajectoryDataset
+	(*SeatConfig)(nil),               // 31: game.SeatConfig
+	(*PrivateTableState)(nil),        // 32: game.PrivateTableState
+	(*ChongciConfig)(nil),            // 33: game.ChongciConfig
+	(*PlayerStanding)(nil),           // 34: game.PlayerStanding
+	(*MatchEndResult)(nil),           // 35: game.MatchEndResult
+	(*EnvPoolNewRequest)(nil),        // 36: game.EnvPoolNewRequest
+	(*SlotCommand)(nil),              // 37: game.SlotCommand
+	(*EnvPoolStepRequest)(nil),       // 38: game.EnvPoolStepRequest
+	(*SlotState)(nil),                // 39: game.SlotState
+	(*EnvPoolStepResponse)(nil),      // 40: game.EnvPoolStepResponse
+	(*SearchPoolNewRequest)(nil),     // 41: game.SearchPoolNewRequest
 }
 var file_proto_game_proto_depIdxs = []int32{
 	0,  // 0: game.Tile.suit:type_name -> game.Suit
@@ -3594,8 +3869,8 @@ var file_proto_game_proto_depIdxs = []int32{
 	6,  // 15: game.GameState.wild_tiles:type_name -> game.Tile
 	13, // 16: game.GameState.round_result:type_name -> game.RoundResult
 	5,  // 17: game.GameState.match_mode:type_name -> game.MatchMode
-	29, // 18: game.GameState.chongci_config:type_name -> game.ChongciConfig
-	31, // 19: game.GameState.match_end_result:type_name -> game.MatchEndResult
+	33, // 18: game.GameState.chongci_config:type_name -> game.ChongciConfig
+	35, // 19: game.GameState.match_end_result:type_name -> game.MatchEndResult
 	1,  // 20: game.RoundResult.win_type:type_name -> game.ActionType
 	6,  // 21: game.RoundResult.winning_hand:type_name -> game.Tile
 	8,  // 22: game.RoundResult.winning_melds:type_name -> game.Meld
@@ -3606,7 +3881,7 @@ var file_proto_game_proto_depIdxs = []int32{
 	12, // 27: game.RoundOutcome.payouts:type_name -> game.PlayerPayout
 	11, // 28: game.RoundOutcome.breakdown:type_name -> game.ScoreEntry
 	5,  // 29: game.EnvConfig.match_mode:type_name -> game.MatchMode
-	29, // 30: game.EnvConfig.chongci_config:type_name -> game.ChongciConfig
+	33, // 30: game.EnvConfig.chongci_config:type_name -> game.ChongciConfig
 	3,  // 31: game.SeatObservation.phase:type_name -> game.GamePhase
 	15, // 32: game.EnvResetRequest.config:type_name -> game.EnvConfig
 	16, // 33: game.EnvResetResponse.observation:type_name -> game.SeatObservation
@@ -3616,25 +3891,28 @@ var file_proto_game_proto_depIdxs = []int32{
 	14, // 37: game.BranchEvaluationResult.round_outcome:type_name -> game.RoundOutcome
 	16, // 38: game.BranchEvaluationResponse.observation:type_name -> game.SeatObservation
 	22, // 39: game.BranchEvaluationResponse.results:type_name -> game.BranchEvaluationResult
-	15, // 40: game.TrajectoryRequest.config:type_name -> game.EnvConfig
-	16, // 41: game.TrajectorySample.observation:type_name -> game.SeatObservation
-	16, // 42: game.TrajectorySample.next_observation:type_name -> game.SeatObservation
-	14, // 43: game.TrajectorySample.terminal_outcome:type_name -> game.RoundOutcome
-	25, // 44: game.TrajectoryDataset.samples:type_name -> game.TrajectorySample
-	4,  // 45: game.SeatConfig.difficulty:type_name -> game.Difficulty
-	27, // 46: game.PrivateTableState.seats:type_name -> game.SeatConfig
-	5,  // 47: game.PrivateTableState.match_mode:type_name -> game.MatchMode
-	29, // 48: game.PrivateTableState.chongci_config:type_name -> game.ChongciConfig
-	30, // 49: game.MatchEndResult.standings:type_name -> game.PlayerStanding
-	15, // 50: game.EnvPoolNewRequest.config:type_name -> game.EnvConfig
-	33, // 51: game.EnvPoolStepRequest.commands:type_name -> game.SlotCommand
-	14, // 52: game.SlotState.round_outcome:type_name -> game.RoundOutcome
-	35, // 53: game.EnvPoolStepResponse.slots:type_name -> game.SlotState
-	54, // [54:54] is the sub-list for method output_type
-	54, // [54:54] is the sub-list for method input_type
-	54, // [54:54] is the sub-list for extension type_name
-	54, // [54:54] is the sub-list for extension extendee
-	0,  // [0:54] is the sub-list for field type_name
+	24, // 40: game.DiscardRoute.after:type_name -> game.RouteShanten
+	24, // 41: game.RouteProbe.routes:type_name -> game.RouteShanten
+	25, // 42: game.RouteProbe.discards:type_name -> game.DiscardRoute
+	15, // 43: game.TrajectoryRequest.config:type_name -> game.EnvConfig
+	16, // 44: game.TrajectorySample.observation:type_name -> game.SeatObservation
+	16, // 45: game.TrajectorySample.next_observation:type_name -> game.SeatObservation
+	14, // 46: game.TrajectorySample.terminal_outcome:type_name -> game.RoundOutcome
+	29, // 47: game.TrajectoryDataset.samples:type_name -> game.TrajectorySample
+	4,  // 48: game.SeatConfig.difficulty:type_name -> game.Difficulty
+	31, // 49: game.PrivateTableState.seats:type_name -> game.SeatConfig
+	5,  // 50: game.PrivateTableState.match_mode:type_name -> game.MatchMode
+	33, // 51: game.PrivateTableState.chongci_config:type_name -> game.ChongciConfig
+	34, // 52: game.MatchEndResult.standings:type_name -> game.PlayerStanding
+	15, // 53: game.EnvPoolNewRequest.config:type_name -> game.EnvConfig
+	37, // 54: game.EnvPoolStepRequest.commands:type_name -> game.SlotCommand
+	14, // 55: game.SlotState.round_outcome:type_name -> game.RoundOutcome
+	39, // 56: game.EnvPoolStepResponse.slots:type_name -> game.SlotState
+	57, // [57:57] is the sub-list for method output_type
+	57, // [57:57] is the sub-list for method input_type
+	57, // [57:57] is the sub-list for extension type_name
+	57, // [57:57] is the sub-list for extension extendee
+	0,  // [0:57] is the sub-list for field type_name
 }
 
 func init() { file_proto_game_proto_init() }
@@ -3644,19 +3922,19 @@ func file_proto_game_proto_init() {
 	}
 	file_proto_game_proto_msgTypes[2].OneofWrappers = []any{}
 	file_proto_game_proto_msgTypes[3].OneofWrappers = []any{}
-	file_proto_game_proto_msgTypes[27].OneofWrappers = []any{
+	file_proto_game_proto_msgTypes[31].OneofWrappers = []any{
 		(*SlotCommand_ActionId)(nil),
 		(*SlotCommand_ResetSeed)(nil),
 		(*SlotCommand_Skip)(nil),
 	}
-	file_proto_game_proto_msgTypes[31].OneofWrappers = []any{}
+	file_proto_game_proto_msgTypes[35].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_game_proto_rawDesc), len(file_proto_game_proto_rawDesc)),
 			NumEnums:      6,
-			NumMessages:   32,
+			NumMessages:   36,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -1130,3 +1130,11 @@ def test_offline_agreement_reports_mean_cross_entropy() -> None:
         logits, _ = model(torch.from_numpy(planes), torch.from_numpy(scalars), torch.from_numpy(mask))
         expected = torch.nn.functional.cross_entropy(logits, torch.from_numpy(action_ids)).item()
     assert report["mean_cross_entropy"] == pytest.approx(expected, abs=1e-5)
+
+
+def test_route_study_requires_the_go_bridge(tmp_path):
+    import pytest
+    from fh_mahjong_ai.evaluate import evaluate_policy_online
+    with pytest.raises(ValueError, match="Go bridge"):
+        evaluate_policy_online(policy=object(), episodes=1, seeds=[1], bridge_kind="mock",
+                               route_study_shard=tmp_path / "rs.jsonl.gz")

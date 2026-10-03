@@ -2418,6 +2418,448 @@ export namespace game {
         public static getTypeUrl(typeUrlPrefix?: string): string;
     }
 
+    /** Properties of a RouteShanten. */
+    interface IRouteShanten {
+
+        /** RouteShanten overall */
+        overall?: (number|undefined);
+
+        /** RouteShanten standard */
+        standard?: (number|undefined);
+
+        /** RouteShanten sevenPairs */
+        sevenPairs?: (number|undefined);
+
+        /** RouteShanten independence */
+        independence?: (number|undefined);
+    }
+
+    /** Represents a RouteShanten. */
+    class RouteShanten implements IRouteShanten {
+
+        /**
+         * Constructs a new RouteShanten.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IRouteShanten);
+
+        /** RouteShanten overall. */
+        public overall: number;
+
+        /** RouteShanten standard. */
+        public standard: number;
+
+        /** RouteShanten sevenPairs. */
+        public sevenPairs: number;
+
+        /** RouteShanten independence. */
+        public independence: number;
+
+        /**
+         * Creates a new RouteShanten instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns RouteShanten instance
+         */
+        public static create(properties?: game.IRouteShanten): game.RouteShanten;
+
+        /**
+         * Encodes the specified RouteShanten message. Does not implicitly {@link game.RouteShanten.verify|verify} messages.
+         * @param message RouteShanten message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IRouteShanten, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified RouteShanten message, length delimited. Does not implicitly {@link game.RouteShanten.verify|verify} messages.
+         * @param message RouteShanten message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IRouteShanten, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a RouteShanten message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns RouteShanten
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.RouteShanten;
+
+        /**
+         * Decodes a RouteShanten message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns RouteShanten
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.RouteShanten;
+
+        /**
+         * Verifies a RouteShanten message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a RouteShanten message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns RouteShanten
+         */
+        public static fromObject(object: { [k: string]: any }): game.RouteShanten;
+
+        /**
+         * Creates a plain object from a RouteShanten message. Also converts values to other types if specified.
+         * @param message RouteShanten
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.RouteShanten, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this RouteShanten to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for RouteShanten
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a DiscardRoute. */
+    interface IDiscardRoute {
+
+        /** DiscardRoute actionId */
+        actionId?: (number|undefined);
+
+        /** DiscardRoute after */
+        after?: (game.IRouteShanten|undefined);
+
+        /** DiscardRoute isWild */
+        isWild?: (boolean|undefined);
+    }
+
+    /** Represents a DiscardRoute. */
+    class DiscardRoute implements IDiscardRoute {
+
+        /**
+         * Constructs a new DiscardRoute.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IDiscardRoute);
+
+        /** DiscardRoute actionId. */
+        public actionId: number;
+
+        /** DiscardRoute after. */
+        public after: game.RouteShanten;
+
+        /** DiscardRoute isWild. */
+        public isWild: boolean;
+
+        /**
+         * Creates a new DiscardRoute instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns DiscardRoute instance
+         */
+        public static create(properties?: game.IDiscardRoute): game.DiscardRoute;
+
+        /**
+         * Encodes the specified DiscardRoute message. Does not implicitly {@link game.DiscardRoute.verify|verify} messages.
+         * @param message DiscardRoute message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IDiscardRoute, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified DiscardRoute message, length delimited. Does not implicitly {@link game.DiscardRoute.verify|verify} messages.
+         * @param message DiscardRoute message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IDiscardRoute, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a DiscardRoute message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns DiscardRoute
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.DiscardRoute;
+
+        /**
+         * Decodes a DiscardRoute message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns DiscardRoute
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.DiscardRoute;
+
+        /**
+         * Verifies a DiscardRoute message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a DiscardRoute message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns DiscardRoute
+         */
+        public static fromObject(object: { [k: string]: any }): game.DiscardRoute;
+
+        /**
+         * Creates a plain object from a DiscardRoute message. Also converts values to other types if specified.
+         * @param message DiscardRoute
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.DiscardRoute, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this DiscardRoute to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for DiscardRoute
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a RouteProbeRequest. */
+    interface IRouteProbeRequest {
+
+        /** RouteProbeRequest seat */
+        seat?: (number|undefined);
+    }
+
+    /** Represents a RouteProbeRequest. */
+    class RouteProbeRequest implements IRouteProbeRequest {
+
+        /**
+         * Constructs a new RouteProbeRequest.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IRouteProbeRequest);
+
+        /** RouteProbeRequest seat. */
+        public seat: number;
+
+        /**
+         * Creates a new RouteProbeRequest instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns RouteProbeRequest instance
+         */
+        public static create(properties?: game.IRouteProbeRequest): game.RouteProbeRequest;
+
+        /**
+         * Encodes the specified RouteProbeRequest message. Does not implicitly {@link game.RouteProbeRequest.verify|verify} messages.
+         * @param message RouteProbeRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IRouteProbeRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified RouteProbeRequest message, length delimited. Does not implicitly {@link game.RouteProbeRequest.verify|verify} messages.
+         * @param message RouteProbeRequest message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IRouteProbeRequest, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a RouteProbeRequest message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns RouteProbeRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.RouteProbeRequest;
+
+        /**
+         * Decodes a RouteProbeRequest message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns RouteProbeRequest
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.RouteProbeRequest;
+
+        /**
+         * Verifies a RouteProbeRequest message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a RouteProbeRequest message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns RouteProbeRequest
+         */
+        public static fromObject(object: { [k: string]: any }): game.RouteProbeRequest;
+
+        /**
+         * Creates a plain object from a RouteProbeRequest message. Also converts values to other types if specified.
+         * @param message RouteProbeRequest
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.RouteProbeRequest, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this RouteProbeRequest to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for RouteProbeRequest
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
+    /** Properties of a RouteProbe. */
+    interface IRouteProbe {
+
+        /** RouteProbe seat */
+        seat?: (number|undefined);
+
+        /** RouteProbe routes */
+        routes?: (game.IRouteShanten|undefined);
+
+        /** RouteProbe discards */
+        discards?: (game.IDiscardRoute[]|undefined);
+
+        /** RouteProbe wildCount */
+        wildCount?: (number|undefined);
+
+        /** RouteProbe openMeldCount */
+        openMeldCount?: (number|undefined);
+    }
+
+    /** Represents a RouteProbe. */
+    class RouteProbe implements IRouteProbe {
+
+        /**
+         * Constructs a new RouteProbe.
+         * @param [properties] Properties to set
+         */
+        constructor(properties?: game.IRouteProbe);
+
+        /** RouteProbe seat. */
+        public seat: number;
+
+        /** RouteProbe routes. */
+        public routes: game.RouteShanten;
+
+        /** RouteProbe discards. */
+        public discards: game.DiscardRoute[];
+
+        /** RouteProbe wildCount. */
+        public wildCount: number;
+
+        /** RouteProbe openMeldCount. */
+        public openMeldCount: number;
+
+        /**
+         * Creates a new RouteProbe instance using the specified properties.
+         * @param [properties] Properties to set
+         * @returns RouteProbe instance
+         */
+        public static create(properties?: game.IRouteProbe): game.RouteProbe;
+
+        /**
+         * Encodes the specified RouteProbe message. Does not implicitly {@link game.RouteProbe.verify|verify} messages.
+         * @param message RouteProbe message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encode(message: game.IRouteProbe, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Encodes the specified RouteProbe message, length delimited. Does not implicitly {@link game.RouteProbe.verify|verify} messages.
+         * @param message RouteProbe message or plain object to encode
+         * @param [writer] Writer to encode to
+         * @returns Writer
+         */
+        public static encodeDelimited(message: game.IRouteProbe, writer?: $protobuf.Writer): $protobuf.Writer;
+
+        /**
+         * Decodes a RouteProbe message from the specified reader or buffer.
+         * @param reader Reader or buffer to decode from
+         * @param [length] Message length if known beforehand
+         * @returns RouteProbe
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decode(reader: ($protobuf.Reader|Uint8Array), length?: number): game.RouteProbe;
+
+        /**
+         * Decodes a RouteProbe message from the specified reader or buffer, length delimited.
+         * @param reader Reader or buffer to decode from
+         * @returns RouteProbe
+         * @throws {Error} If the payload is not a reader or valid buffer
+         * @throws {$protobuf.util.ProtocolError} If required fields are missing
+         */
+        public static decodeDelimited(reader: ($protobuf.Reader|Uint8Array)): game.RouteProbe;
+
+        /**
+         * Verifies a RouteProbe message.
+         * @param message Plain object to verify
+         * @returns `null` if valid, otherwise the reason why it is not
+         */
+        public static verify(message: { [k: string]: any }): (string|null);
+
+        /**
+         * Creates a RouteProbe message from a plain object. Also converts values to their respective internal types.
+         * @param object Plain object
+         * @returns RouteProbe
+         */
+        public static fromObject(object: { [k: string]: any }): game.RouteProbe;
+
+        /**
+         * Creates a plain object from a RouteProbe message. Also converts values to other types if specified.
+         * @param message RouteProbe
+         * @param [options] Conversion options
+         * @returns Plain object
+         */
+        public static toObject(message: game.RouteProbe, options?: $protobuf.IConversionOptions): { [k: string]: any };
+
+        /**
+         * Converts this RouteProbe to JSON.
+         * @returns JSON object
+         */
+        public toJSON(): { [k: string]: any };
+
+        /**
+         * Gets the default type url for RouteProbe
+         * @param [typeUrlPrefix] your custom typeUrlPrefix(default "type.googleapis.com")
+         * @returns The default type url
+         */
+        public static getTypeUrl(typeUrlPrefix?: string): string;
+    }
+
     /** Properties of a TrajectoryRequest. */
     interface ITrajectoryRequest {
 

@@ -136,3 +136,39 @@ def test_compare_refuses_different_opponent_checkpoints():
 def test_compare_accepts_same_opponents():
     result = paired_comparison(_report(OPPONENTS), _report(OPPONENTS))
     assert result["config_check"] == "strict"
+
+
+import gzip
+import json
+from collections import Counter
+
+
+@requires_go_lib
+def test_route_study_records_every_seat_at_a_strong_table(tmp_path):
+    shard = tmp_path / "rs.jsonl.gz"
+    report = evaluate_policy_online(
+        policy=TorchGreedyPolicy(_model(1)), episodes=2, seeds=[11, 12], learning_seat=1,
+        match_mode="chongci", chongci_max_hands=4, max_steps_per_episode=4000,
+        opponent_policy=TorchGreedyPolicy(_model(2)), route_study_shard=shard,
+    )
+    study = report["route_study"]
+    hands = report["hand_stats"]["hands_played"]
+    assert hands > 0
+    assert study["learner"]["hands_recorded"] == hands
+    assert study["opponents"]["hands_recorded"] == 3 * hands
+    with gzip.open(shard, "rt") as fh:
+        records = [json.loads(line) for line in fh]
+    kinds = Counter(r["kind"] for r in records)
+    assert kinds["hand"] == 4 * hands
+    assert {r["seat"] for r in records if r["kind"] == "hand"} == {0, 1, 2, 3}
+    dealt = sum(cell["hands"] for row in study["learner"]["deal"].values() for cell in row.values())
+    assert dealt == hands - study["learner"]["hands_without_deal"]
+
+
+@requires_go_lib
+def test_route_study_off_leaves_report_without_the_key():
+    report = evaluate_policy_online(
+        policy=TorchGreedyPolicy(_model(1)), episodes=1, seeds=[11], learning_seat=0,
+        match_mode="classic",
+    )
+    assert "route_study" not in report
