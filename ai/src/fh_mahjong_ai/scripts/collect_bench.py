@@ -587,7 +587,8 @@ def _digest_batch(base_seed: int, matches: int, batch, exclude: tuple[str, ...] 
     fail-closed truncation-rate gate. No `RolloutBatch` field is excluded
     unless `exclude` names it (see `_semantic_digest_batch`).
     """
-    expected_fields = set(_ROLLOUT_DIGEST_ARRAY_FIELDS) | {"truncated_matches", "match_telemetry"}
+    expected_fields = (set(_ROLLOUT_DIGEST_ARRAY_FIELDS)
+                       | {"truncated_matches", "match_telemetry", "teacher_logprobs"})
     actual_fields = {field.name for field in fields(RolloutBatch)}
     if actual_fields != expected_fields:
         raise RuntimeError(
@@ -614,6 +615,9 @@ def _digest_batch(base_seed: int, matches: int, batch, exclude: tuple[str, ...] 
     payload = json.dumps({"field": "match_telemetry", "present": tel is not None,
                           "value": tel}, sort_keys=True, separators=(",", ":")).encode()
     _update_length_prefixed(h, payload)
+    # Hashed only when present, so every digest recorded before the field existed keeps its bytes.
+    if batch.teacher_logprobs is not None and "teacher_logprobs" not in exclude:
+        _update_array_digest(h, "teacher_logprobs", batch.teacher_logprobs)
     return h.hexdigest()
 
 
@@ -622,7 +626,10 @@ def _semantic_digest_batch(base_seed: int, matches: int, batch) -> str:
     forward may round by batch composition. Equal semantic digests mean the
     two runs collected the same decisions, rewards, events, labels and
     telemetry, in the same order."""
-    return _digest_batch(base_seed, matches, batch, exclude=_ROLLOUT_TOLERANT_FIELDS)
+    exclude = _ROLLOUT_TOLERANT_FIELDS
+    if batch.teacher_logprobs is not None:  # a batched-forward float field, like old_logprobs
+        exclude = exclude + ("teacher_logprobs",)
+    return _digest_batch(base_seed, matches, batch, exclude=exclude)
 
 
 def _float_field_diff(reference: dict, current: dict) -> Optional[float]:

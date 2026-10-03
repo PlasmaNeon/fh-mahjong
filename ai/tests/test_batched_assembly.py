@@ -140,8 +140,8 @@ def test_collector_batch_is_the_written_prefix_of_the_sink(monkeypatch):
     real = batched_b2b_module._ArrayRowSink
 
     class Recording(real):
-        def __init__(self, capacity):
-            super().__init__(capacity)
+        def __init__(self, capacity, *args):
+            super().__init__(capacity, *args)
             sinks.append(self)
 
     monkeypatch.setattr(batched_b2b_module, "_ArrayRowSink", Recording)

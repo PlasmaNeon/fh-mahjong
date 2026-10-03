@@ -66,6 +66,10 @@ def main() -> None:
                         "on a suit-permuted view and the env gets the inverse-mapped action "
                         "(needs --collector batched). A recipe field: rejected-on-change by "
                         "--resume-from-state")
+    p.add_argument("--suit-distill-coef", type=float, default=0.0,
+                   help="weight of the KL term toward the collection-time suit-averaged policy "
+                        "(needs --collector batched; 0 = off). A recipe field: rejected-on-change "
+                        "by --resume-from-state")
     p.add_argument("--trunk-dtype", choices=("float32", "bfloat16"), default="float32",
                    help="precision of the model's encoder (conv trunk, event GRU, trunk "
                         "MLP) in collection and the update; heads, losses and the optimizer "
@@ -247,6 +251,10 @@ def main() -> None:
         p.error(f"--pool-slots must be >= 1 (got {args.pool_slots})")
     if args.suit_augment and args.collector != "batched":
         p.error("--suit-augment requires --collector batched")
+    if args.suit_distill_coef < 0:
+        p.error("--suit-distill-coef must be >= 0")
+    if args.suit_distill_coef > 0 and args.collector != "batched":
+        p.error("--suit-distill-coef requires --collector batched")
     num_workers = args.num_workers
     if num_workers is None:
         num_workers = min(default_num_workers(), args.matches_per_iter)
@@ -263,6 +271,7 @@ def main() -> None:
                        collector=args.collector, pool_slots=args.pool_slots,
                        trunk_dtype=args.trunk_dtype,
                        suit_augment=args.suit_augment,
+                       suit_distill_coef=args.suit_distill_coef,
                        pool_pipeline_groups=args.pool_pipeline_groups,
                        collect_dispatch_chunk=args.collect_dispatch_chunk,
                        minibatch_device_transfer=args.minibatch_device_transfer,
