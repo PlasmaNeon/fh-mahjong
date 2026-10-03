@@ -123,6 +123,38 @@ def unpermute_action_values(values: np.ndarray, perm) -> np.ndarray:
     return values[:, action_map(perm, values.shape[1])]
 
 
+def stack_views(planes: np.ndarray, scalars: np.ndarray, masks: np.ndarray, events: np.ndarray,
+                symmetries: tuple[FaceSymmetry, ...] = SUIT_PERMUTATIONS):
+    """The k*n rows of every view of the n rows, view-major: view j holds rows j*n .. j*n+n-1."""
+    views = [permute_rows(planes, scalars, masks, events, perm) for perm in symmetries]
+    return tuple(np.concatenate(parts) for parts in zip(*views))
+
+
+def average_view_log_probs(logits, masks: np.ndarray,
+                           symmetries: tuple[FaceSymmetry, ...] = SUIT_PERMUTATIONS) -> np.ndarray:
+    """float64 [n, A]: the mean over the views of log_softmax(view logits), re-indexed to the
+    original actions; illegal actions -inf. `logits` [k*n, A] (numpy, or a torch tensor on any
+    device) are view-major, as `stack_views` lays the rows out."""
+    import torch
+
+    n = masks.shape[0]
+    logp = torch.log_softmax(torch.as_tensor(logits).double(), dim=1).cpu().numpy()
+    total = np.zeros((n, masks.shape[1]), dtype=np.float64)
+    for k, perm in enumerate(symmetries):
+        total += unpermute_action_values(logp[k * n:(k + 1) * n], perm)
+    total /= len(symmetries)
+    total[masks == 0] = -np.inf
+    return total
+
+
+def teacher_log_probs(averaged: np.ndarray) -> np.ndarray:
+    """float32 distillation targets from `average_view_log_probs` output: illegal actions at
+    float32's finite minimum, the value PolicyValueNet masks logits to."""
+    out = np.asarray(averaged).astype(np.float32)
+    out[~np.isfinite(averaged)] = np.finfo(np.float32).min
+    return out
+
+
 def suit_averaged_log_probs(model, planes: np.ndarray, scalars: np.ndarray, masks: np.ndarray,
                             events: np.ndarray, lengths: np.ndarray, device="cpu",
                             symmetries: tuple[FaceSymmetry, ...] = SUIT_PERMUTATIONS):
@@ -136,8 +168,7 @@ def suit_averaged_log_probs(model, planes: np.ndarray, scalars: np.ndarray, mask
     import torch
 
     n = planes.shape[0]
-    views = [permute_rows(planes, scalars, masks, events, perm) for perm in symmetries]
-    p, s, m, e = (np.concatenate(parts) for parts in zip(*views))
+    p, s, m, e = stack_views(planes, scalars, masks, events, symmetries)
     to = lambda a: torch.from_numpy(np.ascontiguousarray(a)).to(device)  # noqa: E731
     ev = ln = None
     if getattr(model, "wants_events", False):
@@ -145,11 +176,6 @@ def suit_averaged_log_probs(model, planes: np.ndarray, scalars: np.ndarray, mask
         ln = to(np.tile(np.asarray(lengths, dtype=np.int64), len(symmetries)))
     with torch.inference_mode():
         logits, values = model(to(p), to(s), to(m), events=ev, event_lengths=ln)
-    logp = torch.log_softmax(logits.double(), dim=1).cpu().numpy()
-    total = np.zeros((n, masks.shape[1]), dtype=np.float64)
-    for k, perm in enumerate(symmetries):
-        total += unpermute_action_values(logp[k * n:(k + 1) * n], perm)
-    total /= len(symmetries)
-    total[masks == 0] = -np.inf
+    total = average_view_log_probs(logits, masks, symmetries)
     value = values.reshape(len(symmetries), n).double().mean(dim=0).cpu().numpy()
     return total, value
