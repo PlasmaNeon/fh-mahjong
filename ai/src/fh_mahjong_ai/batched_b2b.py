@@ -28,7 +28,8 @@ from .config import EnvConfig
 from .envpool import PoolCommand, PoolStepResult, make_selfplay_pool
 from .model import PolicyValueNet
 from .ppo import PPOConfig, RolloutBatch, masked_logprobs
-from .suit_symmetry import SUIT_PERMUTATIONS, action_map, permute_rows
+from .suit_symmetry import (SUIT_PERMUTATIONS, action_map, average_view_log_probs, permute_rows,
+                            stack_views, suit_averaged_log_probs, teacher_log_probs)
 from .train_b2b import (
     _B2B_ROW_KEYS, _B2bMatchState, _check_chongci_outcomes, _finalize_b2b_match,
 )
@@ -231,6 +232,7 @@ _PHASE_TIMER_NOTE = (
     "spanning all three -- CUDA work is asynchronous, so a timer around the launch alone "
     "would read near zero and charge the forward to whichever later operation happens "
     "to synchronise. "
+    "With suit_distill_coef > 0 it also spans the teacher's six-view forward. "
     "python_seconds: the decision step ONLY -- action choice (per-row sampling with "
     "each match's RNG, or one argmax), one masked_logprobs call for the round, and "
     "appending each row to its match state. "
@@ -475,8 +477,10 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     next_match = 0
     emit_next = 0
     rows_l: dict[str, list] = {key: [] for key in _B2B_ROW_KEYS if key not in _ARRAY_ROW_DTYPES}
+    distill = config.suit_distill_coef > 0
     # A match emits at most one row per step, so matches x step cap bounds the batch.
-    sink = _ArrayRowSink(total * int(config.max_steps_per_episode))
+    sink = _ArrayRowSink(total * int(config.max_steps_per_episode),
+                         {**_ARRAY_ROW_DTYPES, **(_TEACHER_ROW_DTYPE if distill else {})})
     match_telemetry: list[dict] = []
     truncated_matches = 0
     completed_matches = 0
@@ -518,6 +522,37 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
     use_graphs = inference_mode == "batched" and torch.device(device).type == "cuda"
     graphed = [(_GraphedForward(model, device, len(slots)) if use_graphs else None)
                for slots in group_slots]
+    # suit_distill_coef: one six-view forward per round for the teacher. Called synchronously
+    # (launch then fetch), so one instance serves every pipeline group.
+    teacher_forward = (_GraphedForward(model, device, effective_slots * len(SUIT_PERMUTATIONS))
+                       if distill and use_graphs else None)
+
+    def round_teacher(pending_rows: list) -> np.ndarray:
+        """float32 [n, A] distillation targets for the round's stored rows: the policy averaged
+        over the six suit views of each row, in the view the row is stored in."""
+        planes = np.stack([row[3] for row in pending_rows])
+        scalars = np.stack([row[4] for row in pending_rows])
+        masks = np.stack([row[5] for row in pending_rows])
+        events = np.stack([row[6] for row in pending_rows])
+        lengths = np.asarray([row[7] for row in pending_rows], dtype=np.int64)
+        if inference_mode == "per_row":
+            # One decision at a time: exactly suit_averaged_log_probs on that row.
+            return np.concatenate([
+                teacher_log_probs(suit_averaged_log_probs(
+                    model, planes[i:i + 1], scalars[i:i + 1], masks[i:i + 1], events[i:i + 1],
+                    lengths[i:i + 1], device=device)[0])
+                for i in range(len(pending_rows))])
+        p, s, m, e = stack_views(planes, scalars, masks, events)
+        ln = np.tile(lengths, len(SUIT_PERMUTATIONS))
+        if teacher_forward is not None:
+            logits = teacher_forward(p, s, m, e, ln)[:, :-1]
+        else:
+            with torch.no_grad():
+                logits, _ = model(torch.from_numpy(p).to(device), torch.from_numpy(s).to(device),
+                                  torch.from_numpy(m).to(device),
+                                  events=torch.from_numpy(e.astype(np.int64)).to(device),
+                                  event_lengths=torch.from_numpy(ln).to(device))
+        return teacher_log_probs(average_view_log_probs(logits, masks))
 
     def commands_for(slots: list[int]) -> list:
         nonlocal next_match
@@ -692,6 +727,11 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
                 values_rows.append(float(value_1.reshape(-1)[0].item()))
             logits_host = torch.stack(logits_list)
         forward_seconds += time.perf_counter() - forward_start
+        teacher = None
+        if distill:
+            teacher_start = time.perf_counter()
+            teacher = round_teacher(pending_rows)
+            forward_seconds += time.perf_counter() - teacher_start
 
         # Action choice and old_logprobs for the whole round at once. Greedy
         # argmax and masked_logprobs are row-wise and bit-identical to their
@@ -722,6 +762,8 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
             ms.seat_events[seat].append(row_events)
             ms.seat_lengths[seat].append(ev_len)
             ms.seat_hand_ids[seat].append(ms.hand_id)
+            if teacher is not None:
+                ms.seat_teacher[seat].append(teacher[i])
             # The stored action is in the view the policy acted on; the env needs the real one.
             pending_action[slot] = (int(inverse_action_maps[slot_view[slot]][action])
                                     if config.suit_augment else action)
@@ -786,4 +828,5 @@ def _collect_b2b_rollouts_batched(env_config: EnvConfig, model: PolicyValueNet,
         dealin_labels=np.asarray(rows_l["dealin"], dtype=np.float32),
         rank_labels=np.asarray(rows_l["rank"], dtype=np.int64),
         match_telemetry=match_telemetry,
+        teacher_logprobs=arrays.get("teacher"),
     )

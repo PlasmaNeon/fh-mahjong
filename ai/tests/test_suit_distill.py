@@ -7,8 +7,10 @@ import numpy as np
 import pytest
 import torch
 
-from conftest import small_model_config
-from fh_mahjong_ai.batched_b2b import _ARRAY_ROW_DTYPES, _TEACHER_ROW_DTYPE, _ArrayRowSink
+from conftest import SMALL_MODEL, small_model_config
+from fh_mahjong_ai.batched_b2b import (
+    _ARRAY_ROW_DTYPES, _TEACHER_ROW_DTYPE, _ArrayRowSink, collect_b2b_rollouts_batched, make_b2b_pool,
+)
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.ppo import PPOConfig, RolloutBatch
@@ -153,3 +155,65 @@ def test_row_sink_carries_teacher_rows_and_refuses_a_short_teacher():
     assert sink.arrays()["teacher"].dtype == np.float32
     with pytest.raises(RuntimeError, match="teacher"):
         sink.write({**rows, "teacher": rows["teacher"][:1]})
+
+
+MATCHES, SEED = 4, 3100
+
+
+def _collect(distill_coef=1.0, suit_augment=False, groups=1, max_steps=4000,
+             action_selection="greedy", inference_mode="per_row"):
+    env = EnvConfig(bridge_kind="go", event_history_window=8, oracle_observation=True,
+                    max_steps_per_episode=max_steps, chongci_max_hands=4)
+    torch.manual_seed(0)
+    model = PolicyValueNet(EnvConfig(bridge_kind="go"),
+                           ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True,
+                                       aux_heads=True)).eval()
+    cfg = PPOConfig(device="cpu", matches_per_iter=MATCHES, max_steps_per_episode=max_steps,
+                    match_mode="chongci", collector="batched", suit_augment=suit_augment,
+                    suit_distill_coef=distill_coef, pool_pipeline_groups=groups)
+    pool = make_b2b_pool(env, model, cfg, 3)
+    try:
+        batch = collect_b2b_rollouts_batched(env, model, cfg, base_seed=SEED, pool=pool,
+                                             inference_mode=inference_mode,
+                                             action_selection=action_selection)
+    finally:
+        pool.close()
+    return batch, model
+
+
+@requires_go_lib
+@pytest.mark.parametrize("suit_augment", [False, True])
+def test_teacher_is_the_suit_averaged_policy_of_each_stored_row(suit_augment):
+    batch, model = _collect(suit_augment=suit_augment)
+    assert batch.teacher_logprobs.shape == batch.action_mask.shape
+    assert batch.teacher_logprobs.dtype == np.float32
+    for i in range(len(batch)):
+        total, _ = suit_averaged_log_probs(model, batch.planes[i:i + 1], batch.scalars[i:i + 1],
+                                           batch.action_mask[i:i + 1], batch.events[i:i + 1],
+                                           batch.event_lengths[i:i + 1])
+        assert np.array_equal(teacher_log_probs(total)[0], batch.teacher_logprobs[i]), i
+    assert (batch.teacher_logprobs[batch.action_mask == 0] == np.finfo(np.float32).min).all()
+
+
+@requires_go_lib
+def test_coefficient_zero_collects_no_teacher():
+    batch, _ = _collect(distill_coef=0.0)
+    assert batch.teacher_logprobs is None
+
+
+@requires_go_lib
+@pytest.mark.parametrize("selection, mode", [("greedy", "per_row"), ("sample", "batched")])
+def test_distilled_collection_is_deterministic(selection, mode):
+    first, _ = _collect(suit_augment=True, action_selection=selection, inference_mode=mode)
+    second, _ = _collect(suit_augment=True, action_selection=selection, inference_mode=mode)
+    assert first.teacher_logprobs is not None
+    assert _digest_batch(SEED, MATCHES, first) == _digest_batch(SEED, MATCHES, second)
+
+
+@requires_go_lib
+def test_teacher_rows_stay_aligned_under_pipelining_and_truncation():
+    one, _ = _collect(max_steps=120)
+    two, _ = _collect(max_steps=120, groups=2)
+    assert one.truncated_matches > 0
+    assert len(one.teacher_logprobs) == len(one) and len(two.teacher_logprobs) == len(two)
+    assert _digest_batch(SEED, MATCHES, one) == _digest_batch(SEED, MATCHES, two)
