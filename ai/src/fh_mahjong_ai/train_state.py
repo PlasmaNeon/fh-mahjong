@@ -457,6 +457,7 @@ _LEGACY_ECHO_ADDITIONS = {
         "trunk_dtype",  # absent before the bf16-trunk option (2026-09-27)
         "pool_pipeline_groups",  # absent before the pipelined batched collector (2026-09-27)
         "suit_augment",  # absent before suit-permutation augmentation (2026-09-29)
+        "suit_distill_coef",  # absent before suit distillation (2026-10-02)
     },
 }
 
@@ -476,6 +477,7 @@ _LEGACY_ECHO_PINNED_VALUES = {
         "trunk_dtype": "float32",  # every run before the field existed trained in float32
         "pool_pipeline_groups": 1,  # every batched run before the field existed used one group
         "suit_augment": False,  # no run before the field existed augmented
+        "suit_distill_coef": 0.0,  # no run before the field existed distilled
     },
 }
 

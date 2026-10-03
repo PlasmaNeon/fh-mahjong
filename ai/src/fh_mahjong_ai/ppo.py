@@ -174,6 +174,10 @@ class PPOConfig:
     # inverse-mapped action. Rows, actions, old_logprobs and values are stored as the policy
     # saw them, so PPO is unchanged. Changes what is collected: a recipe field.
     suit_augment: bool = False
+    # collector="batched": PPO adds suit_distill_coef * KL(teacher || policy), the teacher being
+    # the collection-time policy averaged over the six suit views of each stored row
+    # (RolloutBatch.teacher_logprobs). 0 = off and byte-identical. A recipe field.
+    suit_distill_coef: float = 0.0
     pool_max_size: int = 1
     pool_snapshot_interval: int = 10
     grp_checkpoint: Optional[Path] = None
@@ -195,6 +199,10 @@ class PPOConfig:
     def __post_init__(self) -> None:
         if self.suit_augment and self.collector != "batched":
             raise ValueError("suit_augment=True requires collector='batched'")
+        if self.suit_distill_coef < 0:
+            raise ValueError(f"suit_distill_coef must be >= 0, got {self.suit_distill_coef}")
+        if self.suit_distill_coef > 0 and self.collector != "batched":
+            raise ValueError("suit_distill_coef > 0 requires collector='batched'")
 
 
 @dataclass
