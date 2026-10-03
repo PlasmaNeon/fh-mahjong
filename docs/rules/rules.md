@@ -96,9 +96,10 @@ Fenghua Mahjong perfectly simulates a physical, two-tiered Mahjong wall. The sta
 ### Independence Variants (14 unique disconnected tiles, no melds)
 All bonuses are additive on top of the base. Multiple bonuses can combine.
 - **Independence (大大胡)**: +50 (base — always awarded for any independence hand).
-- **Closed Seven Stars (暗七星)**: +100 (All 7 honors, winning by Tsumo). Stacks: 50+100=150.
-- **Open Seven Stars (明七星)**: +50 (All 7 honors, winning by Ron). Stacks: 50+50=100.
-- **Independence Without a Suit (缺色)**: +100 (Missing one of the three suits). Stacks with Seven Stars: e.g. 50+100(closed)+100=250.
+- **Closed Seven Stars (暗七星)**: +100 (all 7 honors already in hand; the winning tile, self-drawn or claimed, is not an honor). Stacks: 50+100=150.
+- **Open Seven Stars (明七星)**: +50 (the winning tile, self-drawn or claimed, is the 7th honor; an unknown winning tile scores open). Stacks: 50+50=100.
+  - Seven Stars is pure: a wild counts only as its own face, so an honor-faced wild is that honor and a suit-faced wild never stands in for one.
+- **Independence Without a Suit (缺色)**: +100 (the winning hand's natural tiles lack one of man/pin/sou; wilds never count toward a suit, whatever their face). It needs at least one wild: two suits hold at most 3+3 Independence tiles, plus 7 honors, which is 13. Stacks with Seven Stars: e.g. 50+100(closed)+100=250.
 
 ### Seven Pairs Variants
 - **Straight Seven Pairs (无搭)**: 150 (No wild tiles).

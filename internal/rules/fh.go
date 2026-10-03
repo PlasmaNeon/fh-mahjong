@@ -253,16 +253,19 @@ func (e *handEvaluation) independenceRoute() *scoredRoute {
 	re := make([]*pb.ScoreEntry, 0)
 	// Base Independence is always +50
 	re = append(re, NewScoreEntry(PatternIndependence, 50))
-	// Seven Stars bonus stacks on top (closed +100, open +50)
+	// Seven Stars bonus stacks on top: open (+50) when the winning tile is the
+	// seventh honor, closed (+100) when all seven were already in hand and the
+	// hand wins on another tile — self-drawn or claimed alike. An unknown
+	// winning tile scores open: the seven honors cannot be shown to predate it.
 	if e.rules.hasAllSevenHonors(e.fullHand) {
-		if e.isTsumo {
+		if e.effectiveWinTile != nil && e.effectiveWinTile.Suit != pb.Suit_SUIT_JIHAI {
 			re = append(re, NewScoreEntry(PatternClosedSevenStars, 100))
 		} else {
 			re = append(re, NewScoreEntry(PatternOpenSevenStars, 50))
 		}
 	}
 	// Without-suit bonus stacks independently (+100), combinable with Seven Stars
-	if e.rules.isMissingASuit(e.fullHand) {
+	if e.rules.isMissingASuit(e.fullHand, e.wildHashes) {
 		re = append(re, NewScoreEntry(PatternIndependenceMissingSuit, 100))
 	}
 	return routeOf(re)
@@ -883,14 +886,19 @@ func (r *FenghuaRuleset) hasAllSevenHonors(hand []*pb.Tile) bool {
 	return len(honorCounts) == 7
 }
 
-func (r *FenghuaRuleset) isMissingASuit(hand []*pb.Tile) bool {
+// isMissingASuit reports whether the hand's natural tiles lack one of man,
+// pin and sou. Wilds never count toward a suit, whatever their face.
+func (r *FenghuaRuleset) isMissingASuit(hand []*pb.Tile, wildHashes map[uint32]bool) bool {
 	suits := make(map[pb.Suit]bool)
 	for _, t := range hand {
-		if t.Suit != pb.Suit_SUIT_JIHAI {
+		if wildHashes[tiles.KeyOf(t.Suit, t.Value)] {
+			continue
+		}
+		switch t.Suit {
+		case pb.Suit_SUIT_MAN, pb.Suit_SUIT_PIN, pb.Suit_SUIT_SOU:
 			suits[t.Suit] = true
 		}
 	}
-	// Missing at least one of the 3 main suits
 	return len(suits) < 3
 }
 

@@ -1891,3 +1891,127 @@ func TestFenghuaRuleset_FourFlowers_RequiresCompleteGroup(t *testing.T) {
 		})
 	}
 }
+
+// independenceBonusTiles builds tiles from "1m4m7m" notation ('f' = flower).
+func independenceBonusTiles(t *testing.T, faces string, firstID uint32) []*pb.Tile {
+	t.Helper()
+	suits := map[byte]pb.Suit{'m': pb.Suit_SUIT_MAN, 'p': pb.Suit_SUIT_PIN, 's': pb.Suit_SUIT_SOU,
+		'z': pb.Suit_SUIT_JIHAI, 'f': pb.Suit_SUIT_FLOWER}
+	out := []*pb.Tile{}
+	for i := 0; i+1 < len(faces); i += 2 {
+		suit, ok := suits[faces[i+1]]
+		if !ok {
+			t.Fatalf("bad tile %q", faces[i:i+2])
+		}
+		out = append(out, &pb.Tile{Id: firstID + uint32(i/2), Suit: suit, Value: uint32(faces[i] - '0')})
+	}
+	return out
+}
+
+func patternSet(entries []*pb.ScoreEntry) map[string]bool {
+	ids := map[string]bool{}
+	for _, e := range entries {
+		ids[e.PatternId] = true
+	}
+	return ids
+}
+
+// Seven Stars is closed when all seven honors are already in hand and the
+// winning tile is something else, open when the winning tile is the seventh
+// honor — whether it was self-drawn or claimed.
+func TestFenghuaRuleset_SevenStarsOpenOrClosedByWinningTile(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
+	tsumoState := func(hand []*pb.Tile, drawn *pb.Tile) *pb.GameState {
+		id := int32(drawn.Id)
+		return &pb.GameState{Players: []*pb.PlayerState{{ClosedHand: hand, DrawnTileId: &id}}}
+	}
+	cases := []struct {
+		name   string
+		hand   string // 13 tiles
+		win    string // winning tile
+		tsumo  bool
+		closed bool
+	}{
+		{"ron on a suit tile", "1m4m7m2p5p8p1z2z3z4z5z6z7z", "3s", false, true},
+		{"tsumo on a suit tile", "1m4m7m2p5p8p1z2z3z4z5z6z7z", "3s", true, true},
+		{"ron on the seventh honor", "1m4m7m2p5p8p3s1z2z3z4z5z6z", "7z", false, false},
+		{"tsumo on the seventh honor", "1m4m7m2p5p8p3s1z2z3z4z5z6z", "7z", true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hand := independenceBonusTiles(t, tc.hand, 1)
+			win := independenceBonusTiles(t, tc.win, 100)[0]
+			var ok bool
+			var entries []*pb.ScoreEntry
+			if tc.tsumo {
+				full := append(append([]*pb.Tile{}, hand...), win)
+				_, entries, ok = r.EvaluateHand(full, nil, nil, tsumoState(full, win), 0, true)
+			} else {
+				_, entries, ok = r.EvaluateHand(hand, nil, win, nil, 0, false)
+			}
+			ids := patternSet(entries)
+			if !ok || !ids[rules.PatternIndependence] {
+				t.Fatalf("expected an Independence win, got ok=%v %v", ok, ids)
+			}
+			if ids[rules.PatternClosedSevenStars] != tc.closed || ids[rules.PatternOpenSevenStars] == tc.closed {
+				t.Fatalf("closed=%v open=%v, want closed=%v", ids[rules.PatternClosedSevenStars],
+					ids[rules.PatternOpenSevenStars], tc.closed)
+			}
+		})
+	}
+}
+
+// Seven Stars must be pure: a suit-faced wild cannot stand in for a missing
+// honor, but a wild whose own face is an honor counts as that honor.
+func TestFenghuaRuleset_SevenStarsPurity(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
+	win := independenceBonusTiles(t, "3s", 100)[0]
+
+	hand := independenceBonusTiles(t, "1m4m7m2p5p8p1z2z3z4z5z6z9p", 1) // 9p wild instead of 7z
+	_, entries, ok := r.EvaluateHand(hand, nil, win, wildState(pb.Suit_SUIT_PIN, 9), 0, false)
+	ids := patternSet(entries)
+	if !ok || !ids[rules.PatternIndependence] {
+		t.Fatalf("expected an Independence win, got ok=%v %v", ok, ids)
+	}
+	if ids[rules.PatternClosedSevenStars] || ids[rules.PatternOpenSevenStars] {
+		t.Fatalf("a suit-faced wild must not complete Seven Stars: %v", ids)
+	}
+
+	hand = independenceBonusTiles(t, "1m4m7m2p5p8p1z2z3z4z5z6z7z", 1) // 7z is itself wild
+	_, entries, ok = r.EvaluateHand(hand, nil, win, wildState(pb.Suit_SUIT_JIHAI, 7), 0, false)
+	ids = patternSet(entries)
+	if !ok || !ids[rules.PatternClosedSevenStars] {
+		t.Fatalf("an honor-faced wild counts as its own honor: ok=%v %v", ok, ids)
+	}
+}
+
+// Missing Suit looks only at natural man/pin/sou tiles: wilds never count
+// toward a suit, whatever their face (flower or suit).
+func TestFenghuaRuleset_MissingSuitIgnoresWilds(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
+	win := independenceBonusTiles(t, "7z", 100)[0]
+	cases := []struct {
+		name    string
+		hand    string // 13 tiles
+		wild    *pb.GameState
+		missing bool
+	}{
+		{"flower wild", "1m4m7m2p5p8p1z2z3z4z5z6z2f", wildState(pb.Suit_SUIT_FLOWER, 2), true},
+		{"wild faced in the missing suit", "1m4m7m2p5p8p1z2z3z4z5z6z9s", wildState(pb.Suit_SUIT_SOU, 9), true},
+		{"wild faced in a present suit", "1m4m7m2p5p8p1z2z3z4z5z6z9p", wildState(pb.Suit_SUIT_PIN, 9), true},
+		{"natural tile of every suit", "1m4m7m2p5p8p3s1z2z3z4z5z6z", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hand := independenceBonusTiles(t, tc.hand, 1)
+			_, entries, ok := r.EvaluateHand(hand, nil, win, tc.wild, 0, false)
+			ids := patternSet(entries)
+			if !ok || !ids[rules.PatternIndependence] {
+				t.Fatalf("expected an Independence win, got ok=%v %v", ok, ids)
+			}
+			if ids[rules.PatternIndependenceMissingSuit] != tc.missing {
+				t.Fatalf("missing suit = %v, want %v (%v)", ids[rules.PatternIndependenceMissingSuit], tc.missing, ids)
+			}
+		})
+	}
+}
