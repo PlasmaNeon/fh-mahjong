@@ -54,11 +54,20 @@ All of it is off by default and byte-identical when off.
 - Same seeds give the same collection digest with β > 0 (greedy `per_row` and sampled `batched`).
 - The config, CLI and resume contracts above raise as specified.
 
-## Pre-launch measurements (recorded here before launch; they do not change the protocol)
+## Pre-launch measurements (recorded before launch; they do not change the protocol)
 
-1. Pace: three iterations of both arms side by side on screening seeds (base 910,000, never cited), giving
-   the measured seconds per iteration and the lap's expected duration.
-2. Starting scale: mean KL(teacher ‖ net) over one 320-match collection of `3fdfe246` on screening seeds.
+Commit `1c160e32`, screening seeds (base 910,000, never cited).
+
+1. **Pace**, three iterations of both arms side by side: distill ~140 s/iteration, control ~95 s/iteration.
+   The control finishes in ~4 h; the distill arm, alone for its last ~45 iterations, in ~5.5 h; then about
+   1.5 h for the five evaluations.
+2. **Starting scale**, KL(teacher ‖ net) of `3fdfe246` over one 320-match collection (625,540 decisions):
+   mean 0.669, median 0.008, p99 7.58 nats. Most decisions agree with the teacher; about 1% disagree
+   sharply and carry the mean.
+3. Three pace iterations of the distill arm: `distill_kl` 0.211 → 0.075 → 0.048 and policy entropy
+   0.176 → 0.339 (control: 0.176 → 0.177). The teacher is softer than the net where its suit views
+   disagree, so the term raises entropy. Greedy evaluation does not read entropy; collection samples
+   from the softer policy.
 
 ## Protocol
 
