@@ -113,7 +113,19 @@ def test_teacher_log_probs_is_float32_with_finite_masked_entries():
     teacher = teacher_log_probs(averaged)
     assert teacher.dtype == np.float32
     assert teacher[0, 1] == np.finfo(np.float32).min
-    assert teacher[0, 0] == np.float32(-0.5) and teacher[0, 2] == np.float32(-1.25)
+
+
+def test_teacher_log_probs_is_a_distribution_over_the_legal_actions():
+    # A mean of log-probabilities is a geometric mean: its probabilities sum to less than 1,
+    # and a "KL" against it can go negative. The teacher is that mean renormalized.
+    rng = np.random.default_rng(1)
+    views = np.log(rng.dirichlet(np.ones(5), size=6))  # six views' log-policies over 5 actions
+    averaged = np.concatenate([views.mean(axis=0), [-np.inf]])[None]
+    assert np.exp(averaged[0, :5]).sum() < 1
+    teacher = teacher_log_probs(averaged)
+    assert np.isclose(np.exp(teacher[0, :5].astype(np.float64)).sum(), 1.0, atol=1e-6)
+    assert np.allclose(teacher[0, :5] - averaged[0, :5], teacher[0, 0] - averaged[0, 0], atol=1e-6)
+    assert teacher[0, 5] == np.finfo(np.float32).min
 
 
 def test_average_view_log_probs_of_identical_views_is_the_view():
@@ -193,6 +205,9 @@ def test_teacher_is_the_suit_averaged_policy_of_each_stored_row(suit_augment):
                                            batch.event_lengths[i:i + 1])
         assert np.array_equal(teacher_log_probs(total)[0], batch.teacher_logprobs[i]), i
     assert (batch.teacher_logprobs[batch.action_mask == 0] == np.finfo(np.float32).min).all()
+    legal_mass = np.where(batch.action_mask > 0,
+                          np.exp(batch.teacher_logprobs.astype(np.float64)), 0.0).sum(axis=1)
+    assert np.allclose(legal_mass, 1.0, atol=1e-5)
 
 
 @requires_go_lib

@@ -148,10 +148,16 @@ def average_view_log_probs(logits, masks: np.ndarray,
 
 
 def teacher_log_probs(averaged: np.ndarray) -> np.ndarray:
-    """float32 distillation targets from `average_view_log_probs` output: illegal actions at
+    """float32 distillation targets from `average_view_log_probs` output: the mean
+    log-probabilities renormalized over the legal actions -- the normalized geometric mean of
+    the views' policies, a distribution with the averaged policy's argmax. Illegal actions sit at
     float32's finite minimum, the value PolicyValueNet masks logits to."""
-    out = np.asarray(averaged).astype(np.float32)
-    out[~np.isfinite(averaged)] = np.finfo(np.float32).min
+    averaged = np.asarray(averaged, dtype=np.float64)
+    legal = np.isfinite(averaged)
+    peak = np.where(legal, averaged, -np.inf).max(axis=1, keepdims=True)
+    mass = np.where(legal, np.exp(averaged - peak), 0.0).sum(axis=1, keepdims=True)
+    out = np.where(legal, averaged - peak - np.log(mass), 0.0).astype(np.float32)
+    out[~legal] = np.finfo(np.float32).min
     return out
 
 

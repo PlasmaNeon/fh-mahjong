@@ -25,10 +25,11 @@ All of it is off by default and byte-identical when off.
 - **Teacher.** When β > 0 the batched collector runs, after each round's acting forward, one extra no-grad
   forward over the six suit permutations of the round's stored rows (`suit_symmetry.permute_rows`, so in the
   augmented view each row was stored in). The six views' masked log-probabilities are re-indexed to the
-  stored view and averaged — the `suit_averaged_log_probs` arithmetic — giving `teacher_logprobs`
-  `[rows, 204]` float32, illegal actions at float32's finite minimum. In `per_row` inference mode it runs
-  one decision at a time (six rows per forward), so the teacher equals `suit_averaged_log_probs` on that row
-  exactly. The acting forward, sampling, `old_logprobs` and `values` are untouched. The teacher is the
+  stored view and averaged — the `suit_averaged_log_probs` arithmetic — then renormalized over the legal
+  actions (`teacher_log_probs`): the normalized geometric mean of the six views' policies, a distribution
+  with the averaged policy's argmax. That gives `teacher_logprobs` `[rows, 204]` float32, illegal actions
+  at float32's finite minimum. In `per_row` inference mode it runs one decision at a time (six rows per
+  forward), so the teacher equals `teacher_log_probs(suit_averaged_log_probs(...))` on that row exactly. The acting forward, sampling, `old_logprobs` and `values` are untouched. The teacher is the
   collection-time policy, the same snapshot as `old_logprobs`.
 - **Storage.** `RolloutBatch.teacher_logprobs` (optional, `None` when β = 0), carried per seat through
   `_B2bMatchState`/`_finalize_b2b_match` and the row sink like `logprobs`. About 0.8 KB per row, ~10% of
@@ -46,8 +47,8 @@ All of it is off by default and byte-identical when off.
 
 - β = 0: the three process-collector golden digests and the batched-collector parity/digest tests are
   unchanged.
-- `teacher_logprobs` equals `suit_averaged_log_probs` on the stored rows exactly in `per_row` mode, with and
-  without `suit_augment`.
+- `teacher_logprobs` equals `teacher_log_probs(suit_averaged_log_probs(...))` on the stored rows exactly in
+  `per_row` mode, with and without `suit_augment`, and every row is a distribution over its legal actions.
 - The KL term is 0 when the teacher equals the net's policy, positive otherwise, and one gradient step
   lowers it.
 - Same seeds give the same collection digest with β > 0 (greedy `per_row` and sampled `batched`).
