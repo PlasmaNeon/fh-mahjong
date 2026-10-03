@@ -90,7 +90,7 @@ func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64, o
 	setRawCountPlane(planes, 38, aggregateDiscards(state), 4)
 
 	scalars[0] = normalizeUint(self.SeatWind, 4)
-	scalars[1] = normalizeUint(state.PrevailingWind, 4)
+	scalars[1] = normalizeUint(windOffsetFromEast(state.PrevailingWind), 4)
 	scalars[2] = float32(relativeSeat(seat, state.ActivePlayer)) / 3.0
 	scalars[3] = float32(state.Phase) / 4.0
 	scalars[4] = float32(state.WallCount) / 144.0
@@ -679,6 +679,16 @@ func channelOffset(channel int) int {
 
 func relativeSeat(observer uint32, target uint32) uint32 {
 	return (target + 4 - observer) % 4
+}
+
+// windOffsetFromEast encodes a wind relative to East (East and unset -> 0). The
+// prevailing wind is always East, so this keeps scalar 1 at the 0 every checkpoint
+// was trained on while the engine left the prevailing wind unset.
+func windOffsetFromEast(wind uint32) uint32 {
+	if wind <= 1 {
+		return 0
+	}
+	return wind - 1
 }
 
 func normalizeUint(value uint32, denom float32) float32 {

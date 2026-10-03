@@ -71,14 +71,17 @@ func NewGame(matchID string, rules RuleEngine, opts MatchOptions) *Game {
 	g := &Game{
 		Rules: rules,
 		State: &pb.GameState{
-			MatchId:       matchID,
-			Phase:         pb.GamePhase_PHASE_INIT,
-			ActivePlayer:  0,
-			WallCount:     0,
-			HandNum:       1, // East 1
-			Players:       make([]*pb.PlayerState, 4),
-			ActiveDiscard: nil,
-			MatchMode:     mode,
+			MatchId:      matchID,
+			Phase:        pb.GamePhase_PHASE_INIT,
+			ActivePlayer: 0,
+			WallCount:    0,
+			HandNum:      1, // East 1
+			// The prevailing wind (圈风) is East for every hand of every match:
+			// a chongci match is played entirely in the East round.
+			PrevailingWind: 1,
+			Players:        make([]*pb.PlayerState, 4),
+			ActiveDiscard:  nil,
+			MatchMode:      mode,
 		},
 		interruptQueue: make(map[uint32]*pb.PlayerAction),
 	}
