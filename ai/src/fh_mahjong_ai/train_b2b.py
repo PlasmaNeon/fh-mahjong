@@ -804,6 +804,7 @@ class _B2bMatchState:
     seat_events: list[list] = field(default_factory=lambda: [[], [], [], []])
     seat_lengths: list[list] = field(default_factory=lambda: [[], [], [], []])
     seat_hand_ids: list[list] = field(default_factory=lambda: [[], [], [], []])
+    seat_teacher: list[list] = field(default_factory=lambda: [[], [], [], []])  # suit distillation
     hand_id: int = 0
     hand_outcomes: dict[int, dict] = field(default_factory=dict)
     match_net: np.ndarray = field(default_factory=lambda: np.zeros(4, dtype=np.float64))
@@ -858,7 +859,8 @@ def _finalize_b2b_match(ms: _B2bMatchState, config: PPOConfig, cfg: EnvConfig,
     (planes, scalars, masks, actions, logprobs, values, rewards, dones,
     events, lengths, dealin, rank) to a flat list in seat-contiguous emission
     order (seats 0..3, seats with zero decisions skipped); `telemetry` is the
-    seed-keyed match-level dict. Applies the placement bonus to each seat's
+    seed-keyed match-level dict. With `config.suit_distill_coef > 0`, `rows` also carries
+    `"teacher"`. Applies the placement bonus to each seat's
     last transition (mutates `ms.seat_rewards`). Every placement-bonus
     fail-closed check (truncated match, zero-decision seat, nonzero bonus
     sum) raises from here.
@@ -938,6 +940,9 @@ def _finalize_b2b_match(ms: _B2bMatchState, config: PPOConfig, cfg: EnvConfig,
         rows["dealin"].extend(dealin_labels[offset : offset + n].tolist())
         rows["rank"].extend(rank_labels[offset : offset + n].tolist())
         offset += n
+    if config.suit_distill_coef > 0:
+        # Seat-contiguous like every other key; a seat without decisions has no teacher rows.
+        rows["teacher"] = [row for k in range(4) for row in ms.seat_teacher[k]]
     return rows, telemetry
 
 

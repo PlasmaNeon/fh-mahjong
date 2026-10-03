@@ -1,15 +1,18 @@
 """Suit distillation (PPOConfig.suit_distill_coef): spec worklog/specs/20261002-suit-distill-lap.md."""
 
 import os
+from dataclasses import replace
 
 import numpy as np
 import pytest
 import torch
 
 from conftest import small_model_config
+from fh_mahjong_ai.batched_b2b import _ARRAY_ROW_DTYPES, _TEACHER_ROW_DTYPE, _ArrayRowSink
 from fh_mahjong_ai.config import EnvConfig, ModelConfig
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.ppo import PPOConfig
+from fh_mahjong_ai.ppo import PPOConfig, RolloutBatch
+from fh_mahjong_ai.scripts.collect_bench import _digest_batch, _semantic_digest_batch
 from fh_mahjong_ai.suit_symmetry import (
     SUIT_PERMUTATIONS, average_view_log_probs, permute_rows, stack_views, suit_averaged_log_probs,
     teacher_log_probs, unpermute_action_values,
@@ -119,3 +122,34 @@ def test_average_view_log_probs_of_identical_views_is_the_view():
     want = torch.log_softmax(logits[0].double(), dim=0).numpy()
     assert np.allclose(total[0, [0, 2, 3]], want[[0, 2, 3]])
     assert np.isneginf(total[0, 1])
+
+
+def _tiny_batch(n=3):
+    z = np.zeros((n, 2), np.float32)
+    return RolloutBatch(planes=z, scalars=z, action_mask=z.astype(np.int8),
+                        actions=np.zeros(n, np.int64), old_logprobs=np.zeros(n, np.float32),
+                        values=np.zeros(n, np.float32), rewards=np.zeros(n, np.float32),
+                        dones=np.ones(n, np.float32))
+
+
+def test_digest_covers_the_teacher_only_when_present():
+    batch = _tiny_batch()
+    assert batch.teacher_logprobs is None
+    zeros = replace(batch, teacher_logprobs=np.zeros((3, 204), np.float32))
+    ones = replace(batch, teacher_logprobs=np.ones((3, 204), np.float32))
+    assert _digest_batch(1, 1, zeros) != _digest_batch(1, 1, batch)
+    assert _digest_batch(1, 1, zeros) != _digest_batch(1, 1, ones)
+    # A batched forward rounds the teacher by batch composition, like old_logprobs.
+    assert _semantic_digest_batch(1, 1, zeros) == _semantic_digest_batch(1, 1, ones)
+
+
+def test_row_sink_carries_teacher_rows_and_refuses_a_short_teacher():
+    sink = _ArrayRowSink(capacity=10, dtypes={**_ARRAY_ROW_DTYPES, **_TEACHER_ROW_DTYPE})
+    rows = {"planes": [np.zeros((2, 3), np.float32)] * 2, "scalars": [np.zeros(4, np.float32)] * 2,
+            "masks": [np.zeros(5, np.int8)] * 2, "events": [np.zeros(1, np.uint32)] * 2,
+            "actions": [0, 1], "teacher": [np.full(5, -1.0, np.float32)] * 2}
+    sink.write(rows)
+    assert sink.arrays()["teacher"].shape == (2, 5)
+    assert sink.arrays()["teacher"].dtype == np.float32
+    with pytest.raises(RuntimeError, match="teacher"):
+        sink.write({**rows, "teacher": rows["teacher"][:1]})

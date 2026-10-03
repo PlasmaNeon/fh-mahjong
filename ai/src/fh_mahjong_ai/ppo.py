@@ -224,6 +224,10 @@ class RolloutBatch:
     # in collection order). Carried separately from the row arrays so it can
     # never misalign them; covered by the collect-bench digest.
     match_telemetry: list | None = None
+    # [N, A] float32: the collection-time suit-averaged policy's log-probabilities for each row,
+    # in the view the row was stored in (suit_distill_coef > 0 only); illegal actions at
+    # float32's finite minimum.
+    teacher_logprobs: np.ndarray | None = None
 
     def __len__(self) -> int:
         return int(self.actions.shape[0])

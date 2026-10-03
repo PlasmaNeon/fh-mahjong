@@ -268,6 +268,8 @@ def release_freed_heap() -> bool:
 # Row keys whose per-decision entries are arrays, and the batch dtype of each.
 _ARRAY_ROW_DTYPES = {"planes": np.float32, "scalars": np.float32,
                      "masks": np.int8, "events": np.uint32}
+# The suit-distillation teacher row (suit_distill_coef > 0), written through the sink like planes.
+_TEACHER_ROW_DTYPE = {"teacher": np.float32}
 
 
 def _lazy_empty(shape: tuple, dtype) -> np.ndarray:
@@ -307,9 +309,10 @@ class _ArrayRowSink:
     38 GiB guard at assembly.
     """
 
-    def __init__(self, capacity: int) -> None:
+    def __init__(self, capacity: int, dtypes: Optional[dict] = None) -> None:
         self.capacity = int(capacity)
         self.rows = 0
+        self.dtypes = dict(_ARRAY_ROW_DTYPES if dtypes is None else dtypes)
         self.buffers: dict[str, np.ndarray] = {}
 
     def write(self, match_rows: dict[str, list]) -> None:
@@ -319,7 +322,7 @@ class _ArrayRowSink:
         if self.rows + n > self.capacity:
             raise RuntimeError(f"batched B2b rows exceed the sink capacity "
                                f"({self.rows} + {n} > {self.capacity})")
-        for key, dtype in _ARRAY_ROW_DTYPES.items():
+        for key, dtype in self.dtypes.items():
             rows = match_rows[key]
             if len(rows) != n:
                 raise RuntimeError(f"match has {len(rows)} {key} rows but {n} actions")
