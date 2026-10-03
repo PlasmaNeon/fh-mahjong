@@ -1039,6 +1039,49 @@ Decision:       protocol closed; the 192×24 big arm was never launched
 Interpretation: a recipe-gate failure, not a scale NULL. The event path engaged (no dormancy).
                 Record: [`20260825-mortal-scale-scratch-status.md`](./20260825-mortal-scale-scratch-status.md).
 
+### 2026-10-01 — benchmark vs production: current best takes 33.5% of 1sts at a production table
+
+Setup:          `fh-mj-benchmark --opponent-checkpoint` (PR #266). Suit-aug ext `iter_150`
+                (`3fdfe246`), played suit-averaged, in one seat vs 3 seats of the production model,
+                deep4 `iter275` (`377d99bc`, greedy as served). 400 chongci matches per seat,
+                seed-base 1000, zero truncations. Reference: `iter275` in all four seats, same seeds.
+                Reports: `~/fh-mahjong-models/benchmarks/{saug-ext-iter150-suits-vs-prod275,prod275-mirror}-1600m.*`
+
+| 1600 matches | current best vs 3× prod | prod mirror |
+|---|---|---|
+| 1st / 2nd / 3rd / 4th | 33.5 / 26.9 / 20.8 / 18.8% | 26.9 / 25.5 / 23.5 / 24.1% |
+| mean placement (±CI95) | +0.167 ± 0.036 | +0.035 ± 0.037 |
+| win rate | 25.5% [25.2, 25.8] | 25.4% [25.0, 25.7] |
+| deal-in rate | 11.7% [11.5, 12.0] | 12.0% [11.8, 12.2] |
+| avg win value | 228.7 [225.4, 232.0] | 207.8 [204.7, 211.1] |
+| avg deal-in loss | 112.4 [110.9, 113.9] | 111.6 [110.2, 113.0] |
+
+Interpretation: the edge is hand value, not frequency: same win rate, wins worth +10%, deal-in
+                −0.3pp. The mirror is non-zero because each seat plays its own seeds; its +0.035 is
+                the seed-noise floor. A descriptive yardstick on a reused window, not a gate, and
+                head-to-head vs one opponent.
+
+### 2026-10-01 — benchmark vs anchor075: current best +0.097 at a champion table, by win frequency
+
+Setup:          as the production-table entry above, with 3 seats of `anchor075` (`ce9d867f`, greedy,
+                plain) and win-pattern counts (`RoundOutcome.breakdown`, PR #266). Same seeds, zero
+                truncations. Report: `~/fh-mahjong-models/benchmarks/saug-ext-iter150-suits-vs-anchor075-1600m.*`
+
+| 1600 matches | current best vs 3× anchor075 |
+|---|---|
+| 1st / 2nd / 3rd / 4th | 30.5 / 24.4 / 24.4 / 20.8% |
+| mean placement (±CI95) | +0.097 ± 0.037 |
+| win rate (per seat: opponents 24.4%) | 26.7% [26.4, 27.0] |
+| deal-in rate | 11.6% [11.4, 11.8] |
+| avg win value / avg deal-in loss | 225.4 / 116.5 |
+| avg total points per win (opponents) | 46.6 (47.7) |
+| Independence 大大胡 share of wins (opponents) | 47.8% (53.7%) |
+
+Interpretation: against anchor075 the edge is win frequency (+2.3pp per hand), with slightly
+                smaller hands: it chases Independence less. Against production it was win value.
+                Independence (50 pts) is in about half of all wins for every policy at these
+                tables. Descriptive yardstick on a reused window, not a gate.
+
 ## Maintenance Protocol
 
 Record a lap twice: a pre-registration entry before any training compute is spent, and an

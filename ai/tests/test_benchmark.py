@@ -150,5 +150,99 @@ class MainTest(unittest.TestCase):
             self.assertIn("ci95", payload["overall"])
 
 
+class ChunkingTest(unittest.TestCase):
+    def test_plan_chunks_covers_each_seats_range_once(self) -> None:
+        jobs = benchmark_cli.plan_chunks(seed_base=100, episodes_per_seat=10, workers=2)
+        for seat in range(4):
+            seeds = [s for job_seat, chunk in jobs if job_seat == seat for s in chunk]
+            self.assertEqual(seeds, list(range(100 + 10 * seat, 110 + 10 * seat)))
+        self.assertGreater(len(jobs), 4)
+
+    def test_combine_chunk_reports_equals_one_report(self) -> None:
+        a = {**_seat_report(0, [[_win(0)], [_deal_in(0)]], placements=[1.0, -1.0]),
+             "truncation_count": 1, "round_outcome_counts": {"win": 1}}
+        b = {**_seat_report(0, [[_win(0)]], placements=[1.0 / 3.0]),
+             "truncation_count": 0, "round_outcome_counts": {"win": 1, "deal_in": 2}}
+        combined = benchmark_cli.combine_chunk_reports([a, b])
+        whole = _seat_report(0, [[_win(0)], [_deal_in(0)], [_win(0)]])
+        self.assertEqual(combined["hand_stats"], whole["hand_stats"])
+        self.assertEqual(combined["per_episode_placements"], [1.0, -1.0, 1.0 / 3.0])
+        self.assertAlmostEqual(combined["mean_placement"], (1.0 / 3.0) / 3)
+        self.assertEqual(combined["episodes"], 3)
+        self.assertAlmostEqual(combined["truncation_rate"], 1 / 3)
+        self.assertEqual(combined["round_outcome_counts"], {"deal_in": 2, "win": 2})
+
+
+class StrongTableMainTest(unittest.TestCase):
+    def test_opponent_checkpoint_and_suit_averaging_reach_every_seat(self) -> None:
+        calls = []
+
+        def fake_eval(**kwargs):
+            calls.append(kwargs)
+            return _seat_report(kwargs["learning_seat"], [[_win(kwargs["learning_seat"])]])
+
+        fake_model = mock.Mock()
+        fake_model.model_config.event_window = 128
+        opponent_policy = mock.Mock()
+        opponents = {"kind": "checkpoint", "checkpoint": "prod.pt", "checkpoint_sha256": "ab",
+                     "event_window": 0, "decision": "greedy"}
+
+        with TemporaryDirectory() as tmp:
+            ckpt = Path(tmp) / "candidate.pt"
+            ckpt.write_bytes(b"fake")
+            prod = Path(tmp) / "prod.pt"
+            prod.write_bytes(b"fake")
+            with mock.patch.object(
+                benchmark_cli.CheckpointPolicy, "from_checkpoint",
+                return_value=mock.Mock(model=fake_model),
+            ), mock.patch.object(
+                benchmark_cli, "evaluate_policy_online", side_effect=fake_eval,
+            ), mock.patch.object(
+                benchmark_cli, "SuitAveragedGreedyPolicy", return_value="averaged",
+            ) as averaged, mock.patch.object(
+                benchmark_cli, "load_opponent_policy", return_value=(opponent_policy, opponents),
+            ) as load_opponent:
+                benchmark_cli.main([
+                    "--checkpoint", str(ckpt),
+                    "--opponent-checkpoint", str(prod),
+                    "--symmetry-average", "suits",
+                    "--episodes-per-seat", "1",
+                    "--bootstrap-iters", "10",
+                ])
+
+            averaged.assert_called_once()
+            # The table's event window is the candidate's; the opponent is checked against it.
+            self.assertEqual(load_opponent.call_args.args[2], 128)
+            self.assertEqual([c["learning_seat"] for c in calls], [0, 1, 2, 3])
+            self.assertTrue(all(c["policy"] == "averaged" for c in calls))
+            self.assertTrue(all(c["opponent_policy"] is opponent_policy for c in calls))
+            payload = json.loads(Path(str(ckpt) + ".benchmark.json").read_text())
+            self.assertEqual(payload["opponents"], opponents)
+            self.assertEqual(payload["policy_transform"], {"symmetry": "suits"})
+
+
+
+class WinPatternTableTest(unittest.TestCase):
+    def test_merge_pools_seat_tallies_and_table_lists_patterns(self) -> None:
+        from fh_mahjong_ai.hand_stats import new_win_pattern_tally, tally_win_patterns
+        reports = {}
+        for seat in range(4):
+            tally = new_win_pattern_tally()
+            tally_win_patterns(tally, {"is_draw": False, "winner_seat": seat, "win_type_name": "ACTION_TSUMO",
+                                       "total_score": 5, "breakdown": [
+                                           {"pattern_id": "base_point", "pattern_name": "Base Point (坐台)", "points": 1},
+                                           {"pattern_id": "pure_one_suit", "pattern_name": "Pure One Suit (清一色)", "points": 4}]},
+                               seat)
+            reports[seat] = {**_seat_report(seat, [[_win(seat)]]), "win_pattern_stats": tally}
+        merged = benchmark_cli.merge_seat_reports(reports, bootstrap_iters=10, bootstrap_seed=0)
+        patterns = merged["overall"]["win_patterns"]
+        self.assertEqual(patterns["learner"]["wins"], 4)
+        self.assertEqual(patterns["learner"]["patterns"]["pure_one_suit"]["count"], 4)
+        table = benchmark_cli.format_win_pattern_table(patterns)
+        self.assertIn("Pure One Suit (清一色)", table)
+        self.assertIn("100.0%", table)
+        self.assertIn("opponents (no wins)", table)
+
+
 if __name__ == "__main__":
     unittest.main()

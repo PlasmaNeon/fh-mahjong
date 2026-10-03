@@ -725,6 +725,7 @@ func roundOutcome(state *pb.GameState) *pb.RoundOutcome {
 		DiscarderSeat: result.DiscarderSeat,
 		TotalScore:    result.TotalScore,
 		Payouts:       clonePayouts(result.Payouts),
+		Breakdown:     cloneBreakdown(result.Breakdown),
 	}
 }
 
@@ -739,7 +740,26 @@ func cloneRoundOutcome(outcome *pb.RoundOutcome) *pb.RoundOutcome {
 		DiscarderSeat: outcome.DiscarderSeat,
 		TotalScore:    outcome.TotalScore,
 		Payouts:       clonePayouts(outcome.Payouts),
+		Breakdown:     cloneBreakdown(outcome.Breakdown),
 	}
+}
+
+func cloneBreakdown(entries []*pb.ScoreEntry) []*pb.ScoreEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	cloned := make([]*pb.ScoreEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		cloned = append(cloned, &pb.ScoreEntry{
+			PatternName: entry.PatternName,
+			Points:      entry.Points,
+			PatternId:   entry.PatternId,
+		})
+	}
+	return cloned
 }
 
 func clonePayouts(payouts []*pb.PlayerPayout) []*pb.PlayerPayout {

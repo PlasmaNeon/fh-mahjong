@@ -1284,6 +1284,7 @@ type RoundOutcome struct {
 	DiscarderSeat uint32                 `protobuf:"varint,4,opt,name=discarder_seat,json=discarderSeat,proto3" json:"discarder_seat,omitempty"`
 	TotalScore    int32                  `protobuf:"varint,5,opt,name=total_score,json=totalScore,proto3" json:"total_score,omitempty"`
 	Payouts       []*PlayerPayout        `protobuf:"bytes,6,rep,name=payouts,proto3" json:"payouts,omitempty"`
+	Breakdown     []*ScoreEntry          `protobuf:"bytes,7,rep,name=breakdown,proto3" json:"breakdown,omitempty"` // Winner's pattern-by-pattern scoring; empty on a draw
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1356,6 +1357,13 @@ func (x *RoundOutcome) GetTotalScore() int32 {
 func (x *RoundOutcome) GetPayouts() []*PlayerPayout {
 	if x != nil {
 		return x.Payouts
+	}
+	return nil
+}
+
+func (x *RoundOutcome) GetBreakdown() []*ScoreEntry {
+	if x != nil {
+		return x.Breakdown
 	}
 	return nil
 }
@@ -3285,7 +3293,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"totalScore\x12,\n" +
 	"\apayouts\x18\t \x03(\v2\x12.game.PlayerPayoutR\apayouts\x12\x17\n" +
 	"\ais_draw\x18\n" +
-	" \x01(\bR\x06isDraw\"\xeb\x01\n" +
+	" \x01(\bR\x06isDraw\"\x9b\x02\n" +
 	"\fRoundOutcome\x12\x17\n" +
 	"\ais_draw\x18\x01 \x01(\bR\x06isDraw\x12\x1f\n" +
 	"\vwinner_seat\x18\x02 \x01(\rR\n" +
@@ -3294,7 +3302,8 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x0ediscarder_seat\x18\x04 \x01(\rR\rdiscarderSeat\x12\x1f\n" +
 	"\vtotal_score\x18\x05 \x01(\x05R\n" +
 	"totalScore\x12,\n" +
-	"\apayouts\x18\x06 \x03(\v2\x12.game.PlayerPayoutR\apayouts\"\xd6\x02\n" +
+	"\apayouts\x18\x06 \x03(\v2\x12.game.PlayerPayoutR\apayouts\x12.\n" +
+	"\tbreakdown\x18\a \x03(\v2\x10.game.ScoreEntryR\tbreakdown\"\xd6\x02\n" +
 	"\tEnvConfig\x12%\n" +
 	"\x0elearning_seats\x18\x01 \x03(\rR\rlearningSeats\x120\n" +
 	"\x14auto_play_heuristics\x18\x02 \x01(\bR\x12autoPlayHeuristics\x12#\n" +
@@ -3595,36 +3604,37 @@ var file_proto_game_proto_depIdxs = []int32{
 	12, // 25: game.RoundResult.payouts:type_name -> game.PlayerPayout
 	1,  // 26: game.RoundOutcome.win_type:type_name -> game.ActionType
 	12, // 27: game.RoundOutcome.payouts:type_name -> game.PlayerPayout
-	5,  // 28: game.EnvConfig.match_mode:type_name -> game.MatchMode
-	29, // 29: game.EnvConfig.chongci_config:type_name -> game.ChongciConfig
-	3,  // 30: game.SeatObservation.phase:type_name -> game.GamePhase
-	15, // 31: game.EnvResetRequest.config:type_name -> game.EnvConfig
-	16, // 32: game.EnvResetResponse.observation:type_name -> game.SeatObservation
-	14, // 33: game.EnvResetResponse.round_outcome:type_name -> game.RoundOutcome
-	16, // 34: game.EnvStepResponse.observation:type_name -> game.SeatObservation
-	14, // 35: game.EnvStepResponse.round_outcome:type_name -> game.RoundOutcome
-	14, // 36: game.BranchEvaluationResult.round_outcome:type_name -> game.RoundOutcome
-	16, // 37: game.BranchEvaluationResponse.observation:type_name -> game.SeatObservation
-	22, // 38: game.BranchEvaluationResponse.results:type_name -> game.BranchEvaluationResult
-	15, // 39: game.TrajectoryRequest.config:type_name -> game.EnvConfig
-	16, // 40: game.TrajectorySample.observation:type_name -> game.SeatObservation
-	16, // 41: game.TrajectorySample.next_observation:type_name -> game.SeatObservation
-	14, // 42: game.TrajectorySample.terminal_outcome:type_name -> game.RoundOutcome
-	25, // 43: game.TrajectoryDataset.samples:type_name -> game.TrajectorySample
-	4,  // 44: game.SeatConfig.difficulty:type_name -> game.Difficulty
-	27, // 45: game.PrivateTableState.seats:type_name -> game.SeatConfig
-	5,  // 46: game.PrivateTableState.match_mode:type_name -> game.MatchMode
-	29, // 47: game.PrivateTableState.chongci_config:type_name -> game.ChongciConfig
-	30, // 48: game.MatchEndResult.standings:type_name -> game.PlayerStanding
-	15, // 49: game.EnvPoolNewRequest.config:type_name -> game.EnvConfig
-	33, // 50: game.EnvPoolStepRequest.commands:type_name -> game.SlotCommand
-	14, // 51: game.SlotState.round_outcome:type_name -> game.RoundOutcome
-	35, // 52: game.EnvPoolStepResponse.slots:type_name -> game.SlotState
-	53, // [53:53] is the sub-list for method output_type
-	53, // [53:53] is the sub-list for method input_type
-	53, // [53:53] is the sub-list for extension type_name
-	53, // [53:53] is the sub-list for extension extendee
-	0,  // [0:53] is the sub-list for field type_name
+	11, // 28: game.RoundOutcome.breakdown:type_name -> game.ScoreEntry
+	5,  // 29: game.EnvConfig.match_mode:type_name -> game.MatchMode
+	29, // 30: game.EnvConfig.chongci_config:type_name -> game.ChongciConfig
+	3,  // 31: game.SeatObservation.phase:type_name -> game.GamePhase
+	15, // 32: game.EnvResetRequest.config:type_name -> game.EnvConfig
+	16, // 33: game.EnvResetResponse.observation:type_name -> game.SeatObservation
+	14, // 34: game.EnvResetResponse.round_outcome:type_name -> game.RoundOutcome
+	16, // 35: game.EnvStepResponse.observation:type_name -> game.SeatObservation
+	14, // 36: game.EnvStepResponse.round_outcome:type_name -> game.RoundOutcome
+	14, // 37: game.BranchEvaluationResult.round_outcome:type_name -> game.RoundOutcome
+	16, // 38: game.BranchEvaluationResponse.observation:type_name -> game.SeatObservation
+	22, // 39: game.BranchEvaluationResponse.results:type_name -> game.BranchEvaluationResult
+	15, // 40: game.TrajectoryRequest.config:type_name -> game.EnvConfig
+	16, // 41: game.TrajectorySample.observation:type_name -> game.SeatObservation
+	16, // 42: game.TrajectorySample.next_observation:type_name -> game.SeatObservation
+	14, // 43: game.TrajectorySample.terminal_outcome:type_name -> game.RoundOutcome
+	25, // 44: game.TrajectoryDataset.samples:type_name -> game.TrajectorySample
+	4,  // 45: game.SeatConfig.difficulty:type_name -> game.Difficulty
+	27, // 46: game.PrivateTableState.seats:type_name -> game.SeatConfig
+	5,  // 47: game.PrivateTableState.match_mode:type_name -> game.MatchMode
+	29, // 48: game.PrivateTableState.chongci_config:type_name -> game.ChongciConfig
+	30, // 49: game.MatchEndResult.standings:type_name -> game.PlayerStanding
+	15, // 50: game.EnvPoolNewRequest.config:type_name -> game.EnvConfig
+	33, // 51: game.EnvPoolStepRequest.commands:type_name -> game.SlotCommand
+	14, // 52: game.SlotState.round_outcome:type_name -> game.RoundOutcome
+	35, // 53: game.EnvPoolStepResponse.slots:type_name -> game.SlotState
+	54, // [54:54] is the sub-list for method output_type
+	54, // [54:54] is the sub-list for method input_type
+	54, // [54:54] is the sub-list for extension type_name
+	54, // [54:54] is the sub-list for extension extendee
+	0,  // [0:54] is the sub-list for field type_name
 }
 
 func init() { file_proto_game_proto_init() }

@@ -122,6 +122,8 @@ class FakeGoLibrary:
                 win_type=game_pb2.ACTION_RON,
                 discarder_seat=0,
                 total_score=2,
+                breakdown=[game_pb2.ScoreEntry(pattern_name="Base Point (坐台)", points=1,
+                                               pattern_id="base_point")],
             ),
         )
         return self._bytes_result(response.SerializeToString())
@@ -196,6 +198,8 @@ class CtypesGoBridgeTest(unittest.TestCase):
         self.assertEqual(result.info["round_outcome"]["win_type_name"], "ACTION_RON")
         self.assertEqual(result.info["round_outcome"]["winner_seat"], 1)
         self.assertEqual(result.info["round_outcome"]["discarder_seat"], 0)
+        self.assertEqual(result.info["round_outcome"]["breakdown"],
+                         [{"pattern_id": "base_point", "pattern_name": "Base Point (坐台)", "points": 1}])
 
     def test_evaluate_branches_decodes_go_results(self) -> None:
         fake_library = FakeGoLibrary()

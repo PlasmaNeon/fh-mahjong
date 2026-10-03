@@ -3,7 +3,10 @@ import unittest
 from fh_mahjong_ai.hand_stats import (
     bootstrap_hand_stats_ci,
     hand_record,
+    merge_win_pattern_tallies,
+    new_win_pattern_tally,
     summarize_hand_stats,
+    tally_win_patterns,
 )
 
 
@@ -138,6 +141,36 @@ class BootstrapCITest(unittest.TestCase):
                                    payouts=[{"seat": 0, "amount": 20}]), 0)
         cis = bootstrap_hand_stats_ci([[win]], iters=100, seed=1)
         self.assertIsNone(cis["win_rate"])
+
+
+
+def _scored(winner, win_type, total, *entries):
+    return {"is_draw": False, "winner_seat": winner, "win_type_name": win_type, "total_score": total,
+            "breakdown": [{"pattern_id": pid, "pattern_name": pid.upper(), "points": pts}
+                          for pid, pts in entries]}
+
+
+class WinPatternTallyTest(unittest.TestCase):
+    def test_splits_learner_and_opponent_wins_and_skips_draws(self) -> None:
+        tally = new_win_pattern_tally()
+        tally_win_patterns(tally, _scored(2, "ACTION_TSUMO", 5, ("base_point", 1), ("pure_one_suit", 4)), 2)
+        tally_win_patterns(tally, _scored(0, "ACTION_RON", 4, ("base_point", 1), ("all_pons", 3)), 2)
+        tally_win_patterns(tally, {"is_draw": True, "winner_seat": 0, "breakdown": []}, 2)
+        learner, opponents = tally["learner"], tally["opponents"]
+        self.assertEqual((learner["wins"], learner["tsumo_wins"], learner["total_score_sum"]), (1, 1, 5))
+        self.assertEqual((opponents["wins"], opponents["tsumo_wins"], opponents["total_score_sum"]), (1, 0, 4))
+        self.assertEqual(learner["patterns"]["pure_one_suit"],
+                         {"name": "PURE_ONE_SUIT", "count": 1, "points_sum": 4})
+        self.assertNotIn("all_pons", learner["patterns"])
+
+    def test_merge_sums_counts(self) -> None:
+        a, b = new_win_pattern_tally(), new_win_pattern_tally()
+        tally_win_patterns(a, _scored(1, "ACTION_TSUMO", 2, ("base_point", 1)), 1)
+        tally_win_patterns(b, _scored(1, "ACTION_RON", 3, ("base_point", 1), ("all_pons", 2)), 1)
+        merged = merge_win_pattern_tallies([a, b])["learner"]
+        self.assertEqual(merged["wins"], 2)
+        self.assertEqual(merged["patterns"]["base_point"]["count"], 2)
+        self.assertEqual(merged["patterns"]["all_pons"]["points_sum"], 2)
 
 
 if __name__ == "__main__":

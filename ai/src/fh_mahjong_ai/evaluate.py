@@ -17,7 +17,7 @@ from .bridge import build_bridge, resolve_bridge_library_path
 from .config import EnvConfig
 from .data import placement_shaped_returns
 from .env import MahjongEnv
-from .hand_stats import hand_record, summarize_hand_stats
+from .hand_stats import hand_record, new_win_pattern_tally, summarize_hand_stats, tally_win_patterns
 from .placement_bonus import eval_episode_tail
 from .policies import TorchGreedyPolicy
 from .types import Transition
@@ -759,6 +759,7 @@ class _SeatEvalAccumulator:
         self.truncations = 0
         self.per_match_hand_records = []
         self.unknown_hands = 0
+        self.win_patterns = new_win_pattern_tally()
 
     def note_choice(self, choice_info: dict[str, Any]) -> None:
         """Tally one learner decision's policy-choice diagnostics."""
@@ -843,6 +844,8 @@ class _SeatEvalAccumulator:
         self.per_match_hand_records.append(
             [hand_record(ro, self.learning_seat) for ro in hand_outcomes]
         )
+        for ro in hand_outcomes:
+            tally_win_patterns(self.win_patterns, ro, self.learning_seat)
         if not truncated and not hand_outcomes:
             # A completed match that delivered no outcome at all: count the
             # terminal boundary as unknown rather than silently shrinking
@@ -912,6 +915,7 @@ class _SeatEvalAccumulator:
             "round_outcome_rates": outcome_rates(self.outcome_counts),
             "hand_stats": summarize_hand_stats(self.per_match_hand_records, self.unknown_hands),
             "per_match_hand_records": self.per_match_hand_records,
+            "win_pattern_stats": self.win_patterns,
             "policy_choice_counts": dict(sorted(self.choice_source_counts.items())),
             "policy_choice_rates": action_family_rates(self.choice_source_counts),
             "policy_q_margins": self.q_margins,

@@ -2,8 +2,12 @@
 
 Consumes the ``round_outcome`` dicts decoded by ``CtypesGoBridge._decode_round_outcome``
 (keys: ``is_draw``, ``winner_seat``, ``win_type``, ``win_type_name``,
-``discarder_seat``, ``total_score``, ``payouts=[{seat, amount}]``). Payout amounts
-are actual per-seat nets, so Fenghua liability rules are already reflected.
+``discarder_seat``, ``total_score``, ``payouts=[{seat, amount}]``,
+``breakdown=[{pattern_id, pattern_name, points}]``). Payout amounts are actual
+per-seat nets, so Fenghua liability rules are already reflected.
+
+The win-pattern tally counts each win's scoring patterns, split into the learning
+seat's wins and the other seats' wins (pooled).
 
 Denominators count OBSERVED hands only: the Go env can drop a hand's outcome when no learning-seat decision occurs before the next boundary, and such hands are invisible here.
 """
@@ -46,6 +50,44 @@ def hand_record(outcome: dict[str, Any], learning_seat: int) -> dict[str, Any]:
         "win_type_name": win_type_name,
         "payout": payout,
     }
+
+
+WIN_PATTERN_SIDES = ("learner", "opponents")
+
+
+def new_win_pattern_tally() -> dict[str, Any]:
+    return {side: {"wins": 0, "tsumo_wins": 0, "total_score_sum": 0, "patterns": {}}
+            for side in WIN_PATTERN_SIDES}
+
+
+def tally_win_patterns(tally: dict[str, Any], outcome: dict[str, Any], learning_seat: int) -> None:
+    """Add one hand's scoring patterns to ``tally`` (draws add nothing)."""
+    if bool(outcome.get("is_draw", False)):
+        return
+    side = tally["learner" if int(outcome.get("winner_seat", -1)) == int(learning_seat) else "opponents"]
+    side["wins"] += 1
+    side["tsumo_wins"] += int(str(outcome.get("win_type_name", "")) == "ACTION_TSUMO")
+    side["total_score_sum"] += int(outcome.get("total_score", 0))
+    for entry in outcome.get("breakdown") or []:
+        stats = side["patterns"].setdefault(
+            str(entry["pattern_id"]), {"name": str(entry["pattern_name"]), "count": 0, "points_sum": 0})
+        stats["count"] += 1
+        stats["points_sum"] += int(entry["points"])
+
+
+def merge_win_pattern_tallies(tallies: list[dict[str, Any]]) -> dict[str, Any]:
+    merged = new_win_pattern_tally()
+    for tally in tallies:
+        for side_name in WIN_PATTERN_SIDES:
+            side, into = tally[side_name], merged[side_name]
+            for key in ("wins", "tsumo_wins", "total_score_sum"):
+                into[key] += side[key]
+            for pattern_id, stats in side["patterns"].items():
+                target = into["patterns"].setdefault(
+                    pattern_id, {"name": stats["name"], "count": 0, "points_sum": 0})
+                target["count"] += stats["count"]
+                target["points_sum"] += stats["points_sum"]
+    return merged
 
 
 def summarize_hand_stats(
