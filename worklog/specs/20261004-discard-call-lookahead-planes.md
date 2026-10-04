@@ -103,7 +103,7 @@ Off by default. At `lookahead_version = 0` every observation is byte-identical t
 | | features | control |
 |---|---|---|
 | Init | control `iter_150` (`ea6d4d41…`), the winner of `20261003-control-confirmation.md` (PASS 2026-10-04) | same |
-| Recipe | batched collector, 256 slots, 1 group, 320 matches/iteration, minibatch 256, 2 epochs, lr 2e-5, entropy 0, γ 0.99, chongci, step cap 4000, event window 128, privileged critic, aux heads, fp32, `--suit-augment` | same |
+| Recipe | batched collector, 256 slots, 2 pipeline groups, 320 matches/iteration, minibatch 256, 2 epochs, lr 2e-5, entropy 0, γ 0.99, chongci, step cap 4000, event window 128, privileged critic, aux heads, fp32, `--suit-augment` | same |
 | `--lookahead-version` | **1** | 0 |
 | Iterations | 150 | 150 |
 | Training seeds | 3,210,000–3,257,999 (never used) | the same seeds (paired) |
@@ -119,9 +119,20 @@ Off by default. At `lookahead_version = 0` every observation is byte-identical t
 2. Pace, three iterations of each arm. If the features arm's collection takes more than 1.5× the control's,
    the lap does not launch and the slowdown is reported as an engineering problem, not a result.
 
+**Recorded 2026-10-04** (commit `6920dadd`, bridge `7f7c2338…`, init `ea6d4d41…`, screening seeds 910,000+,
+never cited; `/root/fh-mahjong-runs/lookahead-20261004/prelaunch/`):
+
+1. Parity: 4,000 real version-1 oracle rows (3,959 with non-zero look-ahead values), maximum absolute difference
+   0.0 for masked logits, values and aux heads, 0 greedy-action mismatches.
+2. Pace: three full iterations 223 s (features) vs 203 s (control), 1.10×: launch.
+
+**Amendment, before launch:** the user approved `--pool-pipeline-groups 2` for both arms (the perf-improve
+recipe bench: champion size 71.9 → 61.6 s/iteration, fp32 unchanged); the recipe row above records it. The useful
+and live tile definitions in the Features section are the user-confirmed ones.
+
 ## Launch
 
-1. A fresh box checkout `/root/fh-mahjong-lookahead` at the implementation merge commit, one bridge build, verified
+1. A fresh box worktree `/root/fh-mahjong-lap-lookahead` at the implementation merge commit, one bridge build, verified
    to descend from `6c354655` and `785b3b85`.
 2. The init's sha256 is checked against `ea6d4d41…` before each arm.
 3. The two pre-launch measurements above, recorded here.
