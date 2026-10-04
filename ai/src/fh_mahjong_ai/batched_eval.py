@@ -34,7 +34,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 import numpy as np
 import torch
 
-from .config import EnvConfig
+from .config import EnvConfig, adapter_plane_channels
 from .envpool import GoEnvPool, InProcessEnvPool, PoolCommand
 from .evaluate import (
     _SeatEvalAccumulator,
@@ -133,10 +133,12 @@ class _GreedyForward:
     """
 
     def __init__(self, model, device: str, inference_mode: str, max_rows: int,
-                 symmetry: str = "none", sampling: Optional[OpponentSampling] = None) -> None:
+                 symmetry: str = "none", sampling: Optional[OpponentSampling] = None,
+                 plane_channels: Optional[int] = None) -> None:
         if sampling is not None and symmetry != "none":
             raise ValueError("sampling supports symmetry 'none' only")
         self.model = model
+        self.plane_channels = plane_channels
         self.device = torch.device(device)
         self.inference_mode = inference_mode
         self.symmetry = symmetry
@@ -193,6 +195,8 @@ class _GreedyForward:
         return total
 
     def __call__(self, planes, scalars, masks, events, lengths, rngs=None) -> list[int]:
+        if self.plane_channels is not None:
+            planes = np.ascontiguousarray(planes[:, :self.plane_channels])
         if self.wants_events:
             events, lengths = _rewindow(events, lengths, self.window)
         if self.symmetry != "none":
@@ -218,6 +222,10 @@ class _GreedyForward:
             actions.append(sample_from_logits(host[i], candidates, sampling.temperature,
                                               sampling.top_k, rng) if candidates else greedy[i])
         return actions
+
+
+def _lookahead_version(net) -> int:
+    return int(getattr(getattr(net, "model_config", None), "lookahead_version", 0) or 0)
 
 
 def _round_rows(result, live: list[tuple[_SlotEpisode, int]], window: int):
@@ -391,11 +399,14 @@ def evaluate_seats_batched(
     if opponent_model is not None and _model_window(opponent_model) > window:
         raise ValueError(f"opponent event window {_model_window(opponent_model)} exceeds "
                          f"event_history_window {window}; its histories would be truncated")
-    for role, net in (("model", model), ("opponent", opponent_model)):
-        version = int(getattr(getattr(net, "model_config", None), "lookahead_version", 0) or 0)
-        if net is not None and version != int(lookahead_version):
-            # One env encodes every seat's observation, so all seats share the version.
-            raise ValueError(f"{role} lookahead_version {version} != lookahead_version {lookahead_version}")
+    # One env encodes every seat's observation. The model must match its version; a v0 opponent at
+    # a v>0 table is handed its native leading channels (`adapter_plane_channels`).
+    model_version = _lookahead_version(model)
+    if model_version != int(lookahead_version):
+        raise ValueError(f"model lookahead_version {model_version} != lookahead_version {lookahead_version}")
+    opponent_channels = (adapter_plane_channels(_lookahead_version(opponent_model), int(lookahead_version),
+                                                bool(oracle_observation))
+                         if opponent_model is not None else None)
     normalized = _normalize_match_mode(match_mode)
     threshold = (float(large_loss_threshold) if large_loss_threshold is not None
                  else _default_large_loss_threshold(normalized))
@@ -409,7 +420,8 @@ def evaluate_seats_batched(
     effective_slots = min(int(slots), jobs_per_pool) or 1
     forward = _GreedyForward(model, device, inference_mode, effective_slots, symmetry)
     opponent = (_GreedyForward(opponent_model, device, inference_mode, effective_slots,
-                               sampling=opponent_sampling) if strong else None)
+                               sampling=opponent_sampling, plane_channels=opponent_channels)
+                if strong else None)
     timers = {"pool_seconds": 0.0, "forward_seconds": 0.0, "rounds": 0, "forward_rows": 0}
     if strong:
         timers.update(opponent_forward_seconds=0.0, opponent_forward_rows=0)

@@ -66,5 +66,8 @@ def test_benchmark_policies_carry_and_match_lookahead_version(tmp_path):
     save_checkpoint(v0, v0_model, metadata={"model_config": model_config_metadata(v0_model.model_config)})
     *_, version = _build_policies(v1, "cpu", "none", None)
     assert version == 1
+    # A v0 opponent at the v1 table is adapted; a v1 opponent at a v0 table is refused.
+    _, _, opponents, _, version = _build_policies(v1, "cpu", "none", v0)
+    assert version == 1 and opponents["lookahead_adapter"]["plane_channels"] == 39
     with pytest.raises(ValueError, match="lookahead_version"):
-        _build_policies(v1, "cpu", "none", v0)
+        _build_policies(v0, "cpu", "none", v1)

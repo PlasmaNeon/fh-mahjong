@@ -26,6 +26,27 @@ def observation_plane_channels(oracle: bool, lookahead_version: int) -> int:
     return POLICY_BASE_CHANNELS + lookahead_plane_count(lookahead_version) + (ORACLE_CHANNELS if oracle else 0)
 
 
+def adapter_plane_channels(model_version: int, table_version: int, oracle: bool) -> Optional[int]:
+    """Leading plane channels a net of `model_version` reads at a table encoding `table_version`.
+
+    None when the versions match (the net reads the observation as is). A v0 net at a v>0 table
+    gets the first 39 channels, its native v0 observation; with oracle planes on, the oracle block
+    follows the look-ahead block, so there is no native slice and the table is refused, as is a
+    v>0 net at a table that lacks its look-ahead planes.
+    """
+    model_version = _validate_lookahead_version(model_version)
+    table_version = _validate_lookahead_version(table_version)
+    if model_version == table_version:
+        return None
+    if model_version != 0:
+        raise ValueError(f"a lookahead_version {model_version} net cannot play a table encoding "
+                         f"lookahead_version {table_version}: only a v0 net is adapted")
+    if oracle:
+        raise ValueError("a mixed look-ahead table needs oracle_observation off: the oracle block "
+                         "follows the look-ahead block, so a v0 net has no native slice")
+    return observation_plane_channels(False, 0)
+
+
 @dataclass
 class EnvConfig:
     action_space_size: int = 204
