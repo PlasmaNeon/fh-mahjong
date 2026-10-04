@@ -47,9 +47,9 @@ uv run --project ai <command>
 ### Evaluate and gate
 | Command | Purpose |
 |---|---|
-| `fh-mj-evaluate` | Offline agreement and/or online live play; `--duplicate-seats` is the gate (the agent vs 3 heuristic bots); `--opponent-checkpoint` puts a frozen checkpoint in the other three seats instead (strong table); `--batched-eval-slots N` runs the greedy gate through the env pool with one batched forward per round (`--symmetry-average suits` averages the policy over the 6 suit permutations, `faces` over all 72 face symmetries: suits × rank reversal × dragon permutations; `--ensemble-checkpoint` adds checkpoints to a log-probability-mean ensemble) |
+| `fh-mj-evaluate` | Offline agreement and/or online live play; `--duplicate-seats` is the gate (the agent vs 3 heuristic bots); `--opponent-checkpoint` puts a frozen checkpoint in the other three seats instead (strong table); `--batched-eval-slots N` runs the greedy gate (heuristic or strong table) through the env pool with one batched forward per policy per round (`--symmetry-average suits` averages the policy over the 6 suit permutations, `faces` over all 72 face symmetries: suits × rank reversal × dragon permutations; `--ensemble-checkpoint` adds checkpoints to a log-probability-mean ensemble; `--opponent-sample-temperature T` makes strong-table opponents sample, batched only) |
 | `fh-mj-compare` | **Required for any promotion verdict** — seed-clustered paired diff |
-| `fh-mj-benchmark` | Tenhou-style stat sheet vs heuristic bots, or vs a frozen checkpoint with `--opponent-checkpoint` (yardstick, NOT a gate); `--symmetry-average suits`, `--workers N` |
+| `fh-mj-benchmark` | Tenhou-style stat sheet vs heuristic bots, or vs a frozen checkpoint with `--opponent-checkpoint` (yardstick, NOT a gate); `--symmetry-average suits`, `--workers N`, or `--batched-eval-slots N` (env pool, one forward per policy per round) |
 | `fh-mj-placement-calibrate` | Stage-0 λ calibration for terminal placement bonus; returns λ = 0.5·σ_R/σ_V on frozen 320-match anchor collection; fails closed on truncation and scale gates (RMS ≤1.35, |p99| ≤1.50, critic MSE ≤2.00); never adjusts λ |
 | `fh-mj-evaluate-risk-guarded` | Action-risk checkpoint as a guard around an anchor |
 | `fh-mj-reward-calibration` | Q/value calibration vs discounted terminal payout |

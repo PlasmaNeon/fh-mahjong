@@ -11,6 +11,12 @@ run in N spawn processes. Greedy play on a seeded env is deterministic, so the
 chunked report equals the sequential one. `--route-study` records route shanten
 at every decision of every seat the loop plays (`route_study.py`) and prints
 Independence-vs-standard charts.
+
+`--batched-eval-slots N` plays every match through the env pool instead
+(`batched_eval.evaluate_seats_batched`: N concurrent matches, one forward per
+policy per round). Its report records the evaluator; `per_row` inference
+reproduces the sequential report. Only the batched evaluator plays sampled
+opponents (`--opponent-sample-*`) and `--symmetry-average faces`.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from fh_mahjong_ai.batched_eval import evaluate_seats_batched
 from fh_mahjong_ai.evaluate import evaluate_policy_online, reward_summary
 from fh_mahjong_ai.hand_stats import (
     bootstrap_hand_stats_ci,
@@ -35,7 +42,12 @@ from fh_mahjong_ai.hand_stats import (
 )
 from fh_mahjong_ai.policies import SuitAveragedGreedyPolicy, TorchGreedyPolicy
 from fh_mahjong_ai.route_study import format_route_study, merge_route_study
-from fh_mahjong_ai.scripts.evaluate import load_opponent_policy, resolve_max_steps_per_episode
+from fh_mahjong_ai.scripts.evaluate import (
+    add_opponent_sampling_args,
+    load_opponent_policy,
+    opponent_sampling_from_args,
+    resolve_max_steps_per_episode,
+)
 from fh_mahjong_ai.serving import CheckpointPolicy
 
 _SEATS = (0, 1, 2, 3)
@@ -166,14 +178,16 @@ _WORKER: dict[str, Any] = {}
 
 
 def _build_policies(checkpoint: Path, device: str, symmetry: str,
-                    opponent_checkpoint: Optional[Path]) -> tuple[Any, Optional[Any], Optional[dict], int]:
+                    opponent_checkpoint: Optional[Path],
+                    opponent_sampling: Any = None) -> tuple[Any, Optional[Any], Optional[dict], int]:
     model = CheckpointPolicy.from_checkpoint(checkpoint, device=device).model
     event_window = int(model.model_config.event_window)
     policy = (SuitAveragedGreedyPolicy(model, device=device) if symmetry == "suits"
               else TorchGreedyPolicy(model, device=device))
     opponent_policy = opponents = None
     if opponent_checkpoint is not None:
-        opponent_policy, opponents = load_opponent_policy(opponent_checkpoint, device, event_window)
+        opponent_policy, opponents = load_opponent_policy(opponent_checkpoint, device, event_window,
+                                                          opponent_sampling)
     return policy, opponent_policy, opponents, event_window
 
 
@@ -321,11 +335,20 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     parser.add_argument("--opponent-checkpoint", type=Path, default=None,
                         help="play the three other seats with this checkpoint's greedy policy "
                              "instead of the heuristic bots (a strong table)")
-    parser.add_argument("--symmetry-average", choices=("none", "suits"), default="none",
-                        help="play the policy averaged over the 6 suit permutations")
+    parser.add_argument("--symmetry-average", choices=("none", "suits", "faces"), default="none",
+                        help="play the policy averaged over the 6 suit permutations ('suits') or "
+                             "the 72 face symmetries ('faces', --batched-eval-slots only)")
     parser.add_argument("--workers", type=int, default=1,
                         help="spawn processes; each seat's seeds are split into chunks "
                              "(same report as --workers 1)")
+    parser.add_argument("--batched-eval-slots", type=int, default=0,
+                        help="play through the env pool with this many concurrent matches and one "
+                             "forward per policy per round (0 = the sequential loop). The report "
+                             "records the evaluator")
+    parser.add_argument("--batched-eval-inference", choices=("batched", "per_row"), default="batched",
+                        help="batched evaluator forward: 'batched' (fast) or 'per_row' (the "
+                             "sequential report exactly, for verification)")
+    add_opponent_sampling_args(parser)
     parser.add_argument("--route-study", action="store_true",
                         help="record route shanten at every decision (Independence vs standard) "
                              "and print route charts; raw records go to <out stem>.route-study/")
@@ -339,6 +362,19 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         parser.error("--workers must be >= 1")
     if args.opponent_checkpoint is not None and not args.opponent_checkpoint.is_file():
         parser.error(f"--opponent-checkpoint {args.opponent_checkpoint} is not a file")
+    if args.batched_eval_slots < 0:
+        parser.error("--batched-eval-slots must be >= 0")
+    if args.batched_eval_slots > 0:
+        if args.workers != 1:
+            parser.error("--batched-eval-slots replaces --workers; drop one")
+        if args.route_study:
+            parser.error("--route-study needs the sequential loop (no --batched-eval-slots)")
+    else:
+        if args.batched_eval_inference != "batched":
+            parser.error("--batched-eval-inference requires --batched-eval-slots")
+        if args.symmetry_average == "faces":
+            parser.error("--symmetry-average faces requires --batched-eval-slots")
+    opponent_sampling = opponent_sampling_from_args(parser, args)
 
     out_path = args.out if args.out is not None else Path(str(args.checkpoint) + ".benchmark.json")
     route_study_dir = out_path.parent / (out_path.stem + ".route-study") if args.route_study else None
@@ -352,8 +388,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     # fail loudly inside the loader (checkpoint-metadata invariants).
     max_steps = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
 
+    policy_symmetry = "none" if args.batched_eval_slots > 0 else args.symmetry_average
     policy, opponent_policy, opponents, event_window = _build_policies(
-        args.checkpoint, args.device, args.symmetry_average, args.opponent_checkpoint)
+        args.checkpoint, args.device, policy_symmetry, args.opponent_checkpoint, opponent_sampling)
     opponent_label = opponents["checkpoint"] if opponents is not None else "3 heuristic bots"
     eval_kwargs = dict(
         bridge_library_path=args.bridge_library_path,
@@ -365,7 +402,33 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     )
 
     seat_reports: dict[int, dict[str, Any]] = {}
-    if args.workers == 1:
+    evaluator: dict[str, Any] = {}
+    if args.batched_eval_slots > 0:
+        seat_seeds = {seat: list(range(args.seed_base + seat * args.episodes_per_seat,
+                                       args.seed_base + (seat + 1) * args.episodes_per_seat))
+                      for seat in _SEATS}
+        total = len(_SEATS) * args.episodes_per_seat
+        print(f"[benchmark] {total} {args.match_mode} matches vs {opponent_label} through the env "
+              f"pool ({args.batched_eval_slots} slots, {args.batched_eval_inference} inference)",
+              flush=True)
+        done = [0]
+        started = time.perf_counter()
+
+        def progress(n: int) -> None:
+            before, done[0] = done[0], done[0] + n
+            if done[0] * 10 // total > before * 10 // total:
+                print(f"[benchmark] {done[0]}/{total} matches done "
+                      f"({time.perf_counter() - started:.0f}s)", flush=True)
+
+        run = evaluate_seats_batched(
+            policy.model, seat_seeds, device=args.device, event_history_window=event_window,
+            slots=args.batched_eval_slots, inference_mode=args.batched_eval_inference,
+            symmetry=args.symmetry_average,
+            opponent_model=opponent_policy.model if opponent_policy is not None else None,
+            opponent_sampling=opponent_sampling, progress=progress, **eval_kwargs)
+        seat_reports = run["seat_reports"]
+        evaluator = {"evaluator": run["evaluator"], "evaluator_timing": run["evaluator_timing"]}
+    elif args.workers == 1:
         for seat in _SEATS:
             start = args.seed_base + seat * args.episodes_per_seat
             seeds = list(range(start, start + args.episodes_per_seat))
@@ -423,6 +486,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         "policy_transform": {"symmetry": args.symmetry_average},
         "opponents": opponents if opponents is not None else {"kind": "heuristic"},
         "bootstrap": {"iters": args.bootstrap_iters, "seed": args.bootstrap_seed},
+        **evaluator,
         "overall": merged["overall"],
         "per_seat": {str(seat): entry for seat, entry in merged["per_seat"].items()},
     }
