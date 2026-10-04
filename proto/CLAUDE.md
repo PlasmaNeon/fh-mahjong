@@ -23,6 +23,7 @@ This directory contains the Protobuf `.proto` definitions and auto-generated Go 
   - RL bridge messages:
     - `EnvConfig`, `SeatObservation`
       - `EnvConfig.match_mode` / `chongci_config` let training choose classic single-hand or Chongci multi-hand simulator mode
+      - `EnvConfig.lookahead_version` (8): 0 dormant; 1 = 13 discard/call look-ahead channels after the 39 public ones (`internal/rl/lookahead.go`)
     - `EnvResetRequest` / `EnvResetResponse`
     - `EnvStepRequest` / `EnvStepResponse`
     - `BranchEvaluationRequest` / `BranchEvaluationResponse` / `BranchEvaluationResult` for exact same-state candidate-action rollouts through the Go RL bridge; `stop_at_round_end` provides practical hand-EV labels inside multi-hand Chongci contexts
@@ -55,8 +56,9 @@ protoc --python_out=ai/src/fh_mahjong_ai/generated proto/game.proto
 The Python runtime is pinned at `protobuf>=5.0` and runs the 6.x line,
 so the generated `game_pb2.py` must target a **major-6** runtime. A standalone
 `protoc` from the 35.x line emits 7.x gencode (incompatible). Generate with a
-major-6 toolchain instead, e.g. `pip install "protobuf>=6,<7" grpcio-tools` then
-`python -m grpc_tools.protoc --python_out=ai/src/fh_mahjong_ai/generated --proto_path=. proto/game.proto`.
+major-6 toolchain instead: the standalone protoc **33.5** release (header `Protobuf Python Version: 6.33.5`),
+`protoc-33.5/bin/protoc --python_out=ai/src/fh_mahjong_ai/generated --proto_path=. proto/game.proto`.
+`grpcio-tools` up to 1.80 bundles protoc 31.1 and emits 6.31.1 gencode — compatible, but it churns the header.
 
 ## Architecture Notes
 

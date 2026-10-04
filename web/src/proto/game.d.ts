@@ -1352,6 +1352,9 @@ export namespace game {
 
         /** EnvConfig eventHistoryWindow */
         eventHistoryWindow?: (number|undefined);
+
+        /** EnvConfig lookaheadVersion */
+        lookaheadVersion?: (number|undefined);
     }
 
     /** Represents an EnvConfig. */
@@ -1383,6 +1386,9 @@ export namespace game {
 
         /** EnvConfig eventHistoryWindow. */
         public eventHistoryWindow: number;
+
+        /** EnvConfig lookaheadVersion. */
+        public lookaheadVersion: number;
 
         /**
          * Creates a new EnvConfig instance using the specified properties.
