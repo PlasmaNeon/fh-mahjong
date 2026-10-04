@@ -97,3 +97,31 @@ inference, greedy), on fresh seeds **3,100,000–3,104,999** (5,000 × 4 duplica
 
 A pass makes distill `iter_150` (suit-averaged) the strongest policy. A fail records the null: the arms are
 not extended, re-evaluated on another window, or rerun with another β.
+
+## Outcome — 2026-10-03: FAIL
+
+Commit `b16b5c0c`, one bridge build (`9541ed94…`); both arms ran 150 iterations and exited cleanly. Side by
+side the pair outgrew the 24 GB GPU and stalled; from iteration 33 (distill) / 59 (control) the arms ran one
+after the other (SIGSTOP/SIGCONT, which does not change the computation). Seeds 3,100,000–3,104,999
+(5,000 × 4), batched evaluator (256 slots), 20,000 episodes and no truncations per report.
+
+| | mean placement | large-loss |
+|---|---|---|
+| distill `iter_150`, suit-averaged | +0.4424 | 0.0512 |
+| control `iter_150`, suit-averaged | +0.4556 | 0.0496 |
+| `3fdfe246`, suit-averaged | +0.4452 | 0.0496 |
+| distill `iter_150`, plain | +0.4381 | 0.0527 |
+| `3fdfe246`, plain | +0.4088 | 0.0573 |
+
+- **Primary:** distill − `3fdfe246`, both suit-averaged, **−0.0027 ± 0.0106** (CI95 [−0.0133, +0.0079]):
+  **FAIL**.
+- distill − control, both suit-averaged: **−0.0132 ± 0.0105**, significant: distillation cost what the
+  same 150 iterations gained without it.
+- distill plain − `3fdfe246` plain: **+0.0294 ± 0.0114**, significant: the net absorbed the averaged
+  policy. Suit averaging adds +0.0043 to the distilled net against +0.0364 to `3fdfe246`.
+- control − `3fdfe246`, both suit-averaged: +0.0105 ± 0.0102 (descriptive; the control is not a candidate
+  under this registration).
+
+Distillation makes the plain net nearly suit-equivariant but does not make the averaged policy stronger.
+`3fdfe246` (suit-averaged) stays the strongest registered policy. Checkpoints: distill `5b311dd1…`,
+control `ea6d4d41…` under `/root/fh-mahjong-runs/suit-distill-20261002/`.
