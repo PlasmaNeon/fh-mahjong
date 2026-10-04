@@ -1200,18 +1200,6 @@ def evaluate_duplicate_seats_policy(
     )
     seat_list = list(seats)
     seat_reports = []
-    all_rewards: list[float] = []
-    all_placements: list[float] = []
-    action_counts: Counter[str] = Counter()
-    outcome_counts: Counter[str] = Counter()
-    choice_source_counts: Counter[str] = Counter()
-    q_margins: list[float] = []
-    policy_episode_summaries: list[dict[str, Any]] = []
-    episode_summaries: list[dict[str, Any]] = []
-    wins = 0
-    large_losses = 0
-    completed = 0
-    truncations = 0
 
     try:
         for seat in seat_list:
@@ -1234,115 +1222,16 @@ def evaluate_duplicate_seats_policy(
                 opponent_policy=opponent_policy,
             )
             seat_reports.append(report)
-            all_rewards.extend(float(reward) for reward in report["per_episode_rewards"])
-            all_placements.extend(float(p) for p in report.get("per_episode_placements", []))
-            action_counts.update(report["action_family_counts"])
-            outcome_counts.update(report.get("round_outcome_counts", {}))
-            choice_source_counts.update(report.get("policy_choice_counts", {}))
-            q_margins.extend(float(value) for value in report.get("policy_q_margins", []))
-            policy_episode_summaries.extend(report.get("policy_episode_summaries", []))
-            episode_summaries.extend(report.get("episode_summaries", []))
-            wins += int(report["win_count"])
-            large_losses += int(report["large_loss_count"])
-            completed += int(report["episodes"])
-            truncations += int(report.get("truncation_count", 0))
 
     finally:
         if _bridge_snapshot is not None:
             _bridge_snapshot.cleanup()
-    rewards = reward_summary(all_rewards)
-    placements = reward_summary(all_placements)
-    seat_summary = {
-        str(report["seat"]): {
-            "episodes": report["episodes"],
-            "mean_reward": report["mean_reward"],
-            "reward_sum": report["reward_sum"],
-            "win_rate": report["win_rate"],
-            "positive_reward_rate": report["positive_reward_rate"],
-            "negative_reward_rate": report["negative_reward_rate"],
-            "large_loss_rate": report["large_loss_rate"],
-            "action_family_rates": report["action_family_rates"],
-            "round_outcome_rates": report.get("round_outcome_rates", {}),
-            "policy_choice_rates": report.get("policy_choice_rates", {}),
-        }
-        for report in seat_reports
-    }
-    agg_hand_stats = summarize_hand_stats(
-        [m for r in seat_reports for m in r.get("per_match_hand_records", [])],
-        sum(int(r.get("hand_stats", {}).get("unknown_hands", 0)) for r in seat_reports))
-    # Present only for a strong table, so heuristic-table reports stay
-    # byte-identical to their pre-opponent form.
-    opponents_field = {"opponents": opponents} if opponents is not None else {}
-    return {
-        **opponents_field,
-        "match_mode": normalized_match_mode,
-        "chongci_config": _chongci_report_config(
-            normalized_match_mode,
-            chongci_starting_score,
-            chongci_bust_threshold,
-            chongci_max_hands,
-        ),
-        "seeds": list(seeds),
-        "seats": seat_list,
-        "max_steps_per_episode": max_steps_per_episode,
-        "oracle_observation": oracle_observation,
-        "event_history_window": event_history_window,
-        "bridge_lib_sha256": bridge_lib_sha256,
-        "avg_reward": round(float(rewards["mean"]), 2),
-        "mean_reward": rewards["mean"],
-        "mean_reward_sem": rewards["sem"],
-        "mean_reward_ci95": rewards["ci95"],
-        "reward_sum": rewards["sum"],
-        "reward_summary": rewards,
-        "win_count": wins,
-        "win_rate": wins / completed if completed else 0.0,
-        "win_metric_note": (
-            "Backward-compatible reward-positive count; for chongci this is final match net-positive rate, "
-            "not single-hand win rate."
-            if normalized_match_mode == "chongci"
-            else "Reward-positive single-round result."
-        ),
-        "positive_reward_count": int(rewards["positive_count"]),
-        "positive_reward_rate": rewards["positive_rate"],
-        "zero_reward_count": int(rewards["zero_count"]),
-        "zero_reward_rate": rewards["zero_rate"],
-        "negative_reward_count": int(rewards["negative_count"]),
-        "negative_reward_rate": rewards["negative_rate"],
-        "large_loss_count": large_losses,
-        "large_loss_rate": large_losses / completed if completed else 0.0,
-        "large_loss_threshold": seat_reports[0]["large_loss_threshold"] if seat_reports else None,
-        "episodes": completed,
-        "per_episode_rewards": all_rewards,
-        "per_episode_placements": all_placements,
-        "mean_placement": placements["mean"],
-        "mean_placement_ci95": placements["ci95"],
-        "placement_count": len(all_placements),
-        **_clustered_report_fields(seat_reports),
-        "fourth_place_rate": float(np.mean([r["fourth_place_rate"] for r in seat_reports])) if seat_reports else 0.0,
-        "training_utility_mean": float(np.mean([r["training_utility_mean"] for r in seat_reports])) if seat_reports else 0.0,
-        "rank_parity_mismatches": int(sum(r.get("rank_parity_mismatches", 0) for r in seat_reports)),
-        "hand_stats": agg_hand_stats,
-        "deal_in_rate": agg_hand_stats["deal_in_rate"],
-        "truncation_count": truncations,
-        "truncation_rate": truncations / completed if completed else 0.0,
-        "action_family_counts": dict(sorted(action_counts.items())),
-        "action_family_rates": action_family_rates(action_counts),
-        "round_outcome_counts": dict(sorted(outcome_counts.items())),
-        "round_outcome_rates": outcome_rates(outcome_counts),
-        "policy_choice_counts": dict(sorted(choice_source_counts.items())),
-        "policy_choice_rates": action_family_rates(choice_source_counts),
-        "policy_q_margins": q_margins,
-        "policy_q_margin_summary": reward_summary(q_margins),
-        "policy_episode_summaries": policy_episode_summaries,
-        "policy_episode_outcome_summary": summarize_policy_episode_outcomes(policy_episode_summaries),
-        "episode_summaries": episode_summaries,
-        "large_loss_episodes": summarize_large_loss_episodes(
-            episode_summaries,
-            seat_reports[0]["large_loss_threshold"] if seat_reports else _default_large_loss_threshold(normalized_match_mode),
-        ),
-        "seat_summary": seat_summary,
-        "seat_reports": seat_reports,
-    }
+    return aggregate_duplicate_seat_reports(
+        seat_reports, seeds=seeds, seat_list=seat_list, normalized_match_mode=normalized_match_mode,
+        chongci_starting_score=chongci_starting_score, chongci_bust_threshold=chongci_bust_threshold,
+        chongci_max_hands=chongci_max_hands, max_steps_per_episode=max_steps_per_episode,
+        oracle_observation=oracle_observation, event_history_window=event_history_window,
+        bridge_lib_sha256=bridge_lib_sha256, policy_fields=True, opponents=opponents)
 
 
 def evaluate_duplicate_seats(
@@ -1418,11 +1307,16 @@ def aggregate_duplicate_seat_reports(
     oracle_observation: bool,
     event_history_window: int,
     bridge_lib_sha256: Optional[str],
+    policy_fields: bool = False,
+    opponents: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """The duplicate-seat report from per-seat reports (one per rotation, same seeds).
 
-    Shared by `evaluate_duplicate_seats` and the batched pool evaluator, so both
-    emit the same report shape and `fh-mj-compare` reads either.
+    Shared by `evaluate_duplicate_seats`, `evaluate_duplicate_seats_policy` and the
+    batched pool evaluator, so all emit the same report shape and `fh-mj-compare`
+    reads any of them. `policy_fields` adds the policy-choice diagnostics the
+    policy evaluator reports; `opponents` is a strong table's identity record,
+    absent for the heuristic table.
     """
     seat_list = list(seat_list)
     all_rewards: list[float] = []
@@ -1463,7 +1357,28 @@ def aggregate_duplicate_seat_reports(
     agg_hand_stats = summarize_hand_stats(
         [m for r in seat_reports for m in r.get("per_match_hand_records", [])],
         sum(int(r.get("hand_stats", {}).get("unknown_hands", 0)) for r in seat_reports))
+    policy: Dict[str, Any] = {}
+    if policy_fields:
+        choice_source_counts: Counter[str] = Counter()
+        q_margins: list[float] = []
+        policy_episode_summaries: list[dict[str, Any]] = []
+        for report in seat_reports:
+            choice_source_counts.update(report.get("policy_choice_counts", {}))
+            q_margins.extend(float(value) for value in report.get("policy_q_margins", []))
+            policy_episode_summaries.extend(report.get("policy_episode_summaries", []))
+            seat_summary[str(report["seat"])]["policy_choice_rates"] = report.get("policy_choice_rates", {})
+        policy = {
+            "policy_choice_counts": dict(sorted(choice_source_counts.items())),
+            "policy_choice_rates": action_family_rates(choice_source_counts),
+            "policy_q_margins": q_margins,
+            "policy_q_margin_summary": reward_summary(q_margins),
+            "policy_episode_summaries": policy_episode_summaries,
+            "policy_episode_outcome_summary": summarize_policy_episode_outcomes(policy_episode_summaries),
+        }
+    # Present only for a strong table, so heuristic-table reports keep their shape.
+    opponents_field = {"opponents": opponents} if opponents is not None else {}
     return {
+        **opponents_field,
         "match_mode": normalized_match_mode,
         "chongci_config": _chongci_report_config(
             normalized_match_mode,
@@ -1518,6 +1433,7 @@ def aggregate_duplicate_seat_reports(
         "action_family_rates": action_family_rates(action_counts),
         "round_outcome_counts": dict(sorted(outcome_counts.items())),
         "round_outcome_rates": outcome_rates(outcome_counts),
+        **policy,
         "episode_summaries": episode_summaries,
         "large_loss_episodes": summarize_large_loss_episodes(
             episode_summaries,

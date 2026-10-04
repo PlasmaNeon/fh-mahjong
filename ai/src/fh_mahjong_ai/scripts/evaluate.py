@@ -56,13 +56,15 @@ def resolve_max_steps_per_episode(match_mode: str, max_steps_per_episode: int | 
 
 
 def load_opponent_policy(
-    checkpoint: Path, device: str, event_history_window: int
+    checkpoint: Path, device: str, event_history_window: int, sampling: Any = None
 ) -> tuple[TorchGreedyPolicy, dict[str, Any]]:
     """Greedy policy for the strong-table opponents, plus its identity record.
 
     The record goes into the report's ``opponents`` field; fh-mj-compare pairs
     two reports only when it matches exactly. The checkpoint is read once and
-    hashed from the same bytes it is loaded from.
+    hashed from the same bytes it is loaded from. ``sampling`` (a
+    ``batched_eval.OpponentSampling``, played by the batched evaluator only)
+    is recorded as ``decision: "sampled"`` with its settings.
     """
     data = checkpoint.read_bytes()
     opponent = CheckpointPolicy.from_checkpoint_bytes(data, checkpoint, device=device)
@@ -78,7 +80,64 @@ def load_opponent_policy(
         "event_window": window,
         "decision": "greedy",
     }
+    if sampling is not None:
+        record.update(decision="sampled", sampling=sampling.record())
     return TorchGreedyPolicy(opponent.model, device=device), record
+
+
+def known_action_families() -> set[str]:
+    from fh_mahjong_ai.action_catalog import action_family
+    return {action_family(a) for a in range(EnvConfig().action_space_size)}
+
+
+def add_opponent_sampling_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--opponent-sample-temperature", type=float, default=0.0,
+                        help="strong-table opponents sample with the serving sampler at this "
+                             "softmax temperature instead of playing greedy (0 = greedy). One RNG "
+                             "per match, seeded from --opponent-sample-seed, the learning seat and "
+                             "the wall seed. Batched evaluator only; recorded in the opponents record")
+    parser.add_argument("--opponent-sample-top-k", type=int, default=0,
+                        help="opponents sample from their top-k legal actions (0 = no cap)")
+    parser.add_argument("--opponent-sample-action-family", type=str, default="all",
+                        help="opponents sample only when every legal action is in this family "
+                             "(e.g. 'discard'); mixed decisions stay greedy")
+    parser.add_argument("--opponent-sample-seed", type=int, default=1,
+                        help="base seed of the opponents' per-match sampler RNGs")
+
+
+def opponent_sampling_from_args(parser: argparse.ArgumentParser, args: argparse.Namespace):
+    """The validated ``OpponentSampling`` from ``add_opponent_sampling_args`` flags, or None
+    (greedy opponents). Needs ``--opponent-checkpoint`` and ``--batched-eval-slots``."""
+    temperature = args.opponent_sample_temperature
+    if not math.isfinite(temperature) or temperature < 0.0:
+        parser.error("--opponent-sample-temperature must be a finite value >= 0")
+    if temperature == 0.0:
+        if (args.opponent_sample_top_k != 0 or args.opponent_sample_action_family != "all"
+                or args.opponent_sample_seed != 1):
+            parser.error("--opponent-sample-top-k / --opponent-sample-action-family / "
+                         "--opponent-sample-seed have no effect without --opponent-sample-temperature > 0")
+        return None
+    if args.opponent_checkpoint is None:
+        parser.error("--opponent-sample-temperature requires --opponent-checkpoint")
+    if args.batched_eval_slots == 0:
+        parser.error("--opponent-sample-temperature requires --batched-eval-slots")
+    if args.opponent_sample_top_k < 0:
+        parser.error("--opponent-sample-top-k must be >= 0")
+    family = args.opponent_sample_action_family
+    if family not in {"all", "", "*"} | known_action_families():
+        parser.error(f"--opponent-sample-action-family {family!r} is not a known action family "
+                     f"(choose from {sorted(known_action_families())})")
+    from fh_mahjong_ai.batched_eval import OpponentSampling
+    return OpponentSampling(temperature=temperature, top_k=args.opponent_sample_top_k,
+                            action_family=family, seed=args.opponent_sample_seed)
+
+
+def _load_opponents(args: argparse.Namespace, sampling: Any) -> tuple[TorchGreedyPolicy, dict[str, Any]]:
+    opponent_policy, opponents = load_opponent_policy(
+        args.opponent_checkpoint, args.device, args.event_history_window, sampling)
+    print(f"  Opponents:   {opponents['checkpoint']} "
+          f"(sha256 {opponents['checkpoint_sha256'][:16]}..., {opponents['decision']})")
+    return opponent_policy, opponents
 
 
 def main() -> None:
@@ -97,12 +156,13 @@ def main() -> None:
     parser.add_argument("--opponent-checkpoint", type=Path, default=None,
                         help="play the three other seats with this checkpoint's greedy policy instead of "
                              "the heuristic bots (a strong table). Architecture comes from the checkpoint's "
-                             "metadata. Requires --duplicate-seats; greedy only")
+                             "metadata. Requires --duplicate-seats; greedy candidate only")
     parser.add_argument("--batched-eval-slots", type=int, default=0,
                         help="run --duplicate-seats through the env pool with this many concurrent "
-                             "matches and one batched forward per round (0 = the sequential "
-                             "evaluator). Greedy vs heuristic bots only. The report records the "
-                             "evaluator; fh-mj-compare pairs it only with same-evaluator reports")
+                             "matches and one batched forward per policy per round (0 = the "
+                             "sequential evaluator). Greedy candidate, vs the heuristic bots or "
+                             "--opponent-checkpoint. The report records the evaluator; fh-mj-compare "
+                             "pairs it only with same-evaluator reports")
     parser.add_argument("--batched-eval-inference", choices=("batched", "per_row"), default="batched",
                         help="batched evaluator forward: 'batched' (fast) or 'per_row' (byte-identical "
                              "to the sequential evaluator, for verification)")
@@ -115,6 +175,7 @@ def main() -> None:
                              "of the members' log-probabilities (fh_mahjong_ai.ensemble), recorded as "
                              "policy_transform.ensemble. Repeatable; members share the --model-* "
                              "architecture. Requires --batched-eval-slots")
+    add_opponent_sampling_args(parser)
     parser.add_argument("--bridge-lib", type=Path, default=None, help="Path to c-shared library")
     parser.add_argument("--match-mode", choices=("classic", "chongci"), default="classic", help="Simulator match mode")
     parser.add_argument("--chongci-starting-score", type=int, default=2000, help="Chongci starting score")
@@ -206,10 +267,7 @@ def main() -> None:
     if args.sample_temperature > 0.0:
         if not args.duplicate_seats:
             parser.error("--sample-temperature requires --duplicate-seats (the paired gate path)")
-        from fh_mahjong_ai.action_catalog import action_family as _action_family
-        known_families = {"all", "", "*"} | {
-            _action_family(a) for a in range(EnvConfig().action_space_size)
-        }
+        known_families = {"all", "", "*"} | known_action_families()
         if args.sample_action_family not in known_families:
             parser.error(f"--sample-action-family {args.sample_action_family!r} is not a known "
                          f"action family (choose from {sorted(known_families - {'', '*'})})")
@@ -219,16 +277,16 @@ def main() -> None:
     if args.batched_eval_slots > 0:
         if not args.duplicate_seats:
             parser.error("--batched-eval-slots requires --duplicate-seats")
-        if (args.search or args.sample_temperature > 0.0 or args.opponent_checkpoint is not None
-                or args.oracle or args.from_oracle):
-            parser.error("--batched-eval-slots supports greedy evaluation vs the heuristic bots only "
-                         "(not --search, --sample-temperature, --opponent-checkpoint, --oracle)")
+        if args.search or args.sample_temperature > 0.0 or args.oracle or args.from_oracle:
+            parser.error("--batched-eval-slots supports greedy candidate evaluation only "
+                         "(not --search, --sample-temperature, --oracle)")
     elif args.batched_eval_inference != "batched":
         parser.error("--batched-eval-inference requires --batched-eval-slots")
     if args.symmetry_average != "none" and args.batched_eval_slots == 0:
         parser.error("--symmetry-average requires --batched-eval-slots")
     if args.ensemble_checkpoint and args.batched_eval_slots == 0:
         parser.error("--ensemble-checkpoint requires --batched-eval-slots")
+    opponent_sampling = opponent_sampling_from_args(parser, args)
 
     if args.opponent_checkpoint is not None:
         if not args.duplicate_seats:
@@ -497,11 +555,36 @@ def main() -> None:
                     event_history_window=args.event_history_window,
                 )
                 final_report["search"]["fallback_count"] = sum(p.fallback_count for p in search_policies)
+            elif args.duplicate_seats and args.batched_eval_slots > 0:
+                from fh_mahjong_ai.batched_eval import evaluate_duplicate_seats_batched
+                table: dict[str, Any] = {}
+                if args.opponent_checkpoint is not None:
+                    opponent_policy, opponents = _load_opponents(args, opponent_sampling)
+                    table = dict(opponent_model=opponent_policy.model, opponents=opponents,
+                                 opponent_sampling=opponent_sampling)
+                online_report = evaluate_duplicate_seats_batched(
+                    model,
+                    seeds=seeds,
+                    bridge_kind="go",
+                    bridge_library_path=args.bridge_lib,
+                    device=args.device,
+                    large_loss_threshold=args.large_loss_threshold,
+                    match_mode=args.match_mode,
+                    chongci_starting_score=args.chongci_starting_score,
+                    chongci_bust_threshold=args.chongci_bust_threshold,
+                    chongci_max_hands=args.chongci_max_hands,
+                    max_steps_per_episode=max_steps_per_episode,
+                    oracle_observation=eval_oracle,
+                    event_history_window=args.event_history_window,
+                    slots=args.batched_eval_slots,
+                    inference_mode=args.batched_eval_inference,
+                    symmetry=args.symmetry_average,
+                    **table,
+                )
+                if ensemble_record is not None:
+                    online_report.setdefault("policy_transform", {})["ensemble"] = ensemble_record
             elif args.duplicate_seats and args.opponent_checkpoint is not None:
-                opponent_policy, opponents = load_opponent_policy(
-                    args.opponent_checkpoint, args.device, args.event_history_window)
-                print(f"  Opponents:   {opponents['checkpoint']} "
-                      f"(sha256 {opponents['checkpoint_sha256'][:16]}...)")
+                opponent_policy, opponents = _load_opponents(args, None)
                 online_report = evaluate_duplicate_seats_policy(
                     policy_factory=lambda seat: TorchGreedyPolicy(model, device=args.device),
                     seeds=seeds,
@@ -552,28 +635,6 @@ def main() -> None:
                     oracle_observation=eval_oracle,
                     event_history_window=args.event_history_window,
                 )
-            elif args.duplicate_seats and args.batched_eval_slots > 0:
-                from fh_mahjong_ai.batched_eval import evaluate_duplicate_seats_batched
-                online_report = evaluate_duplicate_seats_batched(
-                    model,
-                    seeds=seeds,
-                    bridge_kind="go",
-                    bridge_library_path=args.bridge_lib,
-                    device=args.device,
-                    large_loss_threshold=args.large_loss_threshold,
-                    match_mode=args.match_mode,
-                    chongci_starting_score=args.chongci_starting_score,
-                    chongci_bust_threshold=args.chongci_bust_threshold,
-                    chongci_max_hands=args.chongci_max_hands,
-                    max_steps_per_episode=max_steps_per_episode,
-                    oracle_observation=eval_oracle,
-                    event_history_window=args.event_history_window,
-                    slots=args.batched_eval_slots,
-                    inference_mode=args.batched_eval_inference,
-                    symmetry=args.symmetry_average,
-                )
-                if ensemble_record is not None:
-                    online_report.setdefault("policy_transform", {})["ensemble"] = ensemble_record
             elif args.duplicate_seats:
                 online_report = evaluate_duplicate_seats(
                     model=model,
