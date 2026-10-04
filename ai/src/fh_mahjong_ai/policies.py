@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 import numpy as np
@@ -55,6 +55,29 @@ class TorchGreedyPolicy:
         logits, value = self.model(planes, scalars, action_mask, events=events, event_lengths=lengths)
         action_id = int(torch.argmax(logits, dim=1).item())
         return ActionChoice(action_id=action_id, value=float(value.item()))
+
+
+class PlaneTrimPolicy:
+    """Hands `policy` each observation's first `channels` planes (`config.adapter_plane_channels`).
+
+    The adapter that seats a v0 net at a table encoding look-ahead planes: the leading channels are
+    its native observation, and scalars, mask and events are shared across versions.
+    """
+
+    def __init__(self, policy: Any, channels: int) -> None:
+        self.policy = policy
+        self.channels = int(channels)
+
+    @property
+    def model(self) -> Any:
+        return self.policy.model
+
+    def trim(self, observation: Observation) -> Observation:
+        planes = np.ascontiguousarray(np.asarray(observation.planes)[: self.channels])
+        return replace(observation, planes=planes)
+
+    def choose(self, observation: Observation) -> ActionChoice:
+        return self.policy.choose(self.trim(observation))
 
 
 class SuitAveragedGreedyPolicy:

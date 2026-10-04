@@ -11,7 +11,7 @@ from typing import Any
 
 import torch
 
-from fh_mahjong_ai.config import EnvConfig, ModelConfig
+from fh_mahjong_ai.config import EnvConfig, ModelConfig, adapter_plane_channels
 from fh_mahjong_ai.evaluate import (
     compute_action_agreement_from_batches,
     evaluate_duplicate_seats,
@@ -21,7 +21,7 @@ from fh_mahjong_ai.evaluate import (
 )
 from fh_mahjong_ai.mlflow_tracking import DEFAULT_EXPERIMENT_NAME, log_artifact, log_metrics, log_params, start_run
 from fh_mahjong_ai.model import PolicyValueNet
-from fh_mahjong_ai.policies import TorchGreedyPolicy
+from fh_mahjong_ai.policies import PlaneTrimPolicy, TorchGreedyPolicy
 from fh_mahjong_ai.serving import CheckpointPolicy
 from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args, model_config_params
 from fh_mahjong_ai.storage import iter_observation_action_batches, load_checkpoint, checkpoint_lookahead_version
@@ -58,7 +58,7 @@ def resolve_max_steps_per_episode(match_mode: str, max_steps_per_episode: int | 
 def load_opponent_policy(
     checkpoint: Path, device: str, event_history_window: int, sampling: Any = None,
     lookahead_version: int = 0,
-) -> tuple[TorchGreedyPolicy, dict[str, Any]]:
+) -> tuple[Any, dict[str, Any]]:
     """Greedy policy for the strong-table opponents, plus its identity record.
 
     The record goes into the report's ``opponents`` field; fh-mj-compare pairs
@@ -74,11 +74,10 @@ def load_opponent_policy(
         raise ValueError(
             f"opponent checkpoint needs event window {window} but the table runs "
             f"--event-history-window {event_history_window}; its histories would be truncated")
+    # All seats share one observation encoding; a v0 opponent at a v>0 table reads its native
+    # leading channels (PlaneTrimPolicy here, the batched evaluator trims the same way).
     opponent_version = int(opponent.model.model_config.lookahead_version)
-    if opponent_version != int(lookahead_version):
-        raise ValueError(
-            f"opponent checkpoint has lookahead_version {opponent_version} but the table encodes "
-            f"lookahead_version {lookahead_version}: all seats share one observation encoding")
+    channels = adapter_plane_channels(opponent_version, int(lookahead_version), False)
     record = {
         "kind": "checkpoint",
         "checkpoint": str(checkpoint),
@@ -88,7 +87,13 @@ def load_opponent_policy(
     }
     if sampling is not None:
         record.update(decision="sampled", sampling=sampling.record())
-    return TorchGreedyPolicy(opponent.model, device=device), record
+    policy = TorchGreedyPolicy(opponent.model, device=device)
+    if channels is None:
+        return policy, record
+    record["lookahead_adapter"] = {"lookahead_version": opponent_version,
+                                   "table_lookahead_version": int(lookahead_version),
+                                   "plane_channels": channels}
+    return PlaneTrimPolicy(policy, channels), record
 
 
 def known_action_families() -> set[str]:
@@ -138,9 +143,10 @@ def opponent_sampling_from_args(parser: argparse.ArgumentParser, args: argparse.
                             action_family=family, seed=args.opponent_sample_seed)
 
 
-def _load_opponents(args: argparse.Namespace, sampling: Any) -> tuple[TorchGreedyPolicy, dict[str, Any]]:
+def _load_opponents(args: argparse.Namespace, sampling: Any,
+                    lookahead_version: int) -> tuple[Any, dict[str, Any]]:
     opponent_policy, opponents = load_opponent_policy(
-        args.opponent_checkpoint, args.device, args.event_history_window, sampling)
+        args.opponent_checkpoint, args.device, args.event_history_window, sampling, lookahead_version)
     print(f"  Opponents:   {opponents['checkpoint']} "
           f"(sha256 {opponents['checkpoint_sha256'][:16]}..., {opponents['decision']})")
     return opponent_policy, opponents
@@ -389,11 +395,11 @@ def main() -> None:
         parser.error(f"--lookahead-version {args.lookahead_version} disagrees with the checkpoint's "
                      f"lookahead_version {lookahead_version}")
     if lookahead_version > 0 and not (
-            args.duplicate_seats and args.batched_eval_slots > 0 and args.opponent_checkpoint is None
+            args.duplicate_seats and args.batched_eval_slots > 0
             and not args.ensemble_checkpoint and not args.from_oracle and not args.oracle
             and not args.search and args.sample_temperature == 0.0):
         parser.error("look-ahead checkpoints are supported only by the batched duplicate-seat evaluator "
-                     "(--duplicate-seats --batched-eval-slots N, greedy, no opponents/ensemble/oracle/search)")
+                     "(--duplicate-seats --batched-eval-slots N, greedy, no ensemble/oracle/search)")
     model_config = replace(model_config, lookahead_version=lookahead_version)
     if args.from_oracle:
         from fh_mahjong_ai.oracle import extract_deployable_student
@@ -580,7 +586,7 @@ def main() -> None:
                 from fh_mahjong_ai.batched_eval import evaluate_duplicate_seats_batched
                 table: dict[str, Any] = {}
                 if args.opponent_checkpoint is not None:
-                    opponent_policy, opponents = _load_opponents(args, opponent_sampling)
+                    opponent_policy, opponents = _load_opponents(args, opponent_sampling, lookahead_version)
                     table = dict(opponent_model=opponent_policy.model, opponents=opponents,
                                  opponent_sampling=opponent_sampling)
                 online_report = evaluate_duplicate_seats_batched(
@@ -606,7 +612,7 @@ def main() -> None:
                 if ensemble_record is not None:
                     online_report.setdefault("policy_transform", {})["ensemble"] = ensemble_record
             elif args.duplicate_seats and args.opponent_checkpoint is not None:
-                opponent_policy, opponents = _load_opponents(args, None)
+                opponent_policy, opponents = _load_opponents(args, None, lookahead_version)
                 online_report = evaluate_duplicate_seats_policy(
                     policy_factory=lambda seat: TorchGreedyPolicy(model, device=args.device),
                     seeds=seeds,
