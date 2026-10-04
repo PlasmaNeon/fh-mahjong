@@ -18,7 +18,7 @@ import (
 func assertServingParity(t *testing.T, state *pb.GameState, seat uint32, decisionIndex uint64, events []engine.PublicEvent, window uint32) {
 	t.Helper()
 
-	want, err := encodeObservation(state, seat, decisionIndex, false, events, window)
+	want, err := encodeObservation(state, seat, decisionIndex, false, 0, events, window)
 	if err != nil {
 		t.Fatalf("encodeObservation: %v", err)
 	}

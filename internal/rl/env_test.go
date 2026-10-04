@@ -107,11 +107,11 @@ func TestObservationIgnoresHiddenOpponentTiles(t *testing.T) {
 	}
 	stateB.Players[opponentSeat].HandSize = stateA.Players[opponentSeat].HandSize
 
-	observationA, err := encodeObservation(stateA, seat, 0, false, nil, 0)
+	observationA, err := encodeObservation(stateA, seat, 0, false, 0, nil, 0)
 	if err != nil {
 		t.Fatalf("encode observation A failed: %v", err)
 	}
-	observationB, err := encodeObservation(stateB, seat, 0, false, nil, 0)
+	observationB, err := encodeObservation(stateB, seat, 0, false, 0, nil, 0)
 	if err != nil {
 		t.Fatalf("encode observation B failed: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestObservationPrevailingWindIsRelativeToEast(t *testing.T) {
 	// engine left the prevailing wind unset.
 	for wind, want := range map[uint32]float32{0: 0, 1: 0, 2: 0.25, 4: 0.75} {
 		env.game.State.PrevailingWind = wind
-		observation, err := encodeObservation(env.game.State, 0, 0, false, nil, 0)
+		observation, err := encodeObservation(env.game.State, 0, 0, false, 0, nil, 0)
 		if err != nil {
 			t.Fatalf("encode observation failed: %v", err)
 		}
@@ -207,7 +207,7 @@ func TestObservationIncludesChongciMatchContextScalars(t *testing.T) {
 		player.Discards = nil
 		player.HandSize = 13
 	}
-	observation, err := encodeObservation(env.game.State, 0, 0, false, nil, 0)
+	observation, err := encodeObservation(env.game.State, 0, 0, false, 0, nil, 0)
 	if err != nil {
 		t.Fatalf("encode observation failed: %v", err)
 	}

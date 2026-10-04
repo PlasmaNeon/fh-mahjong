@@ -109,7 +109,7 @@ func (e *Env) EvaluateBranches(request *pb.BranchEvaluationRequest) (*pb.BranchE
 		return nil, fmt.Errorf("no learning seat is currently waiting for input")
 	}
 
-	observation, err := encodeObservation(e.game.State, seat, e.decisionCount, e.config.OracleObservation, e.game.PublicEvents(), e.config.EventHistoryWindow)
+	observation, err := encodeObservation(e.game.State, seat, e.decisionCount, e.config.OracleObservation, e.config.LookaheadVersion, e.game.PublicEvents(), e.config.EventHistoryWindow)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +170,7 @@ func (e *Env) advanceToTerminalWithHeuristics(startDecisionCount uint64, stopAtR
 	for {
 		if e.game.State.Phase == pb.GamePhase_PHASE_MATCH_END {
 			return &pb.EnvStepResponse{
-				Observation: emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
+				Observation: emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.LookaheadVersion, e.config.EventHistoryWindow),
 				Rewards:     matchEndRewards(e.game.State),
 				Terminated:  true,
 			}, nil
@@ -179,7 +179,7 @@ func (e *Env) advanceToTerminalWithHeuristics(startDecisionCount uint64, stopAtR
 		if e.game.State.Phase == pb.GamePhase_PHASE_ROUND_END {
 			if stopAtRoundEnd {
 				return &pb.EnvStepResponse{
-					Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
+					Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.LookaheadVersion, e.config.EventHistoryWindow),
 					Rewards:      roundRewards(e.game.State),
 					Terminated:   true,
 					RoundOutcome: roundOutcome(e.game.State),
@@ -192,7 +192,7 @@ func (e *Env) advanceToTerminalWithHeuristics(startDecisionCount uint64, stopAtR
 				continue
 			}
 			return &pb.EnvStepResponse{
-				Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
+				Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.LookaheadVersion, e.config.EventHistoryWindow),
 				Rewards:      roundRewards(e.game.State),
 				Terminated:   true,
 				RoundOutcome: roundOutcome(e.game.State),
@@ -201,7 +201,7 @@ func (e *Env) advanceToTerminalWithHeuristics(startDecisionCount uint64, stopAtR
 
 		if maxBranchDecisions > 0 && e.decisionCount-startDecisionCount >= maxBranchDecisions {
 			return &pb.EnvStepResponse{
-				Observation: emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
+				Observation: emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.LookaheadVersion, e.config.EventHistoryWindow),
 				Rewards:     make([]float32, 4),
 				Truncated:   true,
 			}, nil
@@ -209,7 +209,7 @@ func (e *Env) advanceToTerminalWithHeuristics(startDecisionCount uint64, stopAtR
 
 		if e.config.MaxDecisions > 0 && e.decisionCount >= uint64(e.config.MaxDecisions) {
 			return &pb.EnvStepResponse{
-				Observation: emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
+				Observation: emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.LookaheadVersion, e.config.EventHistoryWindow),
 				Rewards:     make([]float32, 4),
 				Truncated:   true,
 			}, nil
@@ -353,7 +353,7 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 			}
 			e.pendingRoundOutcome = nil
 			return &pb.EnvStepResponse{
-				Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
+				Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.LookaheadVersion, e.config.EventHistoryWindow),
 				Rewards:      e.scoreDeltaReward(),
 				Terminated:   true,
 				RoundOutcome: outcome,
@@ -372,7 +372,7 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 				continue
 			}
 			return &pb.EnvStepResponse{
-				Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
+				Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.LookaheadVersion, e.config.EventHistoryWindow),
 				Rewards:      roundRewards(e.game.State),
 				Terminated:   true,
 				RoundOutcome: roundOutcome(e.game.State),
@@ -381,7 +381,7 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 
 		if e.config.MaxDecisions > 0 && e.decisionCount >= uint64(e.config.MaxDecisions) {
 			return &pb.EnvStepResponse{
-				Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.EventHistoryWindow),
+				Observation:  emptyObservation(e.game.State, e.decisionCount, e.config.OracleObservation, e.config.LookaheadVersion, e.config.EventHistoryWindow),
 				Rewards:      e.scoreDeltaReward(),
 				Truncated:    true,
 				RoundOutcome: e.takePendingRoundOutcome(),
@@ -389,7 +389,7 @@ func (e *Env) advanceToDecision() (*pb.EnvStepResponse, error) {
 		}
 
 		if seat, ok := e.currentLearningSeat(); ok {
-			observation, err := encodeObservation(e.game.State, seat, e.decisionCount, e.config.OracleObservation, e.game.PublicEvents(), e.config.EventHistoryWindow)
+			observation, err := encodeObservation(e.game.State, seat, e.decisionCount, e.config.OracleObservation, e.config.LookaheadVersion, e.game.PublicEvents(), e.config.EventHistoryWindow)
 			if err != nil {
 				return nil, err
 			}

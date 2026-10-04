@@ -149,13 +149,13 @@ var tieBrokenScalars = map[int]bool{33: true, 34: true, 35: true, 37: true, 40: 
 func assertEquivariant(t *testing.T, state *pb.GameState, seat uint32, events []engine.PublicEvent, sym faceSymmetry) (tieBreakDiffers bool) {
 	t.Helper()
 	const window = 64
-	original, err := encodeObservation(state, seat, 0, false, events, window)
+	original, err := encodeObservation(state, seat, 0, false, 0, events, window)
 	if err != nil {
 		t.Fatalf("encode original: %v", err)
 	}
 	transformed := proto.Clone(state).(*pb.GameState)
 	sym.transformTiles(transformed.ProtoReflect())
-	permuted, err := encodeObservation(transformed, seat, 0, false, sym.events(events), window)
+	permuted, err := encodeObservation(transformed, seat, 0, false, 0, sym.events(events), window)
 	if err != nil {
 		t.Fatalf("encode transformed %+v: %v", sym, err)
 	}
