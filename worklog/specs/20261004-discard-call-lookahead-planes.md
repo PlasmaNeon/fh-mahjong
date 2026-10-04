@@ -23,8 +23,8 @@ legal; every other cell is 0. The legality planes 30–35 tell "illegal" apart f
 `normalizeShanten` (scalar 25's scale); useful-tile counts use `normalizeUsefulTileCount` (÷64, clamped).
 
 **Live useful tiles** = Σ over the useful faces of max(0, `Remaining` − copies visible to the seat), where
-`Remaining` is `findUsefulTiles`' own-hand count and the visible copies are `publicSeenCounts` plus the wild
-indicator tile.
+`Remaining` is `findUsefulTiles`' own-hand count and the visible copies are `publicSeenCounts` plus, when the
+wild indicator is a standard tile, its one face-up copy of the wild face.
 
 | Channel | Family | Column | Value |
 |---|---|---|---|
@@ -37,8 +37,8 @@ indicator tile.
 | 45 | discard | discarded face | `publicDangerScore` of discarding this face |
 | 46 | pon | claimed face | best standard shanten after the pon and a discard |
 | 47 | pon | claimed face | live useful tiles at that best |
-| 48 | chii | sequence start face | best standard shanten after the chii and a discard |
-| 49 | chii | sequence start face | live useful tiles at that best |
+| 48 | chii | sequence middle face | best standard shanten after the chii and a discard |
+| 49 | chii | sequence middle face | live useful tiles at that best |
 | 50 | kan | kan face | standard shanten after the kan, before the replacement draw |
 | 51 | kan | kan face | live useful tiles after the kan |
 
@@ -51,8 +51,10 @@ indicator tile.
   numbers and the features stay exactly suit-equivariant.
 - **Kan** covers direct, closed and upgraded kans in one pair of channels: one face never has two kinds legal
   at once (a direct kan is a claim; closed and upgraded kans are own-turn and need different holdings).
-- **Chii** actions are unique per sequence start face (`ChiiBase + suit·7 + start`), so the start column
-  identifies the action.
+- **Chii** features sit in the sequence's middle face. Middles 2–8 are unique per chii action
+  (`ChiiBase + suit·7 + start`, middle = start + 1), and rank reversal maps a middle face to the reversed
+  sequence's middle face, so every channel transforms by the plain face map under every face symmetry
+  (the start face would not: reversal sends start r to 6 − r, the face map to 8 − r).
 
 ## Mechanism
 
