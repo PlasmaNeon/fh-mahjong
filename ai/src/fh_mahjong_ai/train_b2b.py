@@ -1000,6 +1000,7 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
         chongci_max_hands=env_config.chongci_max_hands,
         oracle_observation=True,
         event_history_window=window,
+        lookahead_version=env_config.lookahead_version,
     )
     bridge = build_bridge(cfg)
     env = MahjongEnv(cfg, bridge=bridge)

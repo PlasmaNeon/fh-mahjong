@@ -61,7 +61,7 @@ def make_b2b_pool(env_config: EnvConfig, model: PolicyValueNet, config: PPOConfi
 _POOL_PASSTHROUGH_FIELDS = (
     "action_space_size", "plane_shape", "scalar_features", "bridge_kind",
     "bridge_library_path", "chongci_starting_score", "chongci_bust_threshold",
-    "chongci_max_hands",
+    "chongci_max_hands", "lookahead_version",
 )
 
 
