@@ -104,6 +104,7 @@ class MainTest(unittest.TestCase):
 
         fake_model = mock.Mock()
         fake_model.model_config.event_window = 32
+        fake_model.model_config.lookahead_version = 0
         fake_model.wants_events = True
         fake_policy = mock.Mock(model=fake_model)
 
@@ -183,6 +184,7 @@ class StrongTableMainTest(unittest.TestCase):
 
         fake_model = mock.Mock()
         fake_model.model_config.event_window = 128
+        fake_model.model_config.lookahead_version = 0
         opponent_policy = mock.Mock()
         opponents = {"kind": "checkpoint", "checkpoint": "prod.pt", "checkpoint_sha256": "ab",
                      "event_window": 0, "decision": "greedy"}
@@ -252,6 +254,7 @@ class RouteStudyMainTest(unittest.TestCase):
     def _run_main(self, tmp, extra_args, fake_eval):
         fake_model = mock.Mock()
         fake_model.model_config.event_window = 0
+        fake_model.model_config.lookahead_version = 0
         ckpt = Path(tmp) / "champion.pt"
         ckpt.write_bytes(b"fake")
         with mock.patch.object(

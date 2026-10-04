@@ -146,21 +146,21 @@ func (s faceSymmetry) packedEvent(packed uint32) uint32 {
 // tieBrokenScalars come from the best-discard look-ahead, whose tie-break is face order.
 var tieBrokenScalars = map[int]bool{33: true, 34: true, 35: true, 37: true, 40: true}
 
-func assertEquivariant(t *testing.T, state *pb.GameState, seat uint32, events []engine.PublicEvent, sym faceSymmetry) (tieBreakDiffers bool) {
+func assertEquivariant(t *testing.T, state *pb.GameState, seat uint32, events []engine.PublicEvent, sym faceSymmetry, lookahead uint32) (tieBreakDiffers bool) {
 	t.Helper()
 	const window = 64
-	original, err := encodeObservation(state, seat, 0, false, events, window)
+	original, err := encodeObservation(state, seat, 0, false, lookahead, events, window)
 	if err != nil {
 		t.Fatalf("encode original: %v", err)
 	}
 	transformed := proto.Clone(state).(*pb.GameState)
 	sym.transformTiles(transformed.ProtoReflect())
-	permuted, err := encodeObservation(transformed, seat, 0, false, sym.events(events), window)
+	permuted, err := encodeObservation(transformed, seat, 0, false, lookahead, sym.events(events), window)
 	if err != nil {
 		t.Fatalf("encode transformed %+v: %v", sym, err)
 	}
 
-	for channel := 0; channel < ObservationPlaneChannels; channel++ {
+	for channel := 0; channel < int(original.PlaneChannels); channel++ {
 		for face := 0; face < ObservationPlaneHeight; face++ {
 			want := original.Planes[channelOffset(channel)+face]
 			got := permuted.Planes[channelOffset(channel)+sym.face(face)]
@@ -221,8 +221,10 @@ func TestObservationIsFaceSymmetryEquivariant(t *testing.T) {
 		for step := 0; step < 600 && observation != nil && !reset.Terminated; step++ {
 			seat := observation.Seat
 			for _, sym := range symmetries {
-				if assertEquivariant(t, env.game.State, seat, env.game.PublicEvents(), sym) {
-					tieBreaks++
+				for _, lookahead := range []uint32{0, 1} {
+					if assertEquivariant(t, env.game.State, seat, env.game.PublicEvents(), sym, lookahead) {
+						tieBreaks++
+					}
 				}
 			}
 			checked++
@@ -249,7 +251,7 @@ func TestObservationIsFaceSymmetryEquivariant(t *testing.T) {
 		}
 	}
 	t.Logf("%d decisions x %d symmetries; best-discard tie-break changed a scalar in %d of %d",
-		checked, len(symmetries), tieBreaks, checked*len(symmetries))
+		checked, len(symmetries), tieBreaks, checked*len(symmetries)*2)
 	if checked < 200 || claims == 0 {
 		t.Fatalf("too little coverage: %d decisions, %d pon/kan/chii-legal", checked, claims)
 	}

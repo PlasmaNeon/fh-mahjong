@@ -4389,6 +4389,7 @@ export const game = $root.game = (() => {
          * @property {game.IChongciConfig|undefined} [chongciConfig] EnvConfig chongciConfig
          * @property {boolean|undefined} [oracleObservation] EnvConfig oracleObservation
          * @property {number|undefined} [eventHistoryWindow] EnvConfig eventHistoryWindow
+         * @property {number|undefined} [lookaheadVersion] EnvConfig lookaheadVersion
          */
 
         /**
@@ -4464,6 +4465,14 @@ export const game = $root.game = (() => {
         EnvConfig.prototype.eventHistoryWindow = 0;
 
         /**
+         * EnvConfig lookaheadVersion.
+         * @member {number} lookaheadVersion
+         * @memberof game.EnvConfig
+         * @instance
+         */
+        EnvConfig.prototype.lookaheadVersion = 0;
+
+        /**
          * Creates a new EnvConfig instance using the specified properties.
          * @function create
          * @memberof game.EnvConfig
@@ -4505,6 +4514,8 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 6, wireType 0 =*/48).bool(message.oracleObservation);
             if (message.eventHistoryWindow != null && Object.hasOwnProperty.call(message, "eventHistoryWindow"))
                 writer.uint32(/* id 7, wireType 0 =*/56).uint32(message.eventHistoryWindow);
+            if (message.lookaheadVersion != null && Object.hasOwnProperty.call(message, "lookaheadVersion"))
+                writer.uint32(/* id 8, wireType 0 =*/64).uint32(message.lookaheadVersion);
             return writer;
         };
 
@@ -4576,6 +4587,10 @@ export const game = $root.game = (() => {
                         message.eventHistoryWindow = reader.uint32();
                         break;
                     }
+                case 8: {
+                        message.lookaheadVersion = reader.uint32();
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -4644,6 +4659,9 @@ export const game = $root.game = (() => {
             if (message.eventHistoryWindow != null && message.hasOwnProperty("eventHistoryWindow"))
                 if (!$util.isInteger(message.eventHistoryWindow))
                     return "eventHistoryWindow: integer expected";
+            if (message.lookaheadVersion != null && message.hasOwnProperty("lookaheadVersion"))
+                if (!$util.isInteger(message.lookaheadVersion))
+                    return "lookaheadVersion: integer expected";
             return null;
         };
 
@@ -4699,6 +4717,8 @@ export const game = $root.game = (() => {
                 message.oracleObservation = Boolean(object.oracleObservation);
             if (object.eventHistoryWindow != null)
                 message.eventHistoryWindow = object.eventHistoryWindow >>> 0;
+            if (object.lookaheadVersion != null)
+                message.lookaheadVersion = object.lookaheadVersion >>> 0;
             return message;
         };
 
@@ -4724,6 +4744,7 @@ export const game = $root.game = (() => {
                 object.chongciConfig = null;
                 object.oracleObservation = false;
                 object.eventHistoryWindow = 0;
+                object.lookaheadVersion = 0;
             }
             if (message.learningSeats && message.learningSeats.length) {
                 object.learningSeats = [];
@@ -4742,6 +4763,8 @@ export const game = $root.game = (() => {
                 object.oracleObservation = message.oracleObservation;
             if (message.eventHistoryWindow != null && message.hasOwnProperty("eventHistoryWindow"))
                 object.eventHistoryWindow = message.eventHistoryWindow;
+            if (message.lookaheadVersion != null && message.hasOwnProperty("lookaheadVersion"))
+                object.lookaheadVersion = message.lookaheadVersion;
             return object;
         };
 

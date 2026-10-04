@@ -42,13 +42,13 @@ uv run --project ai <command>
 | `fh-mj-train-ppo` | Online self-play PPO vs a frozen anchor |
 | `fh-mj-train-oracle` | Phase-1 oracle (single-seat, perfect-information) |
 | `fh-mj-train-selfplay-oracle` | Phase-2 self-play feature-dropout oracle |
-| `fh-mj-train-b2b` | Spec B2b: event history + privileged critic + aux heads; `--scratch [--init-from-bc]` for random-init runs; `--head-lr/--head-lr-iters` for the two-group lr schedule; `--collector batched --pool-slots N` for env-pool collection; opt-in `--pool-pipeline-groups K` and `--trunk-dtype bfloat16` (batched on CUDA) for speed; `--suit-augment` (batched) collects each decision in a random suit-permuted view; `--suit-distill-coef β` (batched) adds β·KL toward the collection-time suit-averaged policy |
+| `fh-mj-train-b2b` | Spec B2b: event history + privileged critic + aux heads; `--scratch [--init-from-bc]` for random-init runs; `--head-lr/--head-lr-iters` for the two-group lr schedule; `--collector batched --pool-slots N` for env-pool collection; opt-in `--pool-pipeline-groups K` and `--trunk-dtype bfloat16` (batched on CUDA) for speed; `--suit-augment` (batched) collects each decision in a random suit-permuted view; `--suit-distill-coef β` (batched) adds β·KL toward the collection-time suit-averaged policy; `--lookahead-version 1` adds the 13 discard/call look-ahead planes (stem widened with zero columns, rejected-on-change at resume) |
 
 ### Evaluate and gate
 | Command | Purpose |
 |---|---|
-| `fh-mj-evaluate` | Offline agreement and/or online live play; `--duplicate-seats` is the gate (the agent vs 3 heuristic bots); `--opponent-checkpoint` puts a frozen checkpoint in the other three seats instead (strong table); `--batched-eval-slots N` runs the greedy gate (heuristic or strong table) through the env pool with one batched forward per policy per round (`--symmetry-average suits` averages the policy over the 6 suit permutations, `faces` over all 72 face symmetries: suits × rank reversal × dragon permutations; `--ensemble-checkpoint` adds checkpoints to a log-probability-mean ensemble; `--opponent-sample-temperature T` makes strong-table opponents sample, batched only) |
-| `fh-mj-compare` | **Required for any promotion verdict** — seed-clustered paired diff |
+| `fh-mj-evaluate` | Offline agreement and/or online live play; `--duplicate-seats` is the gate (the agent vs 3 heuristic bots); `--opponent-checkpoint` puts a frozen checkpoint in the other three seats instead (strong table); `--batched-eval-slots N` runs the greedy gate (heuristic or strong table) through the env pool with one batched forward per policy per round (`--symmetry-average suits` averages the policy over the 6 suit permutations, `faces` over all 72 face symmetries: suits × rank reversal × dragon permutations; `--ensemble-checkpoint` adds checkpoints to a log-probability-mean ensemble; `--opponent-sample-temperature T` makes strong-table opponents sample, batched only); look-ahead checkpoints (version from metadata) run only through the batched duplicate-seat path against the heuristic bots |
+| `fh-mj-compare` | **Required for any promotion verdict** — seed-clustered paired diff; `--allow-window-mismatch` / `--allow-lookahead-mismatch` label a deliberate observation-protocol comparison (a report without `lookahead_version` reads as 0) |
 | `fh-mj-benchmark` | Tenhou-style stat sheet vs heuristic bots, or vs a frozen checkpoint with `--opponent-checkpoint` (yardstick, NOT a gate); `--symmetry-average suits`, `--workers N`, or `--batched-eval-slots N` (env pool, one forward per policy per round) |
 | `fh-mj-placement-calibrate` | Stage-0 λ calibration for terminal placement bonus; returns λ = 0.5·σ_R/σ_V on frozen 320-match anchor collection; fails closed on truncation and scale gates (RMS ≤1.35, |p99| ≤1.50, critic MSE ≤2.00); never adjusts λ |
 | `fh-mj-evaluate-risk-guarded` | Action-risk checkpoint as a guard around an anchor |
@@ -57,7 +57,7 @@ uv run --project ai <command>
 ### Serve
 | Command | Purpose |
 |---|---|
-| `fh-mj-serve-policy` | JSON HTTP policy server (`/act`, `/evaluate`, `/healthz`, `/reload`, `/warmup`); `--symmetry-average suits` serves the suit-averaged policy |
+| `fh-mj-serve-policy` | JSON HTTP policy server (`/act`, `/evaluate`, `/healthz`, `/reload`, `/warmup`); `--symmetry-average suits` serves the suit-averaged policy; refuses look-ahead checkpoints (`lookahead_version > 0`) at startup and reload |
 | `fh-mj-reload-policy` | Hot-swap or inspect a running server's checkpoint (no torch import; starts instantly) |
 | `fh-mj-serving-parity` | **Hard promotion gate**: eval-path vs serving-path action parity |
 | `fh-mj-serving-smoke` | Load a manifest checkpoint and step a bridge for legality |

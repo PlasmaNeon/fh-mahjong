@@ -132,12 +132,15 @@ func actionMask(state *pb.GameState, seat uint32) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	return maskFromLegal(actions), nil
+}
 
+func maskFromLegal(actions map[int]*pb.PlayerAction) []byte {
 	mask := make([]byte, ActionSpaceSize)
 	for actionID := range actions {
 		mask[actionID] = 1
 	}
-	return mask, nil
+	return mask
 }
 
 func decodeActionID(state *pb.GameState, seat uint32, actionID int) (*pb.PlayerAction, error) {

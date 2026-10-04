@@ -65,6 +65,7 @@ def _b2b_model_env_config(env_config: EnvConfig) -> EnvConfig:
         bridge_kind=env_config.bridge_kind,
         bridge_library_path=env_config.bridge_library_path,
         match_mode=env_config.match_mode,
+        lookahead_version=env_config.lookahead_version,
     )
 
 
@@ -74,18 +75,26 @@ def build_b2b_model(env_config: EnvConfig, model_config: ModelConfig,
     UNCHANGED (39ch policy slice), so only two tensors need surgery:
     trunk.0 (event columns zeroed => step-0 logits == champion) and
     value_head.0 (privileged columns zeroed => step-0 values == champion).
+    A look-ahead model's stem keeps the init's input columns and starts its
+    extra columns at zero, so step-0 outputs still equal the init's.
     `env_config` must be a 39ch (oracle_observation=False) config — callers
     building a B2b net from an oracle env_config should first pass it through
     `_b2b_model_env_config`."""
     model = PolicyValueNet(env_config, model_config).to(device)
     _, report = load_compatible_checkpoint(Path(champion_checkpoint), model)
     payload = torch.load(Path(champion_checkpoint), map_location="cpu")
+    old_stem_w = payload["model"]["plane_stem.0.weight"]    # [C, 39(+K0), 3, kw]
+    new_stem_channels = model.plane_stem[0].weight.shape[1]
+    widen_stem = old_stem_w.shape[1] != new_stem_channels
+    if old_stem_w.shape[1] > new_stem_channels:
+        raise RuntimeError("init checkpoint has more stem channels than the model; "
+                           "narrowing a look-ahead net is not supported")
     # FAIL CLOSED on architecture mismatch: every champion tensor must either
     # load same-shape or be one of the two explicitly-widened tensors the
     # surgery below repairs. Anything else (e.g. a residual-block count
     # mismatch) would silently drop champion layers and break the step-0
     # equivalence invariant.
-    surgical = {"trunk.0.weight", "value_head.0.weight"}
+    surgical = {"trunk.0.weight", "value_head.0.weight"} | ({"plane_stem.0.weight"} if widen_stem else set())
     new_module_prefixes = ("event_encoder.", "privileged_encoder.",
                            "belief_head.", "dealin_head.", "rank_head.")
     bad_skipped = [k for k in report["skipped_keys"] if k not in surgical]
@@ -104,6 +113,10 @@ def build_b2b_model(env_config: EnvConfig, model_config: ModelConfig,
         w.zero_()
         w[:, : old_trunk_w.shape[1]].copy_(old_trunk_w.to(w.device))
         model.trunk[0].bias.copy_(payload["model"]["trunk.0.bias"].to(w.device))
+        if widen_stem:
+            sw = model.plane_stem[0].weight                 # [C, 39+K, 3, kw]
+            sw.zero_()
+            sw[:, : old_stem_w.shape[1]].copy_(old_stem_w.to(sw.device))
         if model_config.privileged_critic:
             vw = model.value_head[0].weight                # [V, T+128]
             vw.zero_()
@@ -1000,6 +1013,7 @@ def collect_b2b_rollouts(env_config: EnvConfig, model: PolicyValueNet,
         chongci_max_hands=env_config.chongci_max_hands,
         oracle_observation=True,
         event_history_window=window,
+        lookahead_version=env_config.lookahead_version,
     )
     bridge = build_bridge(cfg)
     env = MahjongEnv(cfg, bridge=bridge)

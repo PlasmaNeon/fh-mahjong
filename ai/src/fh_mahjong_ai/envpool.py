@@ -232,6 +232,13 @@ class GoEnvPool:
             return _empty_result(self.env_config, metas)
         channels, height, width = (int(response.plane_channels), int(response.plane_height),
                                    int(response.plane_width))
+        if channels != int(self.env_config.plane_shape[0]):
+            raise BridgeError(
+                f"pool returned {channels} plane channels but the client expects "
+                f"{int(self.env_config.plane_shape[0])} (lookahead_version="
+                f"{int(self.env_config.lookahead_version)}) — the Go bridge library predates "
+                "look-ahead planes; rebuild it (go build -buildmode=c-shared ./cmd/rlbridge)"
+            )
         planes = np.frombuffer(response.planes, dtype="<f4").reshape(rows, channels, height, width)
         scalars = np.frombuffer(response.scalars, dtype="<f4").reshape(rows, int(response.scalar_count))
         masks = np.frombuffer(response.action_masks, dtype=np.uint8).astype(np.int8, copy=False)
@@ -298,6 +305,7 @@ class GoEnvPool:
         message.learning_seats.extend(int(seat) for seat in config.learning_seats)
         message.oracle_observation = bool(config.oracle_observation)
         message.event_history_window = int(config.event_history_window)
+        message.lookahead_version = int(config.lookahead_version)
         if config.match_mode == "chongci":
             message.match_mode = game_pb2.MATCH_MODE_CHONGCI
             message.chongci_config.starting_score = int(config.chongci_starting_score)
@@ -348,6 +356,7 @@ def make_selfplay_pool(env_config: EnvConfig, ppo_config, slots: int):
         chongci_max_hands=env_config.chongci_max_hands,
         oracle_observation=env_config.oracle_observation,
         event_history_window=env_config.event_history_window,
+        lookahead_version=env_config.lookahead_version,
     )
     if cfg.bridge_kind == "go":
         return GoEnvPool(cfg, slots)

@@ -358,6 +358,7 @@ class CtypesGoBridge(MahjongBridge):
         message.learning_seats.extend(int(seat) for seat in self.config.learning_seats)
         message.oracle_observation = bool(self.config.oracle_observation)
         message.event_history_window = int(self.config.event_history_window)
+        message.lookahead_version = int(self.config.lookahead_version)
         if self.config.match_mode == "chongci":
             message.match_mode = game_pb2.MATCH_MODE_CHONGCI
             message.chongci_config.starting_score = int(self.config.chongci_starting_score)
@@ -399,6 +400,12 @@ class CtypesGoBridge(MahjongBridge):
 
     def _decode_observation(self, observation: game_pb2.SeatObservation) -> Observation:
         channels, height, width = self.config.plane_shape
+        # 0 = unset (hand-built observations); every Go bridge sets the field.
+        if observation.plane_channels and int(observation.plane_channels) != channels:
+            raise BridgeError(
+                f"bridge returned {int(observation.plane_channels)} plane channels but the client expects "
+                f"{channels} (lookahead_version={int(self.config.lookahead_version)}) — the Go bridge "
+                "library predates look-ahead planes; rebuild it (go build -buildmode=c-shared ./cmd/rlbridge)")
         planes = np.asarray(observation.planes, dtype=np.float32).reshape((channels, height, width))
         scalars = np.asarray(observation.scalars, dtype=np.float32)
         action_mask = np.frombuffer(bytes(observation.action_mask), dtype=np.uint8).astype(np.int8, copy=False)

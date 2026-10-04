@@ -7,7 +7,7 @@ from typing import NamedTuple
 import torch
 from torch import Tensor, nn
 
-from .config import EnvConfig, ModelConfig
+from .config import EnvConfig, ModelConfig, observation_plane_channels
 
 # Optional-head prefixes load_checkpoint already treats as backward/forward
 # compatible (strict=False); the cross-check below must not flag them.
@@ -100,6 +100,11 @@ class PolicyValueNet(nn.Module):
     def __init__(self, env_config: EnvConfig, model_config: ModelConfig) -> None:
         super().__init__()
         channels, height, width = env_config.plane_shape
+        env_version = int(getattr(env_config, "lookahead_version", 0))
+        if env_version != model_config.lookahead_version:
+            raise ValueError(
+                f"env lookahead_version {env_version} != model lookahead_version "
+                f"{model_config.lookahead_version}: build the EnvConfig with the checkpoint's version")
 
         # Assigned individually so the state_dict keys stay exactly as they were
         # -- see build_plane_scalar_encoders.
@@ -110,7 +115,7 @@ class PolicyValueNet(nn.Module):
         self.plane_head = encoders.plane_head
         self.scalar_encoder = encoders.scalar_encoder
         plane_projection_dim = encoders.plane_projection_dim
-        self.policy_channels = channels  # 39: the stem consumes exactly these
+        self.policy_channels = channels  # public + look-ahead channels; oracle planes follow
         self.model_config = model_config
 
         trunk_in = model_config.plane_feature_dim + model_config.scalar_hidden_dim
@@ -233,8 +238,9 @@ class PolicyValueNet(nn.Module):
     def _value_features(self, features: Tensor, planes: Tensor) -> Tensor:
         if not self.model_config.privileged_critic:
             return features
-        if planes.shape[1] >= 51:
-            priv = self.privileged_encoder(planes[:, self.policy_channels : self.policy_channels + 12])
+        start = self.policy_channels
+        if planes.shape[1] >= start + 12:
+            priv = self.privileged_encoder(planes[:, start : start + 12])
         else:
             priv = torch.zeros(planes.shape[0], 128, device=planes.device, dtype=features.dtype)
         return torch.cat([features, priv], dim=1)
@@ -632,6 +638,12 @@ def _verify_metadata_matches_shapes(config: ModelConfig, state_dict: dict[str, T
     compare the effective attention width whenever attention is on — the
     quantity that actually determines the constructed architecture.
     """
+    if config.lookahead_version > 0:
+        expected = observation_plane_channels(False, config.lookahead_version)
+        got = int(state_dict["plane_stem.0.weight"].shape[1])
+        if got != expected:
+            raise RuntimeError(f"metadata lookahead_version {config.lookahead_version} needs a "
+                               f"{expected}-channel stem, checkpoint has {got}")
     shape_fields = _shape_inferred_fields(state_dict)
     shape_fields.pop("channel_attention_ratio", None)
     if not config.dueling_q:
@@ -714,6 +726,7 @@ def _reconstruct_env_config(state_dict: dict[str, Tensor], model_config: ModelCo
         plane_shape=(input_channels, max(1, area), 1),
         scalar_features=scalar_features,
         action_space_size=action_space_size,
+        lookahead_version=model_config.lookahead_version,
     )
 
 

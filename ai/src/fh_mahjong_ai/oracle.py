@@ -34,6 +34,12 @@ from .storage import load_compatible_checkpoint, save_checkpoint
 logger = logging.getLogger(__name__)
 
 
+def _require_no_lookahead(config) -> None:
+    if int(getattr(config, "lookahead_version", 0) or 0):
+        raise ValueError("the oracle feature-dropout pipeline supports lookahead_version 0 only "
+                         "(its oracle channel range is fixed at 39..50)")
+
+
 def build_oracle_model(env_config: EnvConfig, model_config: ModelConfig,
                        anchor_checkpoint: Path, device: str = "cpu") -> PolicyValueNet:
     """Build a 51-channel oracle `PolicyValueNet` warm-started from the 39-channel
@@ -42,6 +48,7 @@ def build_oracle_model(env_config: EnvConfig, model_config: ModelConfig,
     initialized so the oracle equals the anchor when the 12 oracle channels are 0:
     the anchor's weights occupy the first 39 input channels and the new 12 are
     zeroed."""
+    _require_no_lookahead(env_config)
     oracle = PolicyValueNet(env_config, model_config).to(device)
     # Load all same-shape tensors (skips plane_stem.0.weight: [C,39,3,3] vs [C,51,3,3]).
     load_compatible_checkpoint(Path(anchor_checkpoint), oracle)
@@ -65,6 +72,7 @@ def extract_deployable_student(oracle_model: PolicyValueNet, env_config_39ch: En
     on a 39ch observation equals the 51ch net's output on that observation
     zero-padded to 51ch (the oracle channels contribute zero when their input is 0).
     Inverse of `build_oracle_model`."""
+    _require_no_lookahead(env_config_39ch)
     oracle_w = oracle_model.plane_stem[0].weight  # [C, 51, 3, 3]
     in_ch = oracle_w.shape[1]
     if in_ch != 51:
@@ -184,6 +192,7 @@ def collect_selfplay_rollouts(env_config: EnvConfig, model: PolicyValueNet,
     what the policy acted on). Each seat's dense per-hand score delta is credited to
     that seat's last decision so its reward telescopes to its match net; `done=1` at
     each seat's final decision."""
+    _require_no_lookahead(env_config)
     device = config.device
     cfg = EnvConfig(
         action_space_size=env_config.action_space_size,

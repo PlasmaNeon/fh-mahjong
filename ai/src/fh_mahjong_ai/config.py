@@ -5,6 +5,27 @@ from pathlib import Path
 from typing import Optional
 
 
+POLICY_BASE_CHANNELS = 39
+ORACLE_CHANNELS = 12
+MAX_LOOKAHEAD_VERSION = 1
+_LOOKAHEAD_PLANE_COUNTS = {0: 0, 1: 13}  # mirrors internal/rl LookaheadPlaneCount
+
+
+def _validate_lookahead_version(value) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= MAX_LOOKAHEAD_VERSION:
+        raise ValueError(f"lookahead_version must be an int in [0, {MAX_LOOKAHEAD_VERSION}], got {value!r}")
+    return value
+
+
+def lookahead_plane_count(version: int) -> int:
+    return _LOOKAHEAD_PLANE_COUNTS[_validate_lookahead_version(version)]
+
+
+def observation_plane_channels(oracle: bool, lookahead_version: int) -> int:
+    """39 public channels, the look-ahead block, then 12 oracle channels."""
+    return POLICY_BASE_CHANNELS + lookahead_plane_count(lookahead_version) + (ORACLE_CHANNELS if oracle else 0)
+
+
 @dataclass
 class EnvConfig:
     action_space_size: int = 204
@@ -22,6 +43,9 @@ class EnvConfig:
     chongci_max_hands: int = 50
     oracle_observation: bool = False
     event_history_window: int = 0
+    # Per-action look-ahead planes (internal/rl/lookahead.go): 0 none; 1 adds 13
+    # channels after the 39 public ones, before any oracle channels.
+    lookahead_version: int = 0
 
     # Mirrors internal/rl MaxEventHistoryWindow: the window sizes per-row
     # pool allocations, so an unbounded value could OOM the bridge process.
@@ -33,11 +57,32 @@ class EnvConfig:
                 f"event_history_window {self.event_history_window} exceeds maximum "
                 f"{self.MAX_EVENT_HISTORY_WINDOW}"
             )
-        # Oracle mode appends the 3 opponents' closed hands (39 -> 51 channels);
-        # resolve plane_shape so callers don't have to remember the channel count.
-        # An explicitly-set non-default plane_shape is respected.
-        if self.oracle_observation and tuple(self.plane_shape) == (39, 42, 1):
-            self.plane_shape = (51, 42, 1)
+        # Resolve plane_shape so callers don't have to remember the channel count:
+        # 39 public channels, the look-ahead block, then 12 oracle channels.
+        _validate_lookahead_version(self.lookahead_version)
+        expected = observation_plane_channels(self.oracle_observation, self.lookahead_version)
+        shape = tuple(self.plane_shape)
+        if self.lookahead_version == 0:
+            # Version 0 keeps the historical rule: only the default resolves; an
+            # explicit non-default plane_shape (e.g. a 51ch shape-inferred oracle
+            # net) is respected.
+            if shape == (POLICY_BASE_CHANNELS, 42, 1):
+                self.plane_shape = (expected, 42, 1)
+        else:
+            # Any of this version's encoder shapes (or the 39ch default)
+            # re-resolves, so dataclasses.replace() can toggle oracle mode.
+            resolvable = {(POLICY_BASE_CHANNELS, 42, 1)} | {
+                (observation_plane_channels(oracle, self.lookahead_version), 42, 1)
+                for oracle in (False, True)}
+            if shape not in resolvable:
+                raise ValueError(f"plane_shape {shape} does not match lookahead_version "
+                                 f"{self.lookahead_version} (expected {(expected, 42, 1)})")
+            self.plane_shape = (expected, 42, 1)
+
+    @property
+    def policy_channels(self) -> int:
+        """Channels the policy stem reads: public plus look-ahead, never oracle."""
+        return POLICY_BASE_CHANNELS + lookahead_plane_count(self.lookahead_version)
 
 
 @dataclass
@@ -74,6 +119,9 @@ class ModelConfig:
     # GELU) instead of the plain ResidualBlock. Default False keeps every
     # existing model byte-identical. Shape-inferred from `plane_blocks.0.alpha`.
     trunk_rezero: bool = False
+    # --- look-ahead planes: the stem reads 39 + lookahead_plane_count(v) channels.
+    # Default 0 keeps every existing model byte-identical.
+    lookahead_version: int = 0
 
     # Round 20, Finding 1a: `infer_model_config` (model.py) takes
     # `metadata["model_config"]` from a checkpoint as authoritative and
@@ -113,6 +161,7 @@ class ModelConfig:
         self._validate_bounded_int("event_hidden_dim", minimum=1, maximum=self.MAX_HIDDEN_DIM)
         self._validate_bounded_int("event_output_dim", minimum=0, maximum=self.MAX_HIDDEN_DIM)
         self._validate_bounded_int("growth_blocks", minimum=0, maximum=self.MAX_RESIDUAL_BLOCKS)
+        _validate_lookahead_version(self.lookahead_version)
         # Round 17: residual_blocks<=64 and growth_blocks<=64 are each
         # individually bounded above, but nothing stopped them composing --
         # residual_blocks=64 + growth_blocks=64 = 128 total blocks (~9GiB

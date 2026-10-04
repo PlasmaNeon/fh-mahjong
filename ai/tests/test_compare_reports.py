@@ -605,3 +605,25 @@ def test_absent_tail_metrics_note_renders_in_format_text():
     res = paired_comparison(make_report(seeds, [0.0]*10), make_report(seeds, [0.0]*10))
     text = _format_text(res, "A", "B")
     assert "NOTE: no tail metrics — reports predate the tail-aware evaluator" in text
+
+
+def test_lookahead_mismatch_refused_unless_allowed():
+    a = make_report([1, 2, 3], [0.2, 0.4, 0.1])
+    b = make_report([1, 2, 3], [0.1, 0.3, 0.0])
+    a["lookahead_version"], b["lookahead_version"] = 1, 0
+    with pytest.raises(ValueError, match="lookahead_version"):
+        paired_comparison(a, b)
+    result = paired_comparison(a, b, allow_lookahead_mismatch=True)
+    assert result["lookahead_check"] == "mismatch-allowed"
+    b["lookahead_version"] = 1
+    assert paired_comparison(a, b)["lookahead_check"] == "match"
+
+
+def test_report_without_lookahead_version_reads_as_version_zero():
+    legacy = make_report([1, 2, 3], [0.2, 0.4, 0.1])
+    current = make_report([1, 2, 3], [0.1, 0.3, 0.0])
+    current["lookahead_version"] = 0
+    assert paired_comparison(legacy, current)["lookahead_check"] == "match"
+    current["lookahead_version"] = 1
+    with pytest.raises(ValueError, match="lookahead_version"):
+        paired_comparison(legacy, current)

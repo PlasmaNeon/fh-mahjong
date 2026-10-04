@@ -943,6 +943,7 @@ def evaluate_policy_online(
     max_steps_per_episode: Optional[int] = None,
     oracle_observation: bool = False,
     event_history_window: int = 0,
+    lookahead_version: int = 0,
     policy_factory: Optional[Any] = None,
     opponent_policy: Optional[Any] = None,
     route_study_shard: Optional[Path] = None,
@@ -986,6 +987,7 @@ def evaluate_policy_online(
         chongci_max_hands=chongci_max_hands,
         oracle_observation=oracle_observation,
         event_history_window=event_history_window,
+        lookahead_version=lookahead_version,
     )
     if max_steps_per_episode is not None:
         config.max_steps_per_episode = int(max_steps_per_episode)
@@ -1309,6 +1311,7 @@ def aggregate_duplicate_seat_reports(
     bridge_lib_sha256: Optional[str],
     policy_fields: bool = False,
     opponents: Optional[Dict[str, Any]] = None,
+    lookahead_version: int = 0,
 ) -> Dict[str, Any]:
     """The duplicate-seat report from per-seat reports (one per rotation, same seeds).
 
@@ -1391,6 +1394,7 @@ def aggregate_duplicate_seat_reports(
         "max_steps_per_episode": max_steps_per_episode,
         "oracle_observation": oracle_observation,
         "event_history_window": event_history_window,
+        "lookahead_version": int(lookahead_version),
         "bridge_lib_sha256": bridge_lib_sha256,
         "avg_reward": round(float(rewards["mean"]), 2),
         "mean_reward": rewards["mean"],

@@ -181,23 +181,24 @@ _WORKER: dict[str, Any] = {}
 
 def _build_policies(checkpoint: Path, device: str, symmetry: str,
                     opponent_checkpoint: Optional[Path],
-                    opponent_sampling: Any = None) -> tuple[Any, Optional[Any], Optional[dict], int]:
+                    opponent_sampling: Any = None) -> tuple[Any, Optional[Any], Optional[dict], int, int]:
     model = CheckpointPolicy.from_checkpoint(checkpoint, device=device).model
     event_window = int(model.model_config.event_window)
+    lookahead_version = int(model.model_config.lookahead_version)
     policy = (SuitAveragedGreedyPolicy(model, device=device) if symmetry == "suits"
               else TorchGreedyPolicy(model, device=device))
     opponent_policy = opponents = None
     if opponent_checkpoint is not None:
         opponent_policy, opponents = load_opponent_policy(opponent_checkpoint, device, event_window,
-                                                          opponent_sampling)
-    return policy, opponent_policy, opponents, event_window
+                                                          opponent_sampling, lookahead_version)
+    return policy, opponent_policy, opponents, event_window, lookahead_version
 
 
 def _init_worker(checkpoint: Path, device: str, symmetry: str,
                  opponent_checkpoint: Optional[Path], eval_kwargs: dict[str, Any]) -> None:
     import torch
     torch.set_num_threads(1)
-    policy, opponent_policy, _, event_window = _build_policies(
+    policy, opponent_policy, _, event_window, _ = _build_policies(
         checkpoint, device, symmetry, opponent_checkpoint)
     _WORKER.update(policy=policy, opponent_policy=opponent_policy,
                    event_window=event_window, eval_kwargs=eval_kwargs)
@@ -207,7 +208,7 @@ def _init_batched_worker(checkpoint: Path, device: str, opponent_checkpoint: Opt
                          opponent_sampling: Any, batched_kwargs: dict[str, Any]) -> None:
     import torch
     torch.set_num_threads(1)
-    policy, opponent_policy, _, event_window = _build_policies(
+    policy, opponent_policy, _, event_window, _ = _build_policies(
         checkpoint, device, "none", opponent_checkpoint, opponent_sampling)
     _WORKER.update(model=policy.model, event_window=event_window, batched_kwargs=batched_kwargs,
                    opponent_model=opponent_policy.model if opponent_policy is not None else None)
@@ -407,7 +408,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     max_steps = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
 
     policy_symmetry = "none" if args.batched_eval_slots > 0 else args.symmetry_average
-    policy, opponent_policy, opponents, event_window = _build_policies(
+    policy, opponent_policy, opponents, event_window, lookahead_version = _build_policies(
         args.checkpoint, args.device, policy_symmetry, args.opponent_checkpoint, opponent_sampling)
     opponent_label = opponents["checkpoint"] if opponents is not None else "3 heuristic bots"
     eval_kwargs = dict(
@@ -417,6 +418,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         chongci_bust_threshold=args.chongci_bust_threshold,
         chongci_max_hands=args.chongci_max_hands,
         max_steps_per_episode=max_steps,
+        lookahead_version=lookahead_version,
     )
 
     batched_kwargs = dict(device=args.device, slots=args.batched_eval_slots,
@@ -527,6 +529,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         "seed_base": args.seed_base,
         "max_steps_per_episode": max_steps,
         "event_history_window": event_window,
+        "lookahead_version": lookahead_version,
         "checkpoint_sha256": hashlib.sha256(args.checkpoint.read_bytes()).hexdigest(),
         "policy_transform": {"symmetry": args.symmetry_average},
         "opponents": opponents if opponents is not None else {"kind": "heuristic"},

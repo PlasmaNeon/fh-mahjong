@@ -127,7 +127,8 @@ class CheckpointPolicy:
         payload = torch.load(io.BytesIO(data), map_location="cpu")
         saved_state = payload["model"]
         metadata = payload.get("metadata")
-        model = PolicyValueNet(EnvConfig(), infer_model_config(saved_state, metadata))
+        config = infer_model_config(saved_state, metadata)
+        model = PolicyValueNet(EnvConfig(lookahead_version=config.lookahead_version), config)
         step = load_checkpoint_from_bytes(data, model)
         model.to(device)
         return cls(

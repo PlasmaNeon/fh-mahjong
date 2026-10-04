@@ -61,10 +61,10 @@ def test_known_images_under_a_man_pin_swap():
     assert all(m[a] == a for a in range(DISCARD_BASE))    # pass / wins / haitei
 
 
-def _real_rows(n=60):
+def _real_rows(n=60, lookahead_version=0):
     cfg = EnvConfig(bridge_kind="go", learning_seats=(0, 1, 2, 3), auto_play_heuristics=False,
                     match_mode="chongci", chongci_max_hands=4, max_steps_per_episode=4000,
-                    event_history_window=16)
+                    event_history_window=16, lookahead_version=lookahead_version)
     env = MahjongEnv(cfg, build_bridge(cfg))
     rng = np.random.default_rng(5)
     rows = {"planes": [], "scalars": [], "masks": [], "events": []}
@@ -195,3 +195,29 @@ def test_rejects_unknown_symmetry():
     with pytest.raises(ValueError, match="symmetry"):
         evaluate_duplicate_seats_batched(PolicyValueNet(EnvConfig(), small_model_config()),
                                          seeds=[1], symmetry="dihedral")
+
+
+def _lookahead_cells_match_mask(planes, masks):
+    """Every look-ahead family's shanten channel is non-zero exactly where its action is legal
+    (normalized shanten after any action is at least 1/9)."""
+    discard = planes[:, 39, :, 0] > 0
+    assert np.array_equal(discard, masks[:, DISCARD_BASE:DISCARD_BASE + 42] > 0)
+    pon = planes[:, 46, :34, 0] > 0
+    assert np.array_equal(pon, masks[:, PON_BASE:PON_BASE + 34] > 0)
+    chii = np.zeros((masks.shape[0], 42), dtype=bool)
+    for index in range(21):  # chii features sit in the sequence's middle face
+        chii[:, (index // 7) * 9 + index % 7 + 1] |= masks[:, CHII_BASE + index] > 0
+    assert np.array_equal(planes[:, 48, :, 0] > 0, chii)
+    return int(chii.any(axis=1).sum()), int(pon.any(axis=1).sum())
+
+
+@requires_go_lib
+@pytest.mark.parametrize("sym", [*SUIT_PERMUTATIONS[1:], FaceSymmetry(reverse=True),
+                                 FaceSymmetry((2, 0, 1), True, (2, 1, 0))])
+def test_lookahead_rows_stay_aligned_with_the_mask_under_symmetries(sym):
+    planes, scalars, masks, events = _real_rows(n=400, lookahead_version=1)
+    assert planes.shape[1] == 52
+    chii_rows, pon_rows = _lookahead_cells_match_mask(planes, masks)
+    assert chii_rows > 0 and pon_rows > 0  # the sample exercises the call channels
+    p, _, m, _ = permute_rows(planes, scalars, masks, events, sym)
+    _lookahead_cells_match_mask(p, m)

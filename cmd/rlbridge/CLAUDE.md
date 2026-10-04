@@ -15,7 +15,7 @@ This package wraps the `rl` environment in a narrow protobuf-based C ABI so Pyth
   - `FHEnvEvaluateBranches`
   - `FHEnvRouteProbe` — route-study probe for one seat (`RouteProbeRequest` → `RouteProbe`), read-only
   - `FHEnvClose`
-  - `FHEnvPoolNew` / `FHEnvPoolStep` / `FHEnvPoolClose` — batched env-pool exports (own handle registry, same FHBytesResult conventions): one FFI round-trip steps/resets many envs and returns all pending observations as flat buffers inside `EnvPoolStepResponse`.
+  - `FHEnvPoolNew` / `FHEnvPoolStep` / `FHEnvPoolClose` — batched env-pool exports (`FHEnvPoolNew` returns handle 0 for `event_history_window > 512` or `lookahead_version > 1`) (own handle registry, same FHBytesResult conventions): one FFI round-trip steps/resets many envs and returns all pending observations as flat buffers inside `EnvPoolStepResponse`.
   - `FHSearchPoolNew` / `FHSearchPoolStep` / `FHSearchPoolClose` — test-time search exports (own handle registry, same conventions as the env-pool trio). `FHSearchPoolNew` takes a live env handle plus a `SearchPoolNewRequest` (clones/seed/max_rollout_decisions/determinizations, and the proto3-`optional` `root_seat` — passed through to `rl.NewSearchPool`'s variadic root only when present, so an absent field falls back to `currentActionSeat()`) and wraps `rl.NewSearchPool`; `FHSearchPoolStep` reuses `EnvPoolStepRequest`/`EnvPoolStepResponse` and wraps `(*rl.SearchPool).Step`.
   - `FHGenerateHeuristicTrajectory`
   - `FHFree`

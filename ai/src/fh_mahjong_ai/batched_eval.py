@@ -362,6 +362,7 @@ def evaluate_seats_batched(
     max_steps_per_episode: Optional[int] = None,
     oracle_observation: bool = False,
     event_history_window: int = 0,
+    lookahead_version: int = 0,
     slots: int = 256,
     inference_mode: str = "batched",
     symmetry: str = "none",
@@ -390,6 +391,11 @@ def evaluate_seats_batched(
     if opponent_model is not None and _model_window(opponent_model) > window:
         raise ValueError(f"opponent event window {_model_window(opponent_model)} exceeds "
                          f"event_history_window {window}; its histories would be truncated")
+    for role, net in (("model", model), ("opponent", opponent_model)):
+        version = int(getattr(getattr(net, "model_config", None), "lookahead_version", 0) or 0)
+        if net is not None and version != int(lookahead_version):
+            # One env encodes every seat's observation, so all seats share the version.
+            raise ValueError(f"{role} lookahead_version {version} != lookahead_version {lookahead_version}")
     normalized = _normalize_match_mode(match_mode)
     threshold = (float(large_loss_threshold) if large_loss_threshold is not None
                  else _default_large_loss_threshold(normalized))
@@ -415,7 +421,8 @@ def evaluate_seats_batched(
                         match_mode=normalized, chongci_starting_score=chongci_starting_score,
                         chongci_bust_threshold=chongci_bust_threshold,
                         chongci_max_hands=chongci_max_hands,
-                        oracle_observation=oracle_observation, event_history_window=window)
+                        oracle_observation=oracle_observation, event_history_window=window,
+                        lookahead_version=int(lookahead_version))
         if max_steps_per_episode is not None:
             cfg.max_steps_per_episode = int(max_steps_per_episode)
         return cfg
@@ -469,6 +476,7 @@ def evaluate_duplicate_seats_batched(
     max_steps_per_episode: Optional[int] = None,
     oracle_observation: bool = False,
     event_history_window: int = 0,
+    lookahead_version: int = 0,
     slots: int = 256,
     inference_mode: str = "batched",
     symmetry: str = "none",
@@ -494,7 +502,8 @@ def evaluate_duplicate_seats_batched(
         large_loss_threshold=large_loss_threshold, match_mode=normalized,
         chongci_starting_score=chongci_starting_score, chongci_bust_threshold=chongci_bust_threshold,
         chongci_max_hands=chongci_max_hands, max_steps_per_episode=max_steps_per_episode,
-        oracle_observation=oracle_observation, event_history_window=window, slots=slots,
+        oracle_observation=oracle_observation, event_history_window=window,
+        lookahead_version=lookahead_version, slots=slots,
         inference_mode=inference_mode, symmetry=symmetry, opponent_model=opponent_model,
         opponent_sampling=opponent_sampling)
     report = aggregate_duplicate_seat_reports(
@@ -503,7 +512,8 @@ def evaluate_duplicate_seats_batched(
         chongci_bust_threshold=chongci_bust_threshold, chongci_max_hands=chongci_max_hands,
         max_steps_per_episode=max_steps_per_episode, oracle_observation=oracle_observation,
         event_history_window=window, bridge_lib_sha256=run["bridge_lib_sha256"],
-        policy_fields=opponent_model is not None, opponents=opponents)
+        policy_fields=opponent_model is not None, opponents=opponents,
+        lookahead_version=int(lookahead_version))
     report["evaluator"] = run["evaluator"]
     if symmetry != "none":
         report["policy_transform"] = {"symmetry": symmetry}

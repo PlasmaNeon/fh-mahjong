@@ -276,6 +276,10 @@ message EnvConfig {
   // (observer-relative, packed uint32s; see internal/rl/eventcodec.go).
   // 0 (default) disables the field entirely — byte-identical observations.
   uint32 event_history_window = 7;
+  // Per-action look-ahead planes inserted after the 39 public channels
+  // (internal/rl/lookahead.go). 0 (default) adds none — byte-identical
+  // observations. 1 adds 13 discard/call channels (39 -> 52, oracle 51 -> 64).
+  uint32 lookahead_version = 8;
 }
 
 message SeatObservation {
