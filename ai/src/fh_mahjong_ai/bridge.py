@@ -400,7 +400,8 @@ class CtypesGoBridge(MahjongBridge):
 
     def _decode_observation(self, observation: game_pb2.SeatObservation) -> Observation:
         channels, height, width = self.config.plane_shape
-        if int(observation.plane_channels) != channels:
+        # 0 = unset (hand-built observations); every Go bridge sets the field.
+        if observation.plane_channels and int(observation.plane_channels) != channels:
             raise BridgeError(
                 f"bridge returned {int(observation.plane_channels)} plane channels but the client expects "
                 f"{channels} (lookahead_version={int(self.config.lookahead_version)}) — the Go bridge "

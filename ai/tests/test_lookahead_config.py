@@ -78,3 +78,19 @@ def test_train_cli_threads_lookahead_version(monkeypatch, tmp_path):
     assert seen["env_config"].lookahead_version == 1
     assert seen["env_config"].plane_shape == (64, 42, 1)
     assert seen["model_config"].lookahead_version == 1
+
+
+def test_stale_bridge_without_lookahead_planes_raises():
+    from fh_mahjong_ai.bridge import BridgeError, CtypesGoBridge
+    from fh_mahjong_ai.generated.proto import game_pb2
+
+    class _Stub:
+        pass
+
+    stub = _Stub()
+    stub.config = EnvConfig(bridge_kind="go", lookahead_version=1, oracle_observation=True)
+    stale = game_pb2.SeatObservation(  # a pre-look-ahead bridge ignores the field: 51 channels
+        seat=0, planes=[0.0] * (51 * 42), plane_channels=51, plane_height=42, plane_width=1,
+        scalars=[0.0] * 58, action_mask=bytes(204))
+    with pytest.raises(BridgeError, match="predates look-ahead"):
+        CtypesGoBridge._decode_observation(stub, stale)
