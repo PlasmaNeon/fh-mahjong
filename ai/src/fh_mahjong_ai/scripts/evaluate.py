@@ -24,7 +24,7 @@ from fh_mahjong_ai.model import PolicyValueNet
 from fh_mahjong_ai.policies import TorchGreedyPolicy
 from fh_mahjong_ai.serving import CheckpointPolicy
 from fh_mahjong_ai.model_config_args import add_model_config_args, model_config_from_args, model_config_params
-from fh_mahjong_ai.storage import iter_observation_action_batches, load_checkpoint
+from fh_mahjong_ai.storage import iter_observation_action_batches, load_checkpoint, checkpoint_lookahead_version
 
 
 # A full chongci match (up to 50 hands) needs far more decisions than the
@@ -56,7 +56,8 @@ def resolve_max_steps_per_episode(match_mode: str, max_steps_per_episode: int | 
 
 
 def load_opponent_policy(
-    checkpoint: Path, device: str, event_history_window: int, sampling: Any = None
+    checkpoint: Path, device: str, event_history_window: int, sampling: Any = None,
+    lookahead_version: int = 0,
 ) -> tuple[TorchGreedyPolicy, dict[str, Any]]:
     """Greedy policy for the strong-table opponents, plus its identity record.
 
@@ -73,6 +74,11 @@ def load_opponent_policy(
         raise ValueError(
             f"opponent checkpoint needs event window {window} but the table runs "
             f"--event-history-window {event_history_window}; its histories would be truncated")
+    opponent_version = int(opponent.model.model_config.lookahead_version)
+    if opponent_version != int(lookahead_version):
+        raise ValueError(
+            f"opponent checkpoint has lookahead_version {opponent_version} but the table encodes "
+            f"lookahead_version {lookahead_version}: all seats share one observation encoding")
     record = {
         "kind": "checkpoint",
         "checkpoint": str(checkpoint),
@@ -166,6 +172,9 @@ def main() -> None:
     parser.add_argument("--batched-eval-inference", choices=("batched", "per_row"), default="batched",
                         help="batched evaluator forward: 'batched' (fast) or 'per_row' (byte-identical "
                              "to the sequential evaluator, for verification)")
+    parser.add_argument("--lookahead-version", type=int, default=None,
+                        help="look-ahead planes version; defaults to the checkpoint's, and an explicit "
+                             "value that disagrees with it is an error")
     parser.add_argument("--symmetry-average", choices=("none", "suits", "faces"), default="none",
                         help="average the policy over the 6 suit permutations ('suits') or all 72 "
                              "face symmetries ('faces'); a different policy than the plain checkpoint, "
@@ -375,13 +384,25 @@ def main() -> None:
     max_steps_per_episode = resolve_max_steps_per_episode(args.match_mode, args.max_steps_per_episode)
 
     model_config = replace(model_config_from_args(args), growth_blocks=args.model_growth_blocks)
+    lookahead_version = checkpoint_lookahead_version(args.checkpoint)
+    if args.lookahead_version is not None and args.lookahead_version != lookahead_version:
+        parser.error(f"--lookahead-version {args.lookahead_version} disagrees with the checkpoint's "
+                     f"lookahead_version {lookahead_version}")
+    if lookahead_version > 0 and not (
+            args.duplicate_seats and args.batched_eval_slots > 0 and args.opponent_checkpoint is None
+            and not args.ensemble_checkpoint and not args.from_oracle and not args.oracle
+            and not args.search and args.sample_temperature == 0.0):
+        parser.error("look-ahead checkpoints are supported only by the batched duplicate-seat evaluator "
+                     "(--duplicate-seats --batched-eval-slots N, greedy, no opponents/ensemble/oracle/search)")
+    model_config = replace(model_config, lookahead_version=lookahead_version)
     if args.from_oracle:
         from fh_mahjong_ai.oracle import extract_deployable_student
         oracle_net = PolicyValueNet(EnvConfig(oracle_observation=True), model_config)
         step = load_checkpoint(args.checkpoint, oracle_net)
         model = extract_deployable_student(oracle_net, EnvConfig(), model_config)
     else:
-        model = PolicyValueNet(EnvConfig(oracle_observation=args.oracle), model_config)
+        model = PolicyValueNet(EnvConfig(oracle_observation=args.oracle, lookahead_version=lookahead_version),
+                               model_config)
         step = load_checkpoint(args.checkpoint, model)
     ensemble_record = None
     if args.ensemble_checkpoint:
@@ -576,6 +597,7 @@ def main() -> None:
                     max_steps_per_episode=max_steps_per_episode,
                     oracle_observation=eval_oracle,
                     event_history_window=args.event_history_window,
+                    lookahead_version=lookahead_version,
                     slots=args.batched_eval_slots,
                     inference_mode=args.batched_eval_inference,
                     symmetry=args.symmetry_average,
