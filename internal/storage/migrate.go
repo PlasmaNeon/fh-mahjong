@@ -51,6 +51,8 @@ func AutoMigrate(db *gorm.DB) error {
 		&MatchPlayer{},
 		&PaipuRecord{},
 		&MatchReview{},
+		&ReplayImport{},
+		&ReplayStudyJob{},
 	); err != nil {
 		return err
 	}

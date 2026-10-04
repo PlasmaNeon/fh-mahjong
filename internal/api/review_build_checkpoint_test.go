@@ -343,7 +343,7 @@ func TestBuildReviewOutcomeRejectsShaMismatch(t *testing.T) {
 	}
 
 	var count int64
-	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ?", "mismatch-fixture").Count(&count).Error; err != nil {
+	if err := server.DB.Model(&storage.MatchReview{SchemaVersion: 2}).Where("match_id = ?", "mismatch-fixture").Count(&count).Error; err != nil {
 		t.Fatalf("count MatchReview rows: %v", err)
 	}
 	if count != 0 {
@@ -440,7 +440,7 @@ func TestBuildReviewOutcomeRejectsMissingSha(t *testing.T) {
 	}
 
 	var count int64
-	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ?", "missing-sha-fixture").Count(&count).Error; err != nil {
+	if err := server.DB.Model(&storage.MatchReview{SchemaVersion: 2}).Where("match_id = ?", "missing-sha-fixture").Count(&count).Error; err != nil {
 		t.Fatalf("count MatchReview rows: %v", err)
 	}
 	if count != 0 {
@@ -468,7 +468,7 @@ func TestBuildReviewOutcomeAcceptsMissingShaWhenLegacy(t *testing.T) {
 	}
 
 	var count int64
-	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ?", "legacy-missing-sha-fixture").Count(&count).Error; err != nil {
+	if err := server.DB.Model(&storage.MatchReview{SchemaVersion: 2}).Where("match_id = ?", "legacy-missing-sha-fixture").Count(&count).Error; err != nil {
 		t.Fatalf("count MatchReview rows: %v", err)
 	}
 	if count != 1 {

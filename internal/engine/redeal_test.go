@@ -336,3 +336,46 @@ func TestRedealUnseen_DiscarderExcludedFromOpenWindow(t *testing.T) {
 		t.Fatal("non-discarder seat 1 gained a Pon on redeal but was not admitted — refresh over-cleared")
 	}
 }
+
+func TestReviewRedealIndependentOfPrivateArrangement(t *testing.T) {
+	g := startedGame(t, 42)
+	alternate := g.CloneForBranch()
+	if err := alternate.RedealUnseen(0, 123); err != nil {
+		t.Fatal(err)
+	}
+	a, b := g.CloneForBranch(), alternate.CloneForBranch()
+	if err := a.RedealUnseenForReview(0, 999); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RedealUnseenForReview(0, 999); err != nil {
+		t.Fatal(err)
+	}
+	for s := 0; s < 4; s++ {
+		if !handsEqual(a.State.Players[s].ClosedHand, b.State.Players[s].ClosedHand) {
+			t.Fatal("review depends on true hidden arrangement")
+		}
+	}
+	if !handsEqual(a.WallTilesForTest(), b.WallTilesForTest()) {
+		t.Fatal("sampled pools differ")
+	}
+	for s, p := range a.State.Players {
+		if s == 0 {
+			continue
+		}
+		for _, tile := range p.ClosedHand {
+			if tile.Suit != pb.Suit_SUIT_FLOWER {
+				continue
+			}
+			wild := false
+			for _, w := range a.State.WildTiles {
+				wild = wild || w.Suit == tile.Suit && w.Value == tile.Value
+			}
+			if !wild {
+				t.Fatal("auto-revealed flower sampled into concealed hand")
+			}
+		}
+	}
+	if !handsEqual(g.State.Players[0].ClosedHand, a.State.Players[0].ClosedHand) {
+		t.Fatal("root hand changed")
+	}
+}

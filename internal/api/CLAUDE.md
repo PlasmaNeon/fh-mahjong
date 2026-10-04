@@ -209,3 +209,13 @@ This package implements the network layer: HTTP routes via Gin, WebSocket connec
   - `/start` rejects empty seats (400) and non-host callers (403)
   - 1-human + 3-bot start path constructs an active private table and registers the host as a participant
   - Returning participants on an active table get `"active"` with the existing `matchId`; outsiders get 409
+
+## Private paipu imports and analysis jobs
+
+`replay_imports.go` exposes authenticated `POST/GET /api/v1/replay-imports` and owner-only `GET /api/v1/replay-imports/:importId`. Native JSON is limited to 10 MiB; uploads are immutable, deduplicated per account, and isolated from live matches/history/training. Filename headers are percent-decoded and sanitized; CORS allows `X-Paipu-Filename`. Lists use a 20-row cursor and omit raw paipu JSON.
+
+`replay_study.go` exposes authenticated `GET/POST /matches/:matchId/study`, `GET/POST /replay-imports/:importId/review`, and owner-only `GET/DELETE /review-jobs/:jobId`. Builds share the existing two review slots/four queued requests and six-per-minute account limiter. Input/model SHA/schema/event-window/method/config define the build key. Source lookup only returns a matching current generation. Jobs have a 30-minute execution budget, 90-second renewable lease, durable partial report, cancellation and explicit interrupted/failed states. Each attempt has a unique worker identity: a cancelled old worker cannot overwrite or delete a resumed attempt. Restarted jobs resume through POST rather than claiming completion or silently restarting model work.
+
+`replay_study_test.go` protects ownership, CSRF, import isolation/dedup and cancel/resume attempts. Its opt-in localhost browser harness (`FH_REVIEW_BROWSER=1`) uses persistent SQLite at `/tmp/fh-review-browser.sqlite` and normal production auth/routes with a configured real policy; it is skipped in CI. It never provides synthetic advice.
+
+The browser harness optionally revalidates cheap draw estimates in stored real reports through `BuildStudy` resume when `FH_REVIEW_BROWSER_REFRESH_DRAWS=1`; checkpoint identity must match and existing real action evaluations are preserved.

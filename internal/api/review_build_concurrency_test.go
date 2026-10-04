@@ -122,7 +122,7 @@ func TestPostReviewConcurrentSameMatchSharesOneBuild(t *testing.T) {
 	}
 
 	var count int64
-	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ?", "review-fixture").Count(&count).Error; err != nil {
+	if err := server.DB.Model(&storage.MatchReview{SchemaVersion: 2}).Where("match_id = ?", "review-fixture").Count(&count).Error; err != nil {
 		t.Fatalf("count MatchReview rows: %v", err)
 	}
 	if count != 1 {
@@ -315,7 +315,7 @@ func TestPostReviewCallerContextCancelDoesNotAbortSharedBuild(t *testing.T) {
 	}
 
 	var count int64
-	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ?", "cancel-fixture").Count(&count).Error; err != nil {
+	if err := server.DB.Model(&storage.MatchReview{SchemaVersion: 2}).Where("match_id = ?", "cancel-fixture").Count(&count).Error; err != nil {
 		t.Fatalf("count MatchReview rows: %v", err)
 	}
 	if count != 1 {
@@ -526,7 +526,7 @@ func TestPostReviewForcedAndNonForcedSameIdentityCoalesceToOneBuild(t *testing.T
 	}
 
 	var count int64
-	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ?", "round25-force-fixture").Count(&count).Error; err != nil {
+	if err := server.DB.Model(&storage.MatchReview{SchemaVersion: 2}).Where("match_id = ?", "round25-force-fixture").Count(&count).Error; err != nil {
 		t.Fatalf("count MatchReview rows: %v", err)
 	}
 	if count != 1 {
@@ -587,7 +587,7 @@ func TestCacheMatchReviewConcurrentSameIdentityNoUniqueViolation(t *testing.T) {
 	}
 
 	var count int64
-	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ? AND checkpoint_id = ?", "round25-concurrent-fixture", "ckpt-1").Count(&count).Error; err != nil {
+	if err := server.DB.Model(&storage.MatchReview{SchemaVersion: 2}).Where("match_id = ? AND checkpoint_id = ?", "round25-concurrent-fixture", "ckpt-1").Count(&count).Error; err != nil {
 		t.Fatalf("count rows: %v", err)
 	}
 	if count != 1 {

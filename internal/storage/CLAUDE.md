@@ -26,3 +26,7 @@ Defines the database schema for user accounts and match history using GORM (Go O
 - `AutoMigrate` also owns the completed-match history cutover. It parses only the minimum paipu player/final-score fields, preserves competition ranking for ties, and logs recovered/skipped counts.
 - PostgreSQL connection is established in `cmd/server/main.go` and passed through.
 - `User.Rating` (default 1500) and `MatchPlayer.RatingDelta` are stored but nothing updates them; there is no rating system yet.
+
+## Replay study storage
+
+`ReplayImport` stores immutable account-owned JSON in a separate namespace, with a unique owner/content-hash index. `ReplayStudyJob` stores frozen input, checkpoint SHA, event window/config, unique owner/build key, lease/execution identity, state/progress, error and durable report chunks. Both are included in `AutoMigrate`; neither is a live match, training record or history entry. `MatchReview.SchemaVersion` prevents the old after-action anchors from being served as current reports.

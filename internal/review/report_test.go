@@ -25,7 +25,7 @@ func TestBuildReportAgainstStubServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildReport: %v", err)
 	}
-	if report.SchemaVersion != 1 || report.CheckpointPath != "stub.pt" || report.CheckpointStep != 42 {
+	if report.SchemaVersion != SchemaVersion || report.CheckpointPath != "stub.pt" || report.CheckpointStep != 42 {
 		t.Fatalf("bad header: %+v", report)
 	}
 	// Round 17, Finding 2: the report must carry the checkpoint sha256 the

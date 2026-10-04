@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"math/rand"
+	"sort"
 
 	pb "github.com/plasma/fh-mahjong/proto"
 )
@@ -54,6 +55,17 @@ import (
 // Intended for use on CloneForBranch clones (search determinization), never on
 // a live game.
 func (g *Game) RedealUnseen(actingSeat uint32, seed uint64) error {
+	return g.redealUnseen(actingSeat, seed, false)
+}
+
+// RedealUnseenForReview conditions on automatic flower reveals and canonicalizes
+// the unseen pool, so seeded estimates do not depend on the replay's private
+// allocation/order of those tiles. Gameplay search retains its existing contract.
+func (g *Game) RedealUnseenForReview(actingSeat uint32, seed uint64) error {
+	return g.redealUnseen(actingSeat, seed, true)
+}
+
+func (g *Game) redealUnseen(actingSeat uint32, seed uint64, review bool) error {
 	if g == nil || g.State == nil {
 		return fmt.Errorf("redeal: nil game state")
 	}
@@ -75,8 +87,45 @@ func (g *Game) RedealUnseen(actingSeat uint32, seed uint64) error {
 	}
 
 	// 2. Seeded shuffle (plain math/rand: search determinism, not wall replay).
+	if review {
+		sort.Slice(pool, func(i, j int) bool { return pool[i].Id < pool[j].Id })
+	}
 	rng := rand.New(rand.NewSource(int64(seed)))
 	rng.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
+
+	if review {
+		// Only wild flowers can remain concealed after automatic reveals. Draw
+		// opponent slots uniformly from eligible tiles, then shuffle all leftovers
+		// for the wall; this samples the visibility constraint without rejection.
+		eligible := make([]*pb.Tile, 0, len(pool))
+		flowers := make([]*pb.Tile, 0, 8)
+		for _, t := range pool {
+			wild := false
+			for _, w := range g.State.WildTiles {
+				if w.Suit == t.Suit && w.Value == t.Value {
+					wild = true
+					break
+				}
+			}
+			if t.Suit == pb.Suit_SUIT_FLOWER && !wild {
+				flowers = append(flowers, t)
+			} else {
+				eligible = append(eligible, t)
+			}
+		}
+		handSlots := 0
+		for s, p := range g.State.Players {
+			if uint32(s) != actingSeat {
+				handSlots += len(p.ClosedHand)
+			}
+		}
+		if len(eligible) < handSlots {
+			return fmt.Errorf("review redeal: insufficient playable unseen tiles")
+		}
+		wallPool := append(append([]*pb.Tile(nil), eligible[handSlots:]...), flowers...)
+		rng.Shuffle(len(wallPool), func(i, j int) { wallPool[i], wallPool[j] = wallPool[j], wallPool[i] })
+		pool = append(eligible[:handSlots:handSlots], wallPool...)
+	}
 
 	// 3. Deal back: opponents' hands first (seat ascending, positional), then
 	// undrawn wall slots ascending.
@@ -190,4 +239,14 @@ func (g *Game) WallTilesForTest() []*pb.Tile {
 }
 
 // WildIndicatorForTest returns the face-up wild indicator tile (test support).
-func (g *Game) WildIndicatorForTest() *pb.Tile { return g.wall[g.wildIndicatorIndex] }
+func (g *Game) WildIndicatorForTest() *pb.Tile { return g.VisibleWildIndicator() }
+
+// VisibleWildIndicator returns a copy of the public indicator, without exposing
+// the wall. Review visible-copy accounting uses this for flower indicators too.
+func (g *Game) VisibleWildIndicator() *pb.Tile {
+	if g == nil || g.wildIndicatorIndex < 0 || g.wildIndicatorIndex >= len(g.wall) || g.wall[g.wildIndicatorIndex] == nil {
+		return nil
+	}
+	t := g.wall[g.wildIndicatorIndex]
+	return &pb.Tile{Id: t.Id, Suit: t.Suit, Value: t.Value}
+}

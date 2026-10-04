@@ -83,6 +83,7 @@ export interface PaipuRound {
 }
 
 export interface Paipu {
+  matchMode?: 'classic' | 'chongci'
   version: number
   matchId: string
   ruleset: string

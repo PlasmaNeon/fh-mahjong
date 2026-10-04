@@ -6,6 +6,8 @@ export interface ReplayTile {
   id: number
   suit: number
   value: number
+  fromDrawn?: boolean
+  called?: boolean
 }
 
 export interface ReplayMeld {
@@ -20,6 +22,7 @@ export interface ReplayPlayerState {
   hand: ReplayTile[]
   drawnTileId: number | null
   discards: ReplayTile[]
+  replayDiscards: ReplayTile[]
   melds: ReplayMeld[]
   flowers: ReplayTile[]
   score: number
@@ -34,6 +37,7 @@ export interface ReplayState {
   actionIndex: number
   totalActions: number
   isRoundEnd: boolean
+  wallCount: number
   result: PaipuRound['result']
 }
 
@@ -142,6 +146,7 @@ export class ReplayEngine {
       hand: round.deals[seat].map(tileObjectFromId),
       drawnTileId: null,
       discards: [] as ReplayTile[],
+      replayDiscards: [] as ReplayTile[],
       melds: [] as ReplayMeld[],
       flowers: [] as ReplayTile[],
       score: round.startingScores[seat],
@@ -174,9 +179,12 @@ export class ReplayEngine {
           break
 
         case 'discard':
+          const fromDrawn = p.drawnTileId === action.tile
           removeFromHand(p.hand, action.tile as number)
           p.drawnTileId = null
-          p.discards.push(tileObjectFromId(action.tile as number))
+          const discardTile = { ...tileObjectFromId(action.tile as number), fromDrawn }
+          p.discards.push(discardTile)
+          p.replayDiscards.push(discardTile)
           activeDiscard = tileObjectFromId(action.tile as number)
           break
 
@@ -192,6 +200,8 @@ export class ReplayEngine {
           const fromP = players[action.from as number]
           if (fromP.discards.length > 0) {
             const stolen = fromP.discards.pop()!
+            if (!stolen) break
+            stolen.called = true
             const meldTiles = [...(action.tiles ?? []).map(tileObjectFromId), stolen]
             // An open kong is 'okan' in the paipu but renders as a kan meld.
             const meldType = action.act === 'okan' ? 'kan' : action.act
@@ -244,7 +254,8 @@ export class ReplayEngine {
         case 'ron': {
           p.drawnTileId = null
           const fromP = players[action.from as number]
-          if (fromP.discards.length > 0) fromP.discards.pop()
+          const called = fromP.discards.pop()
+          if (called) called.called = true
           isRoundEnd = true
           activeDiscard = null
           break
@@ -257,6 +268,7 @@ export class ReplayEngine {
       }
     }
 
+    if (this.actionIndex === round.actions.length - 1 && round.result?.type === 'draw') isRoundEnd = true
     let result = null
     if (isRoundEnd && round.result) {
       result = round.result
@@ -275,6 +287,7 @@ export class ReplayEngine {
       totalActions: round.actions.length,
       isRoundEnd,
       result,
+      wallCount: Math.max(0, 144 - 1 - round.deals.reduce((sum, hand) => sum + hand.length, 0) - (round.initialFlowers?.length ?? 0) - round.actions.slice(0, this.actionIndex + 1).filter(a => a.act === 'draw' || a.act === 'haitei').length),
     }
   }
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/plasma/fh-mahjong/internal/review"
 	"github.com/plasma/fh-mahjong/internal/review/reviewtest"
 
 	"github.com/glebarez/sqlite"
@@ -136,12 +137,12 @@ func TestPostReviewBuildsAndCaches(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
 		t.Fatalf("decode report: %v", err)
 	}
-	if v, _ := report["schemaVersion"].(float64); v != 1 {
-		t.Fatalf("expected schemaVersion 1, got %#v", report["schemaVersion"])
+	if v, _ := report["schemaVersion"].(float64); v != float64(review.SchemaVersion) {
+		t.Fatalf("expected current schemaVersion, got %#v", report["schemaVersion"])
 	}
 
 	var count int64
-	if err := server.DB.Model(&storage.MatchReview{}).Where("match_id = ?", "review-fixture").Count(&count).Error; err != nil {
+	if err := server.DB.Model(&storage.MatchReview{SchemaVersion: 2}).Where("match_id = ?", "review-fixture").Count(&count).Error; err != nil {
 		t.Fatalf("count MatchReview rows: %v", err)
 	}
 	if count != 1 {
@@ -253,7 +254,7 @@ func TestPostReviewForceRebuildsAndOverwrites(t *testing.T) {
 
 	// Same match + same checkpoint: the row is overwritten in place, not duplicated.
 	var count int64
-	if err := server.DB.Model(&storage.MatchReview{}).
+	if err := server.DB.Model(&storage.MatchReview{SchemaVersion: 2}).
 		Where("match_id = ? AND checkpoint_id = ?", "review-fixture", "stub.pt").
 		Count(&count).Error; err != nil {
 		t.Fatalf("count MatchReview rows: %v", err)

@@ -173,9 +173,45 @@ type PaipuRecord struct {
 // MatchReview caches one champion's review report for a match. A new champion
 // (different CheckpointID) re-reviews without destroying the old report.
 type MatchReview struct {
-	ID           uint      `gorm:"primaryKey" json:"-"`
-	MatchID      string    `gorm:"size:255;not null;uniqueIndex:idx_match_reviews_match_ckpt,priority:1;index" json:"matchId"`
-	CheckpointID string    `gorm:"size:512;not null;uniqueIndex:idx_match_reviews_match_ckpt,priority:2" json:"checkpointId"`
-	ReportJSON   string    `gorm:"type:text;not null" json:"-"`
-	CreatedAt    time.Time `json:"createdAt"`
+	SchemaVersion int       `gorm:"not null;default:0" json:"schemaVersion"`
+	ID            uint      `gorm:"primaryKey" json:"-"`
+	MatchID       string    `gorm:"size:255;not null;uniqueIndex:idx_match_reviews_match_ckpt,priority:1;index" json:"matchId"`
+	CheckpointID  string    `gorm:"size:512;not null;uniqueIndex:idx_match_reviews_match_ckpt,priority:2" json:"checkpointId"`
+	ReportJSON    string    `gorm:"type:text;not null" json:"-"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// ReplayImport is immutable and account-owned. Uploaded player user IDs never
+// establish ownership or enter live match/history/training tables.
+type ReplayImport struct {
+	ID            string    `gorm:"primaryKey;size:64" json:"id"`
+	OwnerID       uint      `gorm:"not null;uniqueIndex:idx_import_owner_hash,priority:1" json:"-"`
+	ContentHash   string    `gorm:"size:64;not null;uniqueIndex:idx_import_owner_hash,priority:2" json:"-"`
+	SourceMatchID string    `gorm:"size:255" json:"sourceMatchId"`
+	Filename      string    `gorm:"size:255" json:"filename"`
+	PaipuJSON     string    `gorm:"type:text;not null" json:"-"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// ReplayStudyJob checkpoints completed decisions, keeping retries/restarts
+// separate from inference and preserving the exact input/model/config identity.
+type ReplayStudyJob struct {
+	ID            string `gorm:"primaryKey;size:64"`
+	OwnerID       uint   `gorm:"not null;uniqueIndex:idx_study_owner_key,priority:1;index"`
+	BuildKey      string `gorm:"size:64;not null;uniqueIndex:idx_study_owner_key,priority:2"`
+	SourceKind    string `gorm:"size:16;not null;index"`
+	SourceID      string `gorm:"size:255;not null;index"`
+	SourceJSON    string `gorm:"type:text;not null"`
+	CheckpointSHA string `gorm:"size:64;not null"`
+	EventWindow   uint32
+	ConfigJSON    string `gorm:"type:text;not null"`
+	State         string `gorm:"size:32;not null"`
+	Completed     int
+	Total         int
+	Error         string `gorm:"type:text"`
+	ReportJSON    string `gorm:"type:text"`
+	WorkerID      string `gorm:"size:64"`
+	LeaseUntil    time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }

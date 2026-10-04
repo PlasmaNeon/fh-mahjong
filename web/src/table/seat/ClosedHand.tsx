@@ -66,14 +66,19 @@ export function ClosedHand({
   const nextDisplayOrder = computeStableDisplayOrder(baseTiles, displayOrderRef.current)
   displayOrderRef.current = nextDisplayOrder
   const baseTileMap = new Map(baseTiles.map((t) => [t.id, t]))
-  const sortedBaseTiles = nextDisplayOrder
-    .map((id) => baseTileMap.get(id))
-    .filter((t): t is TileLike => t != null)
+  const sortedBaseTiles = nextDisplayOrder.map((id) => baseTileMap.get(id)).filter((t): t is TileLike => t != null)
 
   const renderHandTile = (
     tile: TileLike,
-    { isCurrentDrawnSlot = false, slotKey, hiddenSlot = false }:
-      { isCurrentDrawnSlot?: boolean; slotKey?: string; hiddenSlot?: boolean } = {},
+    {
+      isCurrentDrawnSlot = false,
+      slotKey,
+      hiddenSlot = false,
+    }: {
+      isCurrentDrawnSlot?: boolean
+      slotKey?: string
+      hiddenSlot?: boolean
+    } = {},
   ) => {
     // True only on the render right after a discard, for the tile that was just
     // drawn and is now merging into the row from the separate drawn slot.
@@ -82,9 +87,14 @@ export function ClosedHand({
     const isChoiceSelected = handTileChoice?.selectedTileIds.has(tile.id) ?? false
     const isChoiceEligible = handTileChoice?.eligibleTileIds.has(tile.id) ?? false
     const choiceState = handTileChoice
-      ? (isChoiceSelected ? 'selected' : isChoiceEligible ? 'eligible' : 'disabled')
+      ? isChoiceSelected
+        ? 'selected'
+        : isChoiceEligible
+          ? 'eligible'
+          : 'disabled'
       : undefined
 
+    const annotation = showClosedHand ? player.reviewAnnotations?.[tile.id] : undefined
     return (
       <motion.div
         // Only the self seat (bottom, never rotated) animates layout. The shared
@@ -106,10 +116,45 @@ export function ClosedHand({
             ease: 'easeInOut',
           },
         }}
+        title={annotation?.label}
+        data-review-actual={annotation?.actual || undefined}
+        data-review-best={annotation?.best || undefined}
         className={`pov-bottom ${!isSelf ? 'small' : ''} ${isCurrentDrawnSlot ? 'drawn-tile' : ''}`}
         data-board-tile-id={isCurrentDrawnSlot ? undefined : tile.id}
         data-board-tile-role={isCurrentDrawnSlot ? undefined : 'hand'}
       >
+        {annotation && (
+          <div className="review-tile-annotation" aria-label={annotation.label}>
+            {annotation.confidence != null && (
+              <span className="review-tile-confidence">
+                <i
+                  style={{
+                    height: `${100 * (annotation.scale ?? annotation.confidence)}%`,
+                  }}
+                />
+                <b>{Math.round(annotation.confidence * 100)}</b>
+              </span>
+            )}
+            {annotation.risk != null && (
+              <span className="review-tile-risk">
+                <i style={{ width: `${100 * annotation.risk}%` }} />
+                {(100 * annotation.risk).toFixed(0)}
+              </span>
+            )}
+            {annotation.opponents && (
+              <span className="review-tile-opponents">
+                {annotation.opponents.map((o) => (
+                  <i
+                    key={o.seat}
+                    title={`Seat ${o.seat + 1}: ${(100 * o.ron).toFixed(1)}%`}
+                    style={{ width: `${100 * o.ron}%` }}
+                  />
+                ))}
+              </span>
+            )}
+            {annotation.actual && <span className="review-tile-actual">●</span>}
+          </div>
+        )}
         <TileComponent
           tile={tile}
           isInteractive={interactive && (!handTileChoice || isChoiceEligible)}
@@ -127,19 +172,22 @@ export function ClosedHand({
     <div className="zone-hand">
       <div className="seat-hand seat-hand--bottom">
         <div className="seat-hand__tiles seat-hand__tiles--bottom" data-seat-hand-origin={direction}>
-          {showClosedHand ? (
-            isAnonymous
+          {showClosedHand
+            ? isAnonymous
               ? baseTiles.map((tile, index) =>
-                  renderHandTile(tile, { slotKey: `slot-${index}`, hiddenSlot: hiddenSlots?.has(index) ?? false }),
+                  renderHandTile(tile, {
+                    slotKey: `slot-${index}`,
+                    hiddenSlot: hiddenSlots?.has(index) ?? false,
+                  }),
                 )
               : sortedBaseTiles.map((tile) => renderHandTile(tile))
-          ) : (
-            Array(handBackCount).fill(null).map((_, index) => (
-              <div key={`back-${index}`} className="pov-bottom small">
-                <div className="mahjong-tile-back small" />
-              </div>
-            ))
-          )}
+            : Array(handBackCount)
+                .fill(null)
+                .map((_, index) => (
+                  <div key={`back-${index}`} className="pov-bottom small">
+                    <div className="mahjong-tile-back small" />
+                  </div>
+                ))}
         </div>
 
         {showClosedHand && drawnTile && (
@@ -166,9 +214,7 @@ export function ClosedHand({
         )}
       </div>
 
-      {isSelf && player.shantenLabel && (
-        <div className="shanten-indicator">{player.shantenLabel}</div>
-      )}
+      {isSelf && player.shantenLabel && <div className="shanten-indicator">{player.shantenLabel}</div>}
     </div>
   )
 }

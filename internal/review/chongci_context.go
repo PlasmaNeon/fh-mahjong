@@ -12,6 +12,9 @@ const defaultChongciStartingScore = int32(25000)
 // isChongciPaipu detects chongci matches: chongci rounds record real (nonzero)
 // starting scores; classic rounds record zeros.
 func isChongciPaipu(paipu *engine.Paipu) bool {
+	if paipu.MatchMode != "" {
+		return paipu.MatchMode == "chongci"
+	}
 	for _, r := range paipu.Rounds {
 		for _, s := range r.StartingScores {
 			if s != 0 {
@@ -26,8 +29,8 @@ func isChongciPaipu(paipu *engine.Paipu) bool {
 // the champion was trained on. Classic matches are presented as the FINAL hand
 // of a chongci match with all scores equal (user decision, see spec); chongci
 // matches carry their real per-round starting scores. MaxHands for chongci is
-// approximated by the number of recorded rounds (the true config cap is not
-// stored in the paipu).
+// read from v2 metadata, falling back to the number of recorded rounds for
+// older records that did not store the config.
 func reviewState(state *pb.GameState, paipu *engine.Paipu, roundIdx int) *pb.GameState {
 	clone := proto.Clone(state).(*pb.GameState)
 	clone.MatchMode = pb.MatchMode_MATCH_MODE_CHONGCI
@@ -50,6 +53,9 @@ func reviewState(state *pb.GameState, paipu *engine.Paipu, roundIdx int) *pb.Gam
 		MaxHands:      maxHands,
 		StartingScore: startingScore,
 		BustThreshold: 0,
+	}
+	if chongci && paipu.Chongci != nil {
+		clone.ChongciConfig = &pb.ChongciConfig{MaxHands: paipu.Chongci.MaxHands, StartingScore: paipu.Chongci.StartingScore, BustThreshold: paipu.Chongci.BustThreshold}
 	}
 	for seat, player := range clone.Players {
 		if player == nil {

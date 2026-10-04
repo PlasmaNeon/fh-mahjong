@@ -24,3 +24,7 @@ One seat's worth of tabletop, decomposed into zones. `TableBoard.tsx` composes f
 - Preview changes on `/tools/table-sample` (`features/dev/`), not by deploying a live match.
 
 `DiscardZone` assigns stable row/column coordinates in formation order: three rows of six, then an extensible fourth row. All four rotations use the same coordinates and CSS chooses their axis/direction. `DiscardZone.test.ts` covers the 18/24-tile boundaries and 30-tile overflow.
+
+## Replay study presentation
+
+`ClosedHand` supports optional per-physical-ID confidence and risk annotations on the same base/drawn wrappers; exact tile 0 and duplicate faces remain distinct. Bars and markers are absolute and must not change the reserved hand or meld/flower anchors. `DiscardZone` accepts optional called-footprint/tsumogiri attributes; called replay footprints do not claim live tile-flight destination IDs. These fields are absent in live views.

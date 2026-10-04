@@ -6,9 +6,37 @@ import { getApiUrl } from '../../config'
 export interface ActionProb {
   actionId: number
   prob: number
+  evaluation?: { mean: number; standardError: number; samples: number }
 }
 
+export interface TileRisk {
+  face: number
+  unseen: number
+  inHand: boolean
+  anyRon: number
+  standardError: number
+  opponents: {
+    seat: number
+    ron: number
+    contributors: { patternId: string; patternName: string; frequency: number; exampleFaces: number[] }[]
+  }[]
+}
 export interface ReportDecision {
+  id?: string
+  positionIndex?: number
+  choiceSource?: 'recorded' | 'inferred' | 'unknown'
+  actualTileId?: number | null
+  recommendedActionId?: number
+  risk?: { method: string; samples: number; tiles: TileRisk[]; operations: { actionId: number; anyRon: number }[] }
+  draw?: {
+    actionIndex: number
+    source: string
+    hit: boolean
+    chance: number
+    unseen: number
+    waits: { face: number; remaining: number; points: number }[]
+  }
+
   seat: number
   round: number
   actionIndex: number
@@ -33,6 +61,15 @@ export interface SeatSummary {
 }
 
 export interface ReviewReport {
+  study?: {
+    eventWindow: number
+    method: string
+    objective: string
+    units: string
+    config: { worlds: number; riskWorlds: number; seed: number; maxDecisions: number }
+    complete: boolean
+    buildMillis: number
+  }
   schemaVersion: number
   matchId: string
   ruleset: string
