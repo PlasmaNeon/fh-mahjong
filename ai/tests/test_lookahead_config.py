@@ -64,3 +64,17 @@ def test_go_bridge_emits_version_one_planes():
     observation = MahjongEnv(config, build_bridge(config)).reset(seed=5)
     assert observation.planes.shape == (52, 42, 1)
     assert np.any(observation.planes[39:52] != 0)
+
+
+def test_train_cli_threads_lookahead_version(monkeypatch, tmp_path):
+    import fh_mahjong_ai.scripts.train_b2b as cli
+    seen = {}
+    monkeypatch.setattr(cli, "train_b2b", lambda **kwargs: seen.update(kwargs))
+    monkeypatch.setattr("sys.argv", [
+        "fh-mj-train-b2b", "--champion", str(tmp_path / "init.pt"),
+        "--checkpoint-dir", str(tmp_path / "ckpt"), "--event-window", "8",
+        "--lookahead-version", "1", "--bridge-kind", "mock"])
+    cli.main()
+    assert seen["env_config"].lookahead_version == 1
+    assert seen["env_config"].plane_shape == (64, 42, 1)
+    assert seen["model_config"].lookahead_version == 1
