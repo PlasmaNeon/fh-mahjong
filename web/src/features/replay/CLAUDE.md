@@ -39,4 +39,6 @@ Jobs poll with abort/generation guards, expose partial/pending values, cancel, r
 
 Portrait replay keeps the table in a compact landscape proportion above its scrollable controls. Risk contributor details use a native modal dialog with Escape and focus restoration.
 
+Confidence bars above concealed-hand tiles use a fully opaque slate background, including the empty portion, so table artwork cannot show through. Their placement and the hand geometry remain unchanged.
+
 Candidate columns sort by confidence or expected payout without changing the policy recommendation. Bookmarks retain advice visibility and the selected decision even when responses share a cursor. Discard logs include individual-opponent cumulative proxies and observed outcomes only after the event is visible in study mode.

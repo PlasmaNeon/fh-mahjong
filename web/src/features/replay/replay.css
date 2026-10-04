@@ -143,7 +143,7 @@
 .review-study h4 { color: var(--brass-light); margin: .6rem 0; font-weight: normal; }
 :is(.replay-viewer, .table-sample-review) .review-tile-annotation { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 :is(.replay-viewer, .table-sample-review) .pov-bottom:has(.review-tile-annotation) { position: relative; }
-:is(.replay-viewer, .table-sample-review) .review-tile-confidence { position: absolute; bottom: calc(100% + 4px); left: 25%; width: 50%; height: 34px; background: #17242bdb; border: 1px solid #819b9f; }
+:is(.replay-viewer, .table-sample-review) .review-tile-confidence { position: absolute; bottom: calc(100% + 4px); left: 25%; width: 50%; height: 34px; background: #17242b; border: 1px solid #819b9f; }
 :is(.replay-viewer, .table-sample-review) .review-tile-confidence i { position: absolute; bottom: 0; width: 100%; background: #2fa88f; }
 :is(.replay-viewer, .table-sample-review) .review-tile-confidence b { position: absolute; bottom: 0; width: 100%; text-align: center; color: white; font: 11px var(--mono); text-shadow: 0 1px 2px black; }
 :is(.replay-viewer, .table-sample-review) [data-review-best] .mahjong-tile { outline: 2px solid #2fa88f; }
