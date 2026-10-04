@@ -246,3 +246,19 @@ func TestLookaheadRejectsCallTilesMissingFromHand(t *testing.T) {
 		t.Fatalf("version 0 never inspects meld tiles: %v", err)
 	}
 }
+
+func TestEnvCarriesLookaheadVersion(t *testing.T) {
+	config := &pb.EnvConfig{LearningSeats: []uint32{0, 1, 2, 3}, LookaheadVersion: 1}
+	env := New(config)
+	reset, err := env.Reset(&pb.EnvResetRequest{Seed: 7, Config: config})
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if reset.Observation.PlaneChannels != 52 {
+		t.Fatalf("channels %d, want 52", reset.Observation.PlaneChannels)
+	}
+	bad := &pb.EnvConfig{LearningSeats: []uint32{0}, LookaheadVersion: 2}
+	if _, err := New(bad).Reset(&pb.EnvResetRequest{Seed: 7, Config: bad}); err == nil {
+		t.Fatalf("version 2 must be rejected at reset")
+	}
+}

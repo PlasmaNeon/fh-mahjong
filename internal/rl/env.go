@@ -46,6 +46,9 @@ func (e *Env) Reset(request *pb.EnvResetRequest) (*pb.EnvResetResponse, error) {
 		return nil, fmt.Errorf("event_history_window %d exceeds maximum %d",
 			e.config.EventHistoryWindow, MaxEventHistoryWindow)
 	}
+	if err := validateLookaheadVersion(e.config.LookaheadVersion); err != nil {
+		return nil, err
+	}
 
 	seed := uint64(1)
 	if request != nil && request.Seed != 0 {
@@ -262,6 +265,7 @@ func (e *Env) GenerateHeuristicTrajectory(request *pb.TrajectoryRequest) (*pb.Tr
 			MatchMode:          config.MatchMode,
 			ChongciConfig:      engine.CloneChongciConfig(config.ChongciConfig),
 			EventHistoryWindow: config.EventHistoryWindow,
+			LookaheadVersion:   config.LookaheadVersion,
 		})
 
 		resetResponse, err := env.Reset(&pb.EnvResetRequest{
@@ -604,6 +608,7 @@ func normalizeConfig(config *pb.EnvConfig) *pb.EnvConfig {
 		ChongciConfig:      engine.CloneChongciConfig(config.ChongciConfig),
 		OracleObservation:  config.OracleObservation,
 		EventHistoryWindow: config.EventHistoryWindow,
+		LookaheadVersion:   config.LookaheadVersion,
 	}
 	if len(normalized.LearningSeats) == 0 {
 		normalized.LearningSeats = []uint32{0}

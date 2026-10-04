@@ -148,6 +148,9 @@ func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64, 
 		return nil, fmt.Errorf("search pool: event_history_window %d exceeds maximum %d",
 			cfg.EventHistoryWindow, MaxEventHistoryWindow)
 	}
+	if err := validateLookaheadVersion(cfg.LookaheadVersion); err != nil {
+		return nil, fmt.Errorf("search pool: %w", err)
+	}
 	var seat uint32
 	if len(rootSeat) == 1 {
 		// Explicit root: validate the caller-chosen seat is genuinely actionable
