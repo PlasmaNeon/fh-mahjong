@@ -91,6 +91,41 @@ func handWithout(hand []*pb.Tile, revealed []*pb.Tile) ([]*pb.Tile, error) {
 	return rest, nil
 }
 
+// handWithoutFace is the hand minus one tile of `face`, and that tile (nil when
+// the hand holds none).
+func handWithoutFace(hand []*pb.Tile, face shanten.TileType) ([]*pb.Tile, *pb.Tile) {
+	for i, tile := range hand {
+		if tile.GetSuit() == face.Suit && tile.GetValue() == face.Value {
+			rest := make([]*pb.Tile, 0, len(hand)-1)
+			rest = append(rest, hand[:i]...)
+			return append(rest, hand[i+1:]...), tile
+		}
+	}
+	return hand, nil
+}
+
+// seenAfterMoving adds the tiles the seat's own action moves to its river or
+// melds: copies it can see that are no longer in its hand.
+func seenAfterMoving(visible [42]int, moved ...*pb.Tile) [42]int {
+	for _, tile := range moved {
+		if face, ok := tileFaceIndex42(tile); ok {
+			visible[face]++
+		}
+	}
+	return visible
+}
+
+// lookaheadUseful is a look-ahead hand's useful tiles: the draws that lower its
+// shanten or, at tenpai (where findUsefulTiles lists none), the draws that
+// complete it.
+func lookaheadUseful(rest []*pb.Tile, melds int, wilds []*pb.Tile, routeShanten int,
+	useful []shanten.UsefulTile, total int) ([]shanten.UsefulTile, int) {
+	if routeShanten == 0 {
+		return shanten.WinningTiles(rest, melds, wilds)
+	}
+	return useful, total
+}
+
 // bestAfterCall analyses the hand after a pon or chii and the discard that must
 // follow: the lowest standard shanten, then the most live useful tiles.
 func bestAfterCall(player *pb.PlayerState, action *pb.PlayerAction, wilds []*pb.Tile, visible [42]int) (int, int, error) {
@@ -98,9 +133,13 @@ func bestAfterCall(player *pb.PlayerState, action *pb.PlayerAction, wilds []*pb.
 	if err != nil {
 		return 0, 0, err
 	}
+	melds := len(player.OpenMelds) + 1
+	seen := seenAfterMoving(visible, action.MeldTiles...)
 	best, bestLive := shanten.RouteUnavailable, 0
-	for _, option := range shanten.AnalyzeHand(rest, len(player.OpenMelds)+1, wilds).DiscardOptions {
-		live := liveUsefulCount(option.UsefulTiles, visible)
+	for _, option := range shanten.AnalyzeHand(rest, melds, wilds).DiscardOptions {
+		after, discarded := handWithoutFace(rest, option.Discard)
+		useful, _ := lookaheadUseful(after, melds, wilds, option.After.Standard, option.UsefulTiles, option.TotalUseful)
+		live := liveUsefulCount(useful, seenAfterMoving(seen, discarded))
 		if option.After.Standard < best || (option.After.Standard == best && live > bestLive) {
 			best, bestLive = option.After.Standard, live
 		}
@@ -115,7 +154,8 @@ func afterKan(player *pb.PlayerState, action *pb.PlayerAction, melds int, wilds 
 		return 0, 0, err
 	}
 	analysis := shanten.AnalyzeHand(rest, melds, wilds)
-	return analysis.Routes.Standard, liveUsefulCount(analysis.UsefulTiles, visible), nil
+	useful, _ := lookaheadUseful(rest, melds, wilds, analysis.Routes.Standard, analysis.UsefulTiles, analysis.TotalUseful)
+	return analysis.Routes.Standard, liveUsefulCount(useful, seenAfterMoving(visible, action.MeldTiles...)), nil
 }
 
 // setLookaheadPlanes writes the version-1 block starting at channel `base`.
@@ -149,8 +189,14 @@ func setLookaheadPlanes(planes []float32, base int, state *pb.GameState, seat ui
 			set(lookaheadDiscardStandard, face, normalizeShanten(option.After.Standard))
 			set(lookaheadDiscardSevenPairs, face, normalizeShanten(option.After.SevenPairs))
 			set(lookaheadDiscardIndependence, face, normalizeShanten(option.After.Independence))
-			set(lookaheadDiscardUseful, face, normalizeUsefulTileCount(option.TotalUseful))
-			set(lookaheadDiscardLive, face, normalizeUsefulTileCount(liveUsefulCount(option.UsefulTiles, visible)))
+			rest, err := handWithout(player.ClosedHand, []*pb.Tile{action.Tile})
+			if err != nil {
+				return err
+			}
+			useful, total := lookaheadUseful(rest, len(player.OpenMelds), state.WildTiles,
+				option.After.Overall, option.UsefulTiles, option.TotalUseful)
+			set(lookaheadDiscardUseful, face, normalizeUsefulTileCount(total))
+			set(lookaheadDiscardLive, face, normalizeUsefulTileCount(liveUsefulCount(useful, seenAfterMoving(visible, action.Tile))))
 			set(lookaheadDiscardDanger, face, publicDangerScore(state, seat, action.Tile))
 		case actionID >= PonBase && actionID < PonBase+PonCount:
 			standard, live, err := bestAfterCall(player, action, state.WildTiles, visible)

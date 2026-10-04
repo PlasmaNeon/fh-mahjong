@@ -42,18 +42,66 @@ func claimState(hand []*pb.Tile, discard *pb.Tile, actions []*pb.PlayerAction) *
 	}
 }
 
+// refUseful is the reference for the useful-tile channels: the draws that
+// lower the shanten, or at tenpai the draws that complete the hand.
+func refUseful(rest []*pb.Tile, melds int, wilds []*pb.Tile, routeShanten int, useful []shanten.UsefulTile, total int) ([]shanten.UsefulTile, int) {
+	if routeShanten == 0 {
+		return shanten.WinningTiles(rest, melds, wilds)
+	}
+	return useful, total
+}
+
 // bestStandardAfterDiscard is the reference for the pon/chii channels: the
 // best (lowest standard shanten, then most live useful tiles) discard after
-// the call, computed from an explicitly written post-call hand.
-func bestStandardAfterDiscard(rest []*pb.Tile, melds int, wilds []*pb.Tile, visible [42]int) (int, int) {
+// the call, computed from an explicitly written post-call hand. `visible`
+// must already include the call's meld tiles.
+func bestStandardAfterDiscard(t *testing.T, rest []*pb.Tile, melds int, wilds []*pb.Tile, visible [42]int) (int, int) {
+	t.Helper()
 	best, bestLive := shanten.RouteUnavailable, 0
 	for _, option := range shanten.AnalyzeHand(rest, melds, wilds).DiscardOptions {
-		live := liveUsefulCount(option.UsefulTiles, visible)
+		after, discarded := handWithoutFace(rest, option.Discard)
+		if discarded == nil {
+			t.Fatalf("option %+v not in hand", option.Discard)
+		}
+		useful, _ := refUseful(after, melds, wilds, option.After.Standard, option.UsefulTiles, option.TotalUseful)
+		live := liveUsefulCount(useful, seenAfterMoving(visible, discarded))
 		if option.After.Standard < best || (option.After.Standard == best && live > bestLive) {
 			best, bestLive = option.After.Standard, live
 		}
 	}
 	return best, bestLive
+}
+
+// assertDiscardChannels checks every discard channel against the reference.
+func assertDiscardChannels(t *testing.T, state *pb.GameState) *pb.SeatObservation {
+	t.Helper()
+	obs, err := encodeObservation(state, 0, 0, false, 1, nil, 0)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	player := state.Players[0]
+	melds := len(player.OpenMelds)
+	visible := publicSeenCounts(state)
+	for _, option := range shanten.AnalyzeHand(player.ClosedHand, melds, state.WildTiles).DiscardOptions {
+		face := faceOfType(t, option.Discard)
+		rest, discarded := handWithoutFace(player.ClosedHand, option.Discard)
+		useful, total := refUseful(rest, melds, state.WildTiles, option.After.Overall, option.UsefulTiles, option.TotalUseful)
+		want := map[int]float32{
+			0: normalizeShanten(option.After.Overall),
+			1: normalizeShanten(option.After.Standard),
+			2: normalizeShanten(option.After.SevenPairs),
+			3: normalizeShanten(option.After.Independence),
+			4: normalizeUsefulTileCount(total),
+			5: normalizeUsefulTileCount(liveUsefulCount(useful, seenAfterMoving(visible, discarded))),
+			6: publicDangerScore(state, 0, discarded),
+		}
+		for channel, value := range want {
+			if got := lookaheadCell(obs, channel, face); got != value {
+				t.Fatalf("discard %+v channel %d: got %v, want %v", option.Discard, channel, got, value)
+			}
+		}
+	}
+	return obs
 }
 
 func TestLookaheadVersionZeroUnchangedAndVersionOneShiftsOracle(t *testing.T) {
@@ -118,42 +166,118 @@ func TestLiveUsefulCountSubtractsVisibleCopiesAndIndicator(t *testing.T) {
 }
 
 func TestLookaheadDiscardChannelsMatchAnalysis(t *testing.T) {
-	hand := routeTestTiles(t, "1m2m3m4m4m5p6p7p3s4s1z1z5z6z")
-	wilds := routeTestTiles(t, "9p")
-	state := discardTurnState(hand, wilds, 0)
-	state.Players[1].Discards = routeTestTiles(t, "2s5s")
+	plain := discardTurnState(routeTestTiles(t, "1m2m3m4m4m5p6p7p3s4s1z1z5z6z"), routeTestTiles(t, "9p"), 0)
+	plain.Players[1].Discards = routeTestTiles(t, "2s5s")
+	obs := assertDiscardChannels(t, plain)
+	for channel := 0; channel < 13; channel++ {
+		if got := lookaheadCell(obs, channel, testFace(t, "9m")); got != 0 {
+			t.Fatalf("face 9m is not in hand but channel %d = %v", channel, got)
+		}
+	}
+	// A held wild (9p) is a legal discard with its own option.
+	assertDiscardChannels(t, discardTurnState(routeTestTiles(t, "1m2m3m4m4m5p6p7p3s4s1z1z9p6z"), routeTestTiles(t, "9p"), 0))
+	// Independence alive: 13 disconnected tiles plus 2m.
+	independent := discardTurnState(routeTestTiles(t, "1m2m4m7m2p5p8p3s6s9s1z2z3z4z"), nil, 0)
+	obs = assertDiscardChannels(t, independent)
+	if got := lookaheadCell(obs, 3, testFace(t, "2m")); got != normalizeShanten(0) {
+		t.Fatalf("discarding 2m leaves Independence tenpai: channel 42 = %v", got)
+	}
+	if got := lookaheadCell(obs, 4, testFace(t, "2m")); got == 0 {
+		t.Fatalf("an Independence-tenpai discard must count its winning tiles")
+	}
+}
+
+func TestLookaheadUsefulAtTenpaiCountsWinsAndOwnDiscards(t *testing.T) {
+	// 123m 456p 789s 111z 5m5m. Discard 5m: single wait on 5m, 4 - 1 held = 3
+	// raw, and the discarded 5m is in the seat's own river, so 2 live.
+	state := discardTurnState(routeTestTiles(t, "1m2m3m4p5p6p7s8s9s1z1z1z5m5m"), nil, 0)
+	obs, err := encodeObservation(state, 0, 0, false, 1, nil, 0)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if got := lookaheadCell(obs, 4, testFace(t, "5m")); got != normalizeUsefulTileCount(3) {
+		t.Fatalf("discard 5m raw useful %v, want 3/64", got)
+	}
+	if got := lookaheadCell(obs, 5, testFace(t, "5m")); got != normalizeUsefulTileCount(2) {
+		t.Fatalf("discard 5m live useful %v, want 2/64", got)
+	}
+	// Discard 1m: 23m waits on 1m (4, one now in the river) or 4m (4): raw 8, live 7.
+	if got := lookaheadCell(obs, 4, testFace(t, "1m")); got != normalizeUsefulTileCount(8) {
+		t.Fatalf("discard 1m raw useful %v, want 8/64", got)
+	}
+	if got := lookaheadCell(obs, 5, testFace(t, "1m")); got != normalizeUsefulTileCount(7) {
+		t.Fatalf("discard 1m live useful %v, want 7/64", got)
+	}
+}
+
+func TestLookaheadKanLiveExcludesTheKanTiles(t *testing.T) {
+	// Closed kan of 1m leaves 23m 567p 123s 99s: tenpai on 1m or 4m. All four 1m
+	// sit in the kan, so only the four 4m are live.
+	hand := routeTestTiles(t, "1m1m1m1m2m3m5p6p7p1s2s3s9s9s")
+	state := discardTurnState(hand, nil, 0)
+	state.Players[0].ValidActions = append(state.Players[0].ValidActions,
+		&pb.PlayerAction{Type: pb.ActionType_ACTION_KAN, MeldTiles: hand[:4]})
+	obs, err := encodeObservation(state, 0, 0, false, 1, nil, 0)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if got := lookaheadCell(obs, 11, testFace(t, "1m")); got != normalizeShanten(0) {
+		t.Fatalf("kan shanten %v, want tenpai", got)
+	}
+	if got := lookaheadCell(obs, 12, testFace(t, "1m")); got != normalizeUsefulTileCount(4) {
+		t.Fatalf("kan live %v, want 4/64", got)
+	}
+}
+
+func TestLookaheadDirectKanAndThreeChiiVariants(t *testing.T) {
+	discard := &pb.Tile{Id: 900, Suit: pb.Suit_SUIT_MAN, Value: 6}
+	hand := routeTestTiles(t, "4m5m7m8m2p3p4p7s8s9s1z1z5z")
+	actions := []*pb.PlayerAction{
+		{Type: pb.ActionType_ACTION_CHII, Tile: discard, MeldTiles: []*pb.Tile{hand[0], hand[1]}, TargetPlayer: 3}, // 456m
+		{Type: pb.ActionType_ACTION_CHII, Tile: discard, MeldTiles: []*pb.Tile{hand[1], hand[2]}, TargetPlayer: 3}, // 567m
+		{Type: pb.ActionType_ACTION_CHII, Tile: discard, MeldTiles: []*pb.Tile{hand[2], hand[3]}, TargetPlayer: 3}, // 678m
+	}
+	state := claimState(hand, discard, actions)
 	obs, err := encodeObservation(state, 0, 0, false, 1, nil, 0)
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
 	visible := publicSeenCounts(state)
-	liveBelowRaw := false
-	for _, option := range shanten.AnalyzeHand(hand, 0, wilds).DiscardOptions {
-		face := faceOfType(t, option.Discard)
-		live := liveUsefulCount(option.UsefulTiles, visible)
-		liveBelowRaw = liveBelowRaw || live < option.TotalUseful
-		want := map[int]float32{
-			0: normalizeShanten(option.After.Overall),
-			1: normalizeShanten(option.After.Standard),
-			2: normalizeShanten(option.After.SevenPairs),
-			3: normalizeShanten(option.After.Independence),
-			4: normalizeUsefulTileCount(option.TotalUseful),
-			5: normalizeUsefulTileCount(live),
-			6: publicDangerScore(state, 0, &pb.Tile{Suit: option.Discard.Suit, Value: option.Discard.Value}),
+	for _, c := range []struct {
+		middle, rest string
+		meld         []*pb.Tile
+	}{
+		{"5m", "7m8m2p3p4p7s8s9s1z1z5z", actions[0].MeldTiles},
+		{"6m", "4m8m2p3p4p7s8s9s1z1z5z", actions[1].MeldTiles},
+		{"7m", "4m5m2p3p4p7s8s9s1z1z5z", actions[2].MeldTiles},
+	} {
+		wantShanten, wantLive := bestStandardAfterDiscard(t, routeTestTiles(t, c.rest), 1, nil, seenAfterMoving(visible, c.meld...))
+		if got := lookaheadCell(obs, 9, testFace(t, c.middle)); got != normalizeShanten(wantShanten) {
+			t.Fatalf("chii middle %s shanten %v, want %v", c.middle, got, normalizeShanten(wantShanten))
 		}
-		for channel, value := range want {
-			if got := lookaheadCell(obs, channel, face); got != value {
-				t.Fatalf("discard %+v channel %d: got %v, want %v", option.Discard, channel, got, value)
-			}
+		if got := lookaheadCell(obs, 10, testFace(t, c.middle)); got != normalizeUsefulTileCount(wantLive) {
+			t.Fatalf("chii middle %s live %v, want %v", c.middle, got, normalizeUsefulTileCount(wantLive))
 		}
 	}
-	if !liveBelowRaw {
-		t.Fatalf("the visible 2s/5s should lower some discard's live count below its raw count")
+
+	kanHand := routeTestTiles(t, "6m6m6m2p3p4p7s8s9s1z1z5z6z")
+	kan := claimState(kanHand, discard, []*pb.PlayerAction{
+		{Type: pb.ActionType_ACTION_KAN, Tile: discard, MeldTiles: kanHand[:3], TargetPlayer: 3},
+		{Type: pb.ActionType_ACTION_PON, Tile: discard, MeldTiles: kanHand[:2], TargetPlayer: 3},
+	})
+	kanObs, err := encodeObservation(kan, 0, 0, false, 1, nil, 0)
+	if err != nil {
+		t.Fatalf("encode direct kan: %v", err)
 	}
-	for channel := 0; channel < 13; channel++ {
-		if got := lookaheadCell(obs, channel, testFace(t, "9m")); got != 0 {
-			t.Fatalf("face 9m is not in hand but channel %d = %v", channel, got)
-		}
+	rest := routeTestTiles(t, "2p3p4p7s8s9s1z1z5z6z")
+	analysis := shanten.AnalyzeHand(rest, 1, nil)
+	useful, _ := refUseful(rest, 1, nil, analysis.Routes.Standard, analysis.UsefulTiles, analysis.TotalUseful)
+	if got := lookaheadCell(kanObs, 11, testFace(t, "6m")); got != normalizeShanten(analysis.Routes.Standard) {
+		t.Fatalf("direct kan shanten %v, want %v", got, normalizeShanten(analysis.Routes.Standard))
+	}
+	wantLive := liveUsefulCount(useful, seenAfterMoving(publicSeenCounts(kan), kanHand[:3]...))
+	if got := lookaheadCell(kanObs, 12, testFace(t, "6m")); got != normalizeUsefulTileCount(wantLive) {
+		t.Fatalf("direct kan live %v, want %v", got, normalizeUsefulTileCount(wantLive))
 	}
 }
 
@@ -174,7 +298,7 @@ func TestLookaheadPonAndChiiChannels(t *testing.T) {
 	visible := publicSeenCounts(state)
 
 	ponRest := routeTestTiles(t, "2m4m5m7p8p9p1s1s3z3z5z")
-	ponShanten, ponLive := bestStandardAfterDiscard(ponRest, 1, nil, visible)
+	ponShanten, ponLive := bestStandardAfterDiscard(t, ponRest, 1, nil, seenAfterMoving(visible, sixes...))
 	if got := lookaheadCell(obs, 7, testFace(t, "6m")); got != normalizeShanten(ponShanten) {
 		t.Fatalf("pon shanten %v, want %v", got, normalizeShanten(ponShanten))
 	}
@@ -183,7 +307,7 @@ func TestLookaheadPonAndChiiChannels(t *testing.T) {
 	}
 
 	chiiRest := routeTestTiles(t, "2m6m6m7p8p9p1s1s3z3z5z")
-	chiiShanten, chiiLive := bestStandardAfterDiscard(chiiRest, 1, nil, visible)
+	chiiShanten, chiiLive := bestStandardAfterDiscard(t, chiiRest, 1, nil, seenAfterMoving(visible, hand[1], hand[2]))
 	middle := testFace(t, "5m") // 4m5m6m
 	if got := lookaheadCell(obs, 9, middle); got != normalizeShanten(chiiShanten) {
 		t.Fatalf("chii shanten %v, want %v", got, normalizeShanten(chiiShanten))
@@ -211,7 +335,8 @@ func TestLookaheadKanMeldCounts(t *testing.T) {
 	if got := lookaheadCell(obs, 11, testFace(t, "1m")); got != normalizeShanten(want.Routes.Standard) {
 		t.Fatalf("closed kan shanten %v, want %v", got, normalizeShanten(want.Routes.Standard))
 	}
-	if got := lookaheadCell(obs, 12, testFace(t, "1m")); got != normalizeUsefulTileCount(liveUsefulCount(want.UsefulTiles, publicSeenCounts(state))) {
+	wantUseful, _ := refUseful(rest, 1, nil, want.Routes.Standard, want.UsefulTiles, want.TotalUseful)
+	if got := lookaheadCell(obs, 12, testFace(t, "1m")); got != normalizeUsefulTileCount(liveUsefulCount(wantUseful, seenAfterMoving(publicSeenCounts(state), hand[:4]...))) {
 		t.Fatalf("closed kan live %v", got)
 	}
 
@@ -229,6 +354,10 @@ func TestLookaheadKanMeldCounts(t *testing.T) {
 	upWant := shanten.AnalyzeHand(upHand[1:], 1, nil)
 	if got := lookaheadCell(upObs, 11, testFace(t, "7z")); got != normalizeShanten(upWant.Routes.Standard) {
 		t.Fatalf("upgraded kan shanten %v, want %v (meld count must stay 1)", got, normalizeShanten(upWant.Routes.Standard))
+	}
+	upUseful, _ := refUseful(upHand[1:], 1, nil, upWant.Routes.Standard, upWant.UsefulTiles, upWant.TotalUseful)
+	if got := lookaheadCell(upObs, 12, testFace(t, "7z")); got != normalizeUsefulTileCount(liveUsefulCount(upUseful, seenAfterMoving(publicSeenCounts(upState), upHand[0]))) {
+		t.Fatalf("upgraded kan live %v", got)
 	}
 }
 

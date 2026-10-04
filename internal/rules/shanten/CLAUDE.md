@@ -13,6 +13,7 @@ This package computes closed-hand progress metrics for Fenghua hands. It support
   - `Analyze()` / `AnalyzeFromTiles()` — route-by-route shanten breakdown
   - `AnalyzeHand()` — current-hand useful-tile count plus discard-option analysis
   - `FindUsefulTilesFromTiles()` — effective draws for the current hand state
+  - `WinningTiles()` — the draws that complete a tenpai hand (shanten 0 to -1), the waits `findUsefulTiles` cannot list; empty unless tenpai. Used by the RL look-ahead planes
   - `findUsefulTiles` takes the hand's own `RouteBreakdown` and prunes exactly: one added tile (natural or wild) lowers the seven-pairs or independence shanten by at most one, so a route already >= target+1 is not evaluated for any draw, and at tenpai (clamped target 0) no draw can count, so the loop is skipped. The standard route resumes `calcStandard`'s honor -> sou -> pin -> man chain from a per-hand `standardPrefix`, recomputing only from the group the draw lands in
   - Wild candidate draws are simulated as additional wilds, not as natural copies in the 34-count table
 - **tables.go** — Suit/honor DP table generation (DFS). `generateTables()` loads the embedded precomputed tables and only falls back to the ~14s DFS build if the embed is missing/corrupt.

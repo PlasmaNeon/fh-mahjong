@@ -91,6 +91,42 @@ func AnalyzeHand(closedHand []*pb.Tile, openMelds int, wildTiles []*pb.Tile) Han
 	}
 }
 
+// WinningTiles lists the draws that complete a tenpai hand (shanten 0 to -1),
+// the waits findUsefulTiles cannot list because it clamps shanten at 0. A wild
+// draw completes any tenpai hand. Empty unless the hand is tenpai.
+func WinningTiles(closedHand []*pb.Tile, openMelds int, wildTiles []*pb.Tile) ([]UsefulTile, int) {
+	counts, numWilds, wildSet := buildCountsFromTiles(closedHand, wildTiles)
+	if Analyze(counts, numWilds, openMelds).Overall != 0 {
+		return nil, 0
+	}
+	wins := make([]UsefulTile, 0, 8)
+	total := 0
+	for idx := 0; idx < 34; idx++ {
+		suit, value := tiles.FromIndex34(idx)
+		wild := wildSet[tiles.KeyOf(suit, value)]
+		remaining := 4 - counts[idx]
+		if wild {
+			remaining = 4 - numWilds
+		}
+		if remaining <= 0 {
+			continue
+		}
+		var after RouteBreakdown
+		if wild {
+			after = Analyze(counts, numWilds+1, openMelds)
+		} else {
+			counts[idx]++
+			after = Analyze(counts, numWilds, openMelds)
+			counts[idx]--
+		}
+		if after.Overall == -1 {
+			wins = append(wins, UsefulTile{Suit: suit, Value: value, Remaining: remaining})
+			total += remaining
+		}
+	}
+	return wins, total
+}
+
 func FindUsefulTilesFromTiles(closedHand []*pb.Tile, openMelds int, wildTiles []*pb.Tile) ([]UsefulTile, int, RouteBreakdown) {
 	counts, numWilds, wildSet := buildCountsFromTiles(closedHand, wildTiles)
 	routes := Analyze(counts, numWilds, openMelds)

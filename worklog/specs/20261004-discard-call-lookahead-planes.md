@@ -22,9 +22,11 @@ Each feature sits in the tile-face column (0–41) of the face its action acts o
 legal; every other cell is 0. The legality planes 30–35 tell "illegal" apart from a real 0. Shanten uses
 `normalizeShanten` (scalar 25's scale); useful-tile counts use `normalizeUsefulTileCount` (÷64, clamped).
 
-**Live useful tiles** = Σ over the useful faces of max(0, `Remaining` − copies visible to the seat), where
-`Remaining` is `findUsefulTiles`' own-hand count and the visible copies are `publicSeenCounts` plus, when the
-wild indicator is a standard tile, its one face-up copy of the wild face.
+**Useful tiles** of a look-ahead hand are the draws that lower its shanten (`findUsefulTiles`) or, when the hand
+is tenpai, the draws that complete it (`shanten.WinningTiles`); the raw count sums their `Remaining` (copies not in
+the seat's own hand). **Live useful tiles** = Σ over the useful faces of max(0, `Remaining` − copies the seat can
+see after its action): `publicSeenCounts` (discards, open melds, flowers and the face-up wild indicator) plus the
+tiles the action itself moves to the seat's river or melds.
 
 | Channel | Family | Column | Value |
 |---|---|---|---|
@@ -32,7 +34,7 @@ wild indicator is a standard tile, its one face-up copy of the wild face.
 | 40 | discard | discarded face | standard-route shanten after |
 | 41 | discard | discarded face | seven-pairs shanten after |
 | 42 | discard | discarded face | Independence shanten after |
-| 43 | discard | discarded face | useful tiles after (raw `TotalUseful`) |
+| 43 | discard | discarded face | useful tiles after (raw) |
 | 44 | discard | discarded face | live useful tiles after |
 | 45 | discard | discarded face | `publicDangerScore` of discarding this face |
 | 46 | pon | claimed face | best standard shanten after the pon and a discard |
@@ -116,6 +118,14 @@ Off by default. At `lookahead_version = 0` every observation is byte-identical t
 1. Step-zero parity of the widened net on the real init.
 2. Pace, three iterations of each arm. If the features arm's collection takes more than 1.5× the control's,
    the lap does not launch and the slowdown is reported as an engineering problem, not a result.
+
+## Launch
+
+1. A fresh box checkout `/root/fh-mahjong-lookahead` at the implementation merge commit, one bridge build, verified
+   to descend from `6c354655` and `785b3b85`.
+2. The init's sha256 is checked against `ea6d4d41…` before each arm.
+3. The two pre-launch measurements above, recorded here.
+4. GPU peers are told before each arm; the features arm runs first, then the control arm.
 
 ## Evaluation (fixed now; no screening, no selection)
 
