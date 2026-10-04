@@ -1581,7 +1581,7 @@ Recorded in the spec's pre-launch section before launch; nothing here changes th
 
 1. On the box, a fresh checkout `/root/fh-mahjong-lookahead` at the merge commit; verify it descends from
    `6c354655` and `785b3b85`; build `build/libfh_mahjong_bridge.so`; `uv sync --project ai`.
-2. Set the init to the confirmation winner (`ea6d4d41` on a pass, else `3fdfe246`) and record it in the spec.
+2. Init: control `iter_150` (`ea6d4d41`, `/root/fh-mahjong-runs/suit-distill-20261002/control/ckpt/iter_150.pt`); verify its sha256 before launch.
 3. Step-zero parity on the real init: build the version-1 model with `build_b2b_model` and compare logits, values,
    aux outputs and greedy actions against the init on one real 320-match collection's rows (all within 1e-5;
    greedy actions identical).

@@ -100,7 +100,7 @@ Off by default. At `lookahead_version = 0` every observation is byte-identical t
 
 | | features | control |
 |---|---|---|
-| Init | the winner of `20261003-control-confirmation.md`: control `iter_150` (`ea6d4d41…`) on a pass, else extension `iter_150` (`3fdfe246…`) | same |
+| Init | control `iter_150` (`ea6d4d41…`), the winner of `20261003-control-confirmation.md` (PASS 2026-10-04) | same |
 | Recipe | batched collector, 256 slots, 1 group, 320 matches/iteration, minibatch 256, 2 epochs, lr 2e-5, entropy 0, γ 0.99, chongci, step cap 4000, event window 128, privileged critic, aux heads, fp32, `--suit-augment` | same |
 | `--lookahead-version` | **1** | 0 |
 | Iterations | 150 | 150 |
