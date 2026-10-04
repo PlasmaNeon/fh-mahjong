@@ -15,8 +15,10 @@ Independence-vs-standard charts.
 `--batched-eval-slots N` plays every match through the env pool instead
 (`batched_eval.evaluate_seats_batched`: N concurrent matches, one forward per
 policy per round). Its report records the evaluator; `per_row` inference
-reproduces the sequential report. Only the batched evaluator plays sampled
-opponents (`--opponent-sample-*`) and `--symmetry-average faces`.
+reproduces the sequential report. With `--workers N` each chunk runs its own
+single-threaded pool (batching halves the CPU cost per match, and the workers
+use every core). Only the batched evaluator plays sampled opponents
+(`--opponent-sample-*`) and `--symmetry-average faces`.
 """
 
 from __future__ import annotations
@@ -201,6 +203,24 @@ def _init_worker(checkpoint: Path, device: str, symmetry: str,
                    event_window=event_window, eval_kwargs=eval_kwargs)
 
 
+def _init_batched_worker(checkpoint: Path, device: str, opponent_checkpoint: Optional[Path],
+                         opponent_sampling: Any, batched_kwargs: dict[str, Any]) -> None:
+    import torch
+    torch.set_num_threads(1)
+    policy, opponent_policy, _, event_window = _build_policies(
+        checkpoint, device, "none", opponent_checkpoint, opponent_sampling)
+    _WORKER.update(model=policy.model, event_window=event_window, batched_kwargs=batched_kwargs,
+                   opponent_model=opponent_policy.model if opponent_policy is not None else None)
+
+
+def _run_batched_chunk(seat: int, seeds: list[int],
+                       route_study_dir: Optional[Path] = None) -> tuple[dict, dict, dict]:
+    run = evaluate_seats_batched(_WORKER["model"], {seat: seeds},
+                                 event_history_window=_WORKER["event_window"],
+                                 opponent_model=_WORKER["opponent_model"], **_WORKER["batched_kwargs"])
+    return run["seat_reports"][seat], run["evaluator"], run["evaluator_timing"]
+
+
 def _run_chunk(seat: int, seeds: list[int], route_study_dir: Optional[Path] = None) -> dict[str, Any]:
     return evaluate_policy_online(
         policy=_WORKER["policy"],
@@ -365,8 +385,6 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     if args.batched_eval_slots < 0:
         parser.error("--batched-eval-slots must be >= 0")
     if args.batched_eval_slots > 0:
-        if args.workers != 1:
-            parser.error("--batched-eval-slots replaces --workers; drop one")
         if args.route_study:
             parser.error("--route-study needs the sequential loop (no --batched-eval-slots)")
     else:
@@ -401,9 +419,12 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         max_steps_per_episode=max_steps,
     )
 
+    batched_kwargs = dict(device=args.device, slots=args.batched_eval_slots,
+                          inference_mode=args.batched_eval_inference, symmetry=args.symmetry_average,
+                          opponent_sampling=opponent_sampling, **eval_kwargs)
     seat_reports: dict[int, dict[str, Any]] = {}
     evaluator: dict[str, Any] = {}
-    if args.batched_eval_slots > 0:
+    if args.batched_eval_slots > 0 and args.workers == 1:
         seat_seeds = {seat: list(range(args.seed_base + seat * args.episodes_per_seat,
                                        args.seed_base + (seat + 1) * args.episodes_per_seat))
                       for seat in _SEATS}
@@ -421,11 +442,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                       f"({time.perf_counter() - started:.0f}s)", flush=True)
 
         run = evaluate_seats_batched(
-            policy.model, seat_seeds, device=args.device, event_history_window=event_window,
-            slots=args.batched_eval_slots, inference_mode=args.batched_eval_inference,
-            symmetry=args.symmetry_average,
+            policy.model, seat_seeds, event_history_window=event_window,
             opponent_model=opponent_policy.model if opponent_policy is not None else None,
-            opponent_sampling=opponent_sampling, progress=progress, **eval_kwargs)
+            progress=progress, **batched_kwargs)
         seat_reports = run["seat_reports"]
         evaluator = {"evaluator": run["evaluator"], "evaluator_timing": run["evaluator_timing"]}
     elif args.workers == 1:
@@ -446,27 +465,53 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             )
     else:
         jobs = plan_chunks(args.seed_base, args.episodes_per_seat, args.workers)
+        batched = args.batched_eval_slots > 0
         print(f"[benchmark] {len(jobs)} chunks over {args.workers} workers, "
-              f"{args.episodes_per_seat} {args.match_mode} matches/seat vs {opponent_label}", flush=True)
+              f"{args.episodes_per_seat} {args.match_mode} matches/seat vs {opponent_label}"
+              + (f", batched ({args.batched_eval_slots} slots per chunk pool)" if batched else ""),
+              flush=True)
+        if batched:
+            initializer, task = _init_batched_worker, _run_batched_chunk
+            initargs = (args.checkpoint, args.device, args.opponent_checkpoint, opponent_sampling,
+                        batched_kwargs)
+        else:
+            initializer, task = _init_worker, _run_chunk
+            initargs = (args.checkpoint, args.device, args.symmetry_average,
+                        args.opponent_checkpoint, eval_kwargs)
         chunk_reports: dict[int, dict[str, Any]] = {}
+        chunk_evaluators: list[dict[str, Any]] = []
+        chunk_timers: Counter[str] = Counter()
         started = time.perf_counter()
         with ProcessPoolExecutor(
             max_workers=args.workers, mp_context=multiprocessing.get_context("spawn"),
-            initializer=_init_worker,
-            initargs=(args.checkpoint, args.device, args.symmetry_average,
-                      args.opponent_checkpoint, eval_kwargs),
+            initializer=initializer, initargs=initargs,
         ) as pool:
-            futures = {pool.submit(_run_chunk, seat, seeds, route_study_dir): i
+            futures = {pool.submit(task, seat, seeds, route_study_dir): i
                        for i, (seat, seeds) in enumerate(jobs)}
             for future in as_completed(futures):
                 i = futures[future]
-                chunk_reports[i] = future.result()
+                result = future.result()
+                if batched:
+                    result, chunk_evaluator, timing = result
+                    chunk_evaluators.append(chunk_evaluator)
+                    chunk_timers.update(timing)
+                chunk_reports[i] = result
                 seat, seeds = jobs[i]
                 print(f"[benchmark] chunk {len(chunk_reports)}/{len(jobs)} done: seat {seat} "
                       f"seeds {seeds[0]}..{seeds[-1]} ({time.perf_counter() - started:.0f}s)", flush=True)
         for seat in _SEATS:
             seat_reports[seat] = combine_chunk_reports(
                 [chunk_reports[i] for i, (s, _) in enumerate(jobs) if s == seat])
+        if batched:
+            # Each chunk's pool holds min(slots, chunk size) matches; batch composition, and so
+            # the batched-mode floats, depend on the chunking, hence `workers` in the record.
+            evaluator = {
+                "evaluator": {**chunk_evaluators[0],
+                              "slots": max(e["slots"] for e in chunk_evaluators),
+                              "workers": args.workers},
+                "evaluator_timing": {**dict(chunk_timers),
+                                     "wall_seconds": time.perf_counter() - started},
+            }
 
     merged = merge_seat_reports(seat_reports, args.bootstrap_iters, args.bootstrap_seed)
 

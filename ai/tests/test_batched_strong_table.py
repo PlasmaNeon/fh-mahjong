@@ -208,16 +208,21 @@ def test_benchmark_cli_batched_reproduces_the_sequential_payload(tmp_path):
     base = ["--checkpoint", str(cand), "--opponent-checkpoint", str(opp), "--symmetry-average",
             "suits", "--episodes-per-seat", "2", "--seed-base", "41", "--chongci-max-hands", "3",
             "--bootstrap-iters", "10"]
+    per_row = ["--batched-eval-slots", "3", "--batched-eval-inference", "per_row"]
     payloads = {}
-    for name, extra in (("sequential", []),
-                        ("batched", ["--batched-eval-slots", "3", "--batched-eval-inference", "per_row"])):
+    for name, extra in (("sequential", []), ("batched", per_row),
+                        ("batched-workers", per_row + ["--workers", "2"])):
         out = tmp_path / f"{name}.json"
         benchmark_cli.main(base + extra + ["--out", str(out)])
         payloads[name] = json.loads(out.read_text())
     assert "evaluator" not in payloads["sequential"]
     assert payloads["batched"]["evaluator"] == {"kind": "batched-pool", "slots": 3,
                                                 "inference_mode": "per_row"}
+    # plan_chunks gives one-match chunks here, so each chunk pool holds one match.
+    assert payloads["batched-workers"]["evaluator"] == {"kind": "batched-pool", "slots": 1,
+                                                        "inference_mode": "per_row", "workers": 2}
     assert _canon(payloads["batched"]) == _canon(payloads["sequential"])
+    assert _canon(payloads["batched-workers"]) == _canon(payloads["sequential"])
 
 
 @requires_go_lib
@@ -254,7 +259,6 @@ def test_evaluate_cli_validation(tmp_path, monkeypatch, capsys, argv, message):
 
 
 @pytest.mark.parametrize("argv, message", [
-    (["--batched-eval-slots", "8", "--workers", "2"], "replaces --workers"),
     (["--batched-eval-slots", "8", "--route-study"], "--route-study"),
     (["--symmetry-average", "faces"], "requires --batched-eval-slots"),
     (["--batched-eval-inference", "per_row"], "requires --batched-eval-slots"),
