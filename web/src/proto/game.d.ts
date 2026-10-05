@@ -4455,6 +4455,15 @@ export namespace game {
 
         /** SearchPoolNewRequest rootSeat */
         rootSeat?: (number|null|undefined);
+
+        /** SearchPoolNewRequest oraclePlanes */
+        oraclePlanes?: (boolean|undefined);
+
+        /** SearchPoolNewRequest trueState */
+        trueState?: (boolean|undefined);
+
+        /** SearchPoolNewRequest determinizationIds */
+        determinizationIds?: ((number|Long)[]|undefined);
     }
 
     /** Represents a SearchPoolNewRequest. */
@@ -4480,6 +4489,15 @@ export namespace game {
 
         /** SearchPoolNewRequest rootSeat. */
         public rootSeat: (number|null);
+
+        /** SearchPoolNewRequest oraclePlanes. */
+        public oraclePlanes: boolean;
+
+        /** SearchPoolNewRequest trueState. */
+        public trueState: boolean;
+
+        /** SearchPoolNewRequest determinizationIds. */
+        public determinizationIds: (number|Long)[];
 
         /**
          * Creates a new SearchPoolNewRequest instance using the specified properties.
