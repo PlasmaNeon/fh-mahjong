@@ -34,8 +34,10 @@ common worlds, so a paired standard error can gate every override.
     likelihood at the root, 32 drawn by systematic resampling.
   - **Horizon:** to the root seat's next decision, scoring rewards plus the privileged critic's value there; or to
     the end of the hand, scoring rewards only.
-  - **Decision rule:** choose the best candidate over the greedy one only if its paired gain over the 32 worlds
-    exceeds z × SE, z ∈ {0, 1, 2}; otherwise keep the greedy choice.
+  - **Decision rule:** choose the best candidate over the greedy one only if its paired gain exceeds z × SE,
+    z ∈ {0, 1, 2}; otherwise keep the greedy choice. Resampling repeats worlds and a world's rollout is
+    deterministic, so the belief sampler runs each distinct world once, weighted by its multiplicity, and the SE
+    uses the effective number of worlds 1 / Σw²; with fewer than two distinct worlds only z = 0 may override.
 
   That is 2 samplers × 2 horizons × 3 margins = 12 rules, all scored on the same ground truth.
 
@@ -67,7 +69,8 @@ common worlds, so a paired standard error can gate every override.
 - **Go iff** the primary rule's clustered CI95 lower bound > 0. Any other rule qualifies only with its lower bound
   > 0 at Bonferroni level α = 0.05 / 11; it is reported and the user decides whether it goes forward.
 - Reported for every rule: mean Δ ± CI, override rate, mean Δ when overriding, the rate at which the rule picks the
-  true-wall best candidate (vs greedy's rate), and for the belief sampler the effective-sample-size distribution.
+  true-wall best candidate (vs greedy's rate), and for the belief sampler the effective-sample-size and
+  distinct-world distributions.
 - **No-go** closes search-as-teacher: the diagnostic is recorded, nothing is rerun with tuned settings, and no
   gameplay probe is built.
 - **Go** leads to a separately registered gameplay probe — the search policy vs suit-averaged `f9662491`, paired, on

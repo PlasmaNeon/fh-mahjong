@@ -58,7 +58,12 @@ def test_diagnostic_runs_end_to_end_on_two_states():
         m = len(record["candidates"])
         assert 2 <= m <= 3 and len(record["truth"]) == m
         for key, matrix in record["scores"].items():
-            assert np.asarray(matrix).shape == (m, 4), key
+            sampler = key.split("/")[0]
+            width = len(record["weights"][sampler])
+            assert np.asarray(matrix).shape == (m, width), key
+            assert abs(sum(record["weights"][sampler]) - 1.0) < 1e-9
+        assert len(record["weights"]["uniform"]) == 4
+        assert record["distinct_worlds"] == len(record["weights"]["belief"]) <= 4
         assert record["ess"] is not None and 1.0 <= record["ess"] <= 8.0
     summary = summarize(records)
     for name, rule in summary["rules"].items():
@@ -130,3 +135,17 @@ def test_cli_writes_records_and_summary(tmp_path, monkeypatch):
     records = (tmp_path / "out" / "records.jsonl").read_text().splitlines()
     summary = json.loads((tmp_path / "out" / "summary.json").read_text())
     assert len(records) == 1 and summary["states"] == 1 and summary["primary"] == "belief/next/z1"
+
+
+def test_rule_choice_weights_duplicated_worlds_by_multiplicity():
+    # Two distinct worlds, each drawn 16 times: d = +0.3 and -0.1. Counting the 32 copies as
+    # independent would override at z=1; weighted by multiplicity (n_eff = 2) it must not.
+    unique = np.array([[0.0, 0.0], [0.3, -0.1]])
+    duplicated = np.repeat(unique, 16, axis=1)
+    assert rule_choice(duplicated, 1.0) == 1                      # the old, overconfident reading
+    assert rule_choice(unique, 1.0, weights=np.array([0.5, 0.5])) == 0
+    assert rule_choice(unique, 0.0, weights=np.array([0.5, 0.5])) == 1
+    # One distinct world: no SE exists, so only the margin-free rule may override.
+    single = np.array([[0.0], [0.4]])
+    assert rule_choice(single, 1.0, weights=np.array([1.0])) == 0
+    assert rule_choice(single, 0.0, weights=np.array([1.0])) == 1

@@ -141,16 +141,30 @@ def play_out(pool, forward: Forward, actions: list[int], root_seat: int, horizon
         result = pool.step(commands)
 
 
-def rule_choice(scores: np.ndarray, z: float) -> int:
-    """Index of the chosen candidate: the best mean score, if its paired gain over candidate 0 (the
-    suit-averaged greedy choice) exceeds z standard errors over the worlds; otherwise 0."""
+def rule_choice(scores: np.ndarray, z: float, weights=None) -> int:
+    """Index of the chosen candidate: the best weighted-mean score, if its paired gain over candidate 0
+    (the suit-averaged greedy choice) exceeds z standard errors; otherwise 0.
+
+    `weights` are the distinct worlds' multiplicities (normalized; equal when None). The SE uses the
+    effective number of worlds n_eff = 1 / sum(w^2), so duplicated worlds never count as independent
+    samples; with fewer than two distinct worlds only the margin-free rule (z = 0) may override."""
     scores = np.asarray(scores, dtype=np.float64)
-    best = int(np.argmax(scores.mean(axis=1)))
+    w = (np.full(scores.shape[1], 1.0 / scores.shape[1]) if weights is None
+         else np.asarray(weights, dtype=np.float64) / np.sum(weights))
+    best = int(np.argmax(scores @ w))
     if best == 0:
         return 0
     d = scores[best] - scores[0]
-    se = d.std(ddof=1) / np.sqrt(d.size) if d.size > 1 else np.inf
-    return best if d.mean() > z * se else 0
+    mean = float(d @ w)
+    if mean <= 0:
+        return 0
+    if z == 0:
+        return best
+    n_eff = 1.0 / float(np.sum(w * w))
+    if scores.shape[1] < 2 or n_eff <= 1.0:
+        return 0
+    variance = float(w @ (d - mean) ** 2) * n_eff / (n_eff - 1.0)
+    return best if mean > z * np.sqrt(variance / n_eff) else 0
 
 
 def clustered_mean_ci(deltas: np.ndarray, clusters: np.ndarray, critical: float) -> tuple[float, float]:
@@ -197,21 +211,27 @@ def analyse_state(bridge, forward: Forward, obs, candidates: list[int], cfg: Dia
     finally:
         truth_pool.close()
     belief_ids, ess = _world_ids(bridge, forward, obs, cfg, rng)
-    ids = {"uniform": list(range(cfg.worlds)), "belief": belief_ids}
+    # Resampling repeats worlds and a world's rollout is deterministic, so each distinct world runs
+    # once and carries its multiplicity as a weight.
+    distinct, counts = np.unique(np.asarray(belief_ids, dtype=np.int64), return_counts=True)
+    ids = {"uniform": list(range(cfg.worlds)), "belief": distinct.tolist()}
+    weights = {"uniform": [1.0 / cfg.worlds] * cfg.worlds, "belief": (counts / counts.sum()).tolist()}
     scores = {}
     for sampler in SAMPLERS:
         for horizon in HORIZONS:
-            pool = GoSearchPool(bridge, clones=len(candidates) * cfg.worlds, seed=cfg.pool_seed,
-                                max_rollout_decisions=cfg.max_rollout_decisions, determinizations=cfg.worlds,
+            worlds = len(ids[sampler])
+            pool = GoSearchPool(bridge, clones=len(candidates) * worlds, seed=cfg.pool_seed,
+                                max_rollout_decisions=cfg.max_rollout_decisions, determinizations=worlds,
                                 root_seat=seat, oracle_planes=(horizon == "next"),
                                 determinization_ids=ids[sampler])
             try:
-                actions = [c for c in candidates for _ in range(cfg.worlds)]
+                actions = [c for c in candidates for _ in range(worlds)]
                 flat = play_out(pool, forward, actions, seat, horizon, cfg.gamma)
             finally:
                 pool.close()
-            scores[f"{sampler}/{horizon}"] = flat.reshape(len(candidates), cfg.worlds).tolist()
-    return {"root_seat": seat, "candidates": candidates, "truth": truth.tolist(), "scores": scores, "ess": ess}
+            scores[f"{sampler}/{horizon}"] = flat.reshape(len(candidates), worlds).tolist()
+    return {"root_seat": seat, "candidates": candidates, "truth": truth.tolist(), "scores": scores, "ess": ess,
+            "weights": weights, "distinct_worlds": int(distinct.size)}
 
 
 def run_diagnostic(bridge, forward: Forward, cfg: DiagnosticConfig, states: int, seed_base: int,
@@ -248,7 +268,8 @@ def summarize(records: list[dict]) -> dict:
     rules = {}
     for rule in RULES:
         sampler, horizon, z = rule
-        choices = np.array([rule_choice(np.asarray(r["scores"][f"{sampler}/{horizon}"]), z) for r in records])
+        choices = np.array([rule_choice(np.asarray(r["scores"][f"{sampler}/{horizon}"]), z,
+                                        (r.get("weights") or {}).get(sampler)) for r in records])
         deltas = np.array([t[c] - t[0] for t, c in zip(truths, choices)])
         critical = primary_critical if rule == PRIMARY else bonferroni
         mean, half = clustered_mean_ci(deltas, clusters, critical)
@@ -262,7 +283,9 @@ def summarize(records: list[dict]) -> dict:
     primary = rule_name(PRIMARY)
     others = [name for name in rules if name != primary and rules[name]["ci_lower"] > 0]
     ess = np.array([r["ess"] for r in records if r.get("ess") is not None])
+    distinct = np.array([r["distinct_worlds"] for r in records if r.get("distinct_worlds") is not None])
     return {"states": len(records), "games": int(games), "greedy_hindsight_best_rate": greedy_best,
             "primary": primary, "go": bool(rules[primary]["ci_lower"] > 0), "other_qualifying": others,
             "ess_quantiles": (np.quantile(ess, [0.1, 0.5, 0.9]).tolist() if ess.size else None),
+            "distinct_world_quantiles": (np.quantile(distinct, [0.1, 0.5, 0.9]).tolist() if distinct.size else None),
             "rules": rules}
