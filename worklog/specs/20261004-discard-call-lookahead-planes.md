@@ -157,3 +157,24 @@ feature set.
 `lookahead_version = 2` adds, per legal discard, the solitaire win probability and expected hand score within
 k wall draws, wild-aware — the deeper half of Suphx's look-ahead features. It needs its own design (search
 depth, draw model, compute budget per decision) and registration whatever version 1's result.
+
+## Outcome — 2026-10-04: FAIL
+
+Commit `6920dadd`, one bridge build (`7f7c2338…`); both arms ran 150 iterations, one after the other, and exited
+cleanly (cgroup peaks 16.6 / 14.1 GB). Seeds 3,260,000–3,269,999 (10,000 × 4), batched evaluator (256 slots),
+40,000 episodes and no truncations per report.
+
+| suit-averaged | mean placement | large-loss |
+|---|---|---|
+| features `iter_150` (`b0a3dfd9…`, version 1) | +0.4625 | 0.0486 |
+| control `iter_150` (`f9662491…`) | +0.4691 | 0.0451 |
+| init `ea6d4d41` | +0.4598 | 0.0473 |
+
+- **Primary:** features − control **−0.0066 ± 0.0074** (CI95 [−0.0140, +0.0008]): **FAIL**. Large-loss is worse,
+  +0.0035 [+0.0009, +0.0061].
+- **Promotion:** features − init +0.0027 ± 0.0073: not significant; the features arm is not promoted.
+- **Descriptive:** control − init **+0.0093 ± 0.0072** (significant, not a candidate under this registration).
+
+Per-action look-ahead planes did not make the policy stronger in 150 iterations; the plain continuation from the same
+init gained as much or more. `ea6d4d41` (suit-averaged) stays the strongest registered policy. Checkpoints under
+`/root/fh-mahjong-runs/lookahead-20261004/{features,control}/ckpt/`.
