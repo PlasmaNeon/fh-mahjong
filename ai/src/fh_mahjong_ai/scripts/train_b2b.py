@@ -61,6 +61,10 @@ def main() -> None:
                         "round. Changes which rows share a forward, so like --pool-slots it "
                         "is part of the lineage and rejected-on-change by "
                         "--resume-from-state")
+    p.add_argument("--lookahead-version", type=int, choices=(0, 1), default=0,
+                   help="per-action look-ahead planes (0 = none; 1 = 13 discard/call channels, "
+                        "worklog/specs/20261004-discard-call-lookahead-planes.md); "
+                        "rejected-on-change at resume")
     p.add_argument("--suit-augment", action="store_true",
                    help="collect with a random suit permutation per decision: the policy acts "
                         "on a suit-permuted view and the env gets the inverse-mapped action "
@@ -260,7 +264,8 @@ def main() -> None:
         num_workers = min(default_num_workers(), args.matches_per_iter)
     env_config = EnvConfig(bridge_kind=args.bridge_kind, bridge_library_path=args.bridge_lib,
                            match_mode=args.match_mode, max_steps_per_episode=args.max_steps_per_episode,
-                           oracle_observation=True, event_history_window=args.event_window)
+                           oracle_observation=True, event_history_window=args.event_window,
+                           lookahead_version=args.lookahead_version)
     config = PPOConfig(iterations=args.iterations, matches_per_iter=args.matches_per_iter,
                        gamma=args.gamma, lr=args.lr, head_lr=args.head_lr,
                        head_lr_iters=args.head_lr_iters, entropy_coef=args.entropy_coef,
@@ -289,7 +294,8 @@ def main() -> None:
     base_model_config = model_config_from_args(args, event_window=args.event_window)
     model_config = replace(base_model_config,
                           privileged_critic=args.privileged_critic, aux_heads=args.aux_heads,
-                          growth_blocks=args.model_growth_blocks)
+                          growth_blocks=args.model_growth_blocks,
+                          lookahead_version=args.lookahead_version)
     train_b2b(env_config=env_config, model_config=model_config, champion_checkpoint=args.champion,
              checkpoint_dir=args.checkpoint_dir, config=config, base_seed=args.base_seed,
              growth_blocks=args.model_growth_blocks, widen_event_hidden=args.widen_event_hidden,

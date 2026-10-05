@@ -1382,8 +1382,12 @@ type EnvConfig struct {
 	// (observer-relative, packed uint32s; see internal/rl/eventcodec.go).
 	// 0 (default) disables the field entirely — byte-identical observations.
 	EventHistoryWindow uint32 `protobuf:"varint,7,opt,name=event_history_window,json=eventHistoryWindow,proto3" json:"event_history_window,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Per-action look-ahead planes inserted after the 39 public channels
+	// (internal/rl/lookahead.go). 0 (default) adds none — byte-identical
+	// observations. 1 adds 13 discard/call channels (39 -> 52, oracle 51 -> 64).
+	LookaheadVersion uint32 `protobuf:"varint,8,opt,name=lookahead_version,json=lookaheadVersion,proto3" json:"lookahead_version,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *EnvConfig) Reset() {
@@ -1461,6 +1465,13 @@ func (x *EnvConfig) GetOracleObservation() bool {
 func (x *EnvConfig) GetEventHistoryWindow() uint32 {
 	if x != nil {
 		return x.EventHistoryWindow
+	}
+	return 0
+}
+
+func (x *EnvConfig) GetLookaheadVersion() uint32 {
+	if x != nil {
+		return x.LookaheadVersion
 	}
 	return 0
 }
@@ -3554,7 +3565,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"\vtotal_score\x18\x05 \x01(\x05R\n" +
 	"totalScore\x12,\n" +
 	"\apayouts\x18\x06 \x03(\v2\x12.game.PlayerPayoutR\apayouts\x12.\n" +
-	"\tbreakdown\x18\a \x03(\v2\x10.game.ScoreEntryR\tbreakdown\"\xd6\x02\n" +
+	"\tbreakdown\x18\a \x03(\v2\x10.game.ScoreEntryR\tbreakdown\"\x83\x03\n" +
 	"\tEnvConfig\x12%\n" +
 	"\x0elearning_seats\x18\x01 \x03(\rR\rlearningSeats\x120\n" +
 	"\x14auto_play_heuristics\x18\x02 \x01(\bR\x12autoPlayHeuristics\x12#\n" +
@@ -3563,7 +3574,8 @@ const file_proto_game_proto_rawDesc = "" +
 	"match_mode\x18\x04 \x01(\x0e2\x0f.game.MatchModeR\tmatchMode\x12:\n" +
 	"\x0echongci_config\x18\x05 \x01(\v2\x13.game.ChongciConfigR\rchongciConfig\x12-\n" +
 	"\x12oracle_observation\x18\x06 \x01(\bR\x11oracleObservation\x120\n" +
-	"\x14event_history_window\x18\a \x01(\rR\x12eventHistoryWindow\"\xd9\x03\n" +
+	"\x14event_history_window\x18\a \x01(\rR\x12eventHistoryWindow\x12+\n" +
+	"\x11lookahead_version\x18\b \x01(\rR\x10lookaheadVersion\"\xd9\x03\n" +
 	"\x0fSeatObservation\x12\x12\n" +
 	"\x04seat\x18\x01 \x01(\rR\x04seat\x12\x16\n" +
 	"\x06planes\x18\x02 \x03(\x02R\x06planes\x12%\n" +

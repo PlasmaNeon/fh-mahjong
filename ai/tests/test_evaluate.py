@@ -598,6 +598,7 @@ class TestChongciMaxStepsDefault:
             }
 
         monkeypatch.setattr(evaluate_cli, "load_checkpoint", lambda *args, **kwargs: 0)
+        monkeypatch.setattr(evaluate_cli, "checkpoint_lookahead_version", lambda path: 0)
         monkeypatch.setattr(evaluate_cli, "evaluate_duplicate_seats", fake_duplicate_seats)
 
         base_argv = ["fh-mj-evaluate", "--checkpoint", "ckpt.pt", "--online-episodes", "1", "--duplicate-seats"]

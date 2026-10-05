@@ -1112,6 +1112,86 @@ Interpretation: Independence shanten decides the route more than the gap does. I
                 anchor075 at I = 4–5, matching its higher win frequency. Descriptive: choices, not
                 EV; all-bot table; fork counts are per decision, correlated within a hand.
 
+### 2026-10-04 — strong-table benchmarks: current best +0.07 vs aug150, +0.14 vs production
+
+Setup:          `fh-mj-benchmark --batched-eval-slots 256 --device cuda` (PR #278, main `f203720b`),
+                4090, ~3.5 min per 1600-match table. 400 chongci matches per seat, seed-base 1000
+                (reused window, descriptive), learner in one seat vs 3 greedy plain opponents unless
+                noted. Current best = control `iter_150` (`ea6d4d41`, PR #277). Two independent runs
+                of the same table gave identical reports. Batched reports do not pair with
+                sequential ones, so the 2026-10-01 entries are not comparable.
+                Reports: `wsl:/root/fh-mahjong-runs/measure-20261004/`
+
+| learner vs 3× opponent | mean placement ±CI95 | 1st / 4th | win / deal-in | avg win / loss |
+|---|---|---|---|---|
+| ea6d suit-avg vs aug150 (`c5ff807b`) | +0.067 ± 0.036 | 26.9 / 20.2% | 26.7 / 11.0% | 224.2 / 115.7 |
+| 3fdf suit-avg vs aug150 | +0.057 ± 0.036 | 27.9 / 22.1% | 26.5 / 11.1% | 226.8 / 115.4 |
+| ea6d plain vs aug150 | +0.038 ± 0.037 | 26.9 / 23.7% | 25.6 / 11.4% | 230.5 / 115.5 |
+| 3fdf plain vs aug150 | +0.011 ± 0.036 | 25.8 / 23.9% | 25.4 / 11.3% | 230.1 / 115.3 |
+| aug150 mirror | −0.000 ± 0.037 | 25.9 / 25.9% | 24.9 / 11.6% | 234.9 / 115.3 |
+| ea6d suit-avg vs prod275 (`377d99bc`) | +0.140 ± 0.036 | 31.3 / 18.5% | 25.5 / 11.8% | 225.7 / 111.1 |
+| ea6d suit-avg vs prod275 T 0.7 / top-3 / discard | +0.161 ± 0.036 | 32.4 / 18.1% | 25.8 / 11.7% | 224.6 / 111.5 |
+| 3fdf suit-avg vs prod275 | +0.161 ± 0.036 | 32.9 / 18.2% | 25.5 / 11.8% | 226.7 / 112.1 |
+| prod275 mirror | +0.023 ± 0.037 | 26.5 / 24.8% | 25.3 / 12.2% | 206.1 / 111.6 |
+| prod275 vs prod275 T 0.7 / top-3 / discard | −0.000 ± 0.036 | 23.9 / 25.0% | 25.4 / 12.1% | 206.0 / 113.8 |
+| ea6d suit-avg vs anchor075 (`ce9d867f`) | +0.131 ± 0.037 | 31.6 / 20.1% | 26.9 / 11.7% | 224.6 / 117.1 |
+| ea6d suit-avg vs heuristic bots | +0.455 ± 0.033 | 52.0 / 9.6% | 23.4 / 10.1% | 224.5 / 82.3 |
+
+| % of hands, learner / per opponent | Seven Pairs | all-pung | Loner 大吊车 | budding kong |
+|---|---|---|---|---|
+| ea6d suit-avg vs aug150 | 0.74 / 1.07 | 1.00 / 0.76 | 1.44 / 1.02 | 1.31 / 1.14 |
+| ea6d plain vs aug150 | 0.69 / 1.09 | 0.93 / 0.77 | 1.33 / 1.04 | 1.23 / 1.17 |
+| ea6d suit-avg vs prod275 | 0.70 / 1.22 | 0.94 / 0.41 | 1.42 / 0.86 | 1.23 / 0.70 |
+| ea6d suit-avg vs anchor075 | 0.79 / 0.73 | 0.89 / 0.63 | 1.53 / 0.99 | 1.21 / 0.94 |
+
+Interpretation: learners on the same table are unpaired; differences between them sit inside
+                ±0.036 (mirrors: −0.000, +0.023). Suit averaging adds ~+0.03 (ea6d) and ~+0.05
+                (3fdf) at the aug150 table: more wins, smaller ones. Sampling at T 0.7 does not
+                weaken prod275. Against production the edge is hand value (46.8 vs 43.5 points
+                per win); against anchor075 it is win frequency. The current best makes Seven
+                Pairs in ~0.7% of hands (aug150 1.07%, prod275 1.22%; anchor075 0.73%) and more
+                all-pung, Loner and kong hands; the plain net does the same, so it is the net,
+                not the averaging. Per hand the pattern points roughly balance — a style trade,
+                not shown to be an EV loss.
+
+### 2026-10-05 — strong-table benchmarks of the look-ahead arms: more Seven Pairs, no gain
+
+Setup:          as the 2026-10-04 entry, at main `e1bcd5d1` (mixed-version tables, PR #282: a v0
+                opponent at a v1 table reads its native first 39 channels). Features arm `iter_150`
+                (`b0a3dfd9`, lookahead_version 1) and control arm `iter_150` (`f9662491`), both from
+                `ea6d4d41`, all learners suit-averaged; lap record
+                [`20261004-discard-call-lookahead-planes.md`](../specs/20261004-discard-call-lookahead-planes.md).
+                ea6d vs aug150 rerun at `e1bcd5d1` reproduced the 2026-10-04 report exactly.
+                Reports: `wsl:/root/fh-mahjong-runs/measure-20261004/lookahead/`
+
+| mean placement ±CI95 (~0.036) | vs aug150 | vs prod275 | vs anchor075 |
+|---|---|---|---|
+| ea6d `ea6d4d41` | +0.067 | +0.140 | +0.131 |
+| control `f9662491` | +0.080 | +0.149 | +0.113 |
+| features `b0a3dfd9` | +0.099 | +0.167 | +0.086 |
+
+| head-to-head (suit-avg learner vs 3× plain) | mean placement | averaging baseline (X vs 3× X) |
+|---|---|---|
+| features vs control | +0.048 ± 0.036 | control +0.070 ± 0.036 |
+| control vs ea6d | +0.043 ± 0.037 | ea6d +0.072 ± 0.037 |
+
+| per hand, same tables | features | control |
+|---|---|---|
+| Seven Pairs | 0.75–0.83% | 0.57–0.67% |
+| win rate | 24.7–25.8% | 25.0–26.4% |
+| avg win | 237–241 | 227–231 |
+| Common Win 朋胡 | 1.7–1.8% | 2.0–2.1% |
+
+Interpretation: all three policies sit within noise at every table. With the Seven Pairs
+                look-ahead plane the net makes ~25% more Seven Pairs (still below aug150's 1.07%
+                and prod275's 1.22%) and bigger, fewer wins, and is not stronger — consistent with
+                the registered features − control −0.0066 FAIL. The current best's low Seven Pairs
+                rate is a style choice, not an information gap. Both arms make more Independence
+                than ea6d (13.3–13.6% vs 12.5–12.8% of hands at the aug150 and anchor075 tables):
+                further training, not the features.
+                Head-to-head tables need the averaging baseline: averaging alone is worth +0.07 against
+                one's own plain net.
+
 ## Maintenance Protocol
 
 Record a lap twice: a pre-registration entry before any training compute is spent, and an

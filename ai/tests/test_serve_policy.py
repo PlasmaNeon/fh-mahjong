@@ -1738,3 +1738,33 @@ def test_http_warmup_event_window_checkpoint_succeeds(tmp_path: Path) -> None:
     assert status == 200, data
     assert data["warmed"] is True
     assert data["event_window"] == 8
+
+
+def test_serving_refuses_lookahead_checkpoints(tmp_path):
+    from conftest import SMALL_MODEL
+    from fh_mahjong_ai.config import EnvConfig, ModelConfig
+    from fh_mahjong_ai.model import PolicyValueNet
+    from fh_mahjong_ai.scripts.serve_policy import _require_servable
+    from fh_mahjong_ai.serving import CheckpointPolicy
+    from fh_mahjong_ai.storage import model_config_metadata, save_checkpoint
+    model = PolicyValueNet(EnvConfig(lookahead_version=1), ModelConfig(**SMALL_MODEL, lookahead_version=1))
+    path = tmp_path / "v1.pt"
+    save_checkpoint(path, model, metadata={"model_config": model_config_metadata(model.model_config)})
+    with pytest.raises(RuntimeError, match="look-ahead"):
+        _require_servable(CheckpointPolicy.from_checkpoint(path))
+
+
+def test_policy_holder_reload_refuses_lookahead_checkpoint(tmp_path: Path) -> None:
+    from fh_mahjong_ai.config import EnvConfig
+    old = _save_checkpoint(tmp_path, _event_model_config(window=8), step=1, name="old.pt")
+    config = ModelConfig(**dict(SMALL_MODEL, event_window=8, lookahead_version=1))
+    new = tmp_path / "v1.pt"
+    save_checkpoint(new, PolicyValueNet(EnvConfig(lookahead_version=1), config), step=2,
+                    metadata={"model_config": model_config_metadata(config)})
+    holder = PolicyHolder(CheckpointPolicy.from_checkpoint(old), manifest_path=tmp_path / "manifest.json")
+
+    with pytest.raises(RuntimeError, match="look-ahead"):
+        holder.reload(checkpoint=str(new))
+
+    assert holder.policy.checkpoint_step == 1
+    assert holder.policy.checkpoint_path == old

@@ -22,16 +22,17 @@ const (
 	OracleObservationPlaneChannels = ObservationPlaneChannels + 12 // 51
 )
 
-func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64, oracle bool, events []engine.PublicEvent, window uint32) (*pb.SeatObservation, error) {
-	mask, err := actionMask(state, seat)
+func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64, oracle bool, lookahead uint32, events []engine.PublicEvent, window uint32) (*pb.SeatObservation, error) {
+	if err := validateLookaheadVersion(lookahead); err != nil {
+		return nil, err
+	}
+	legal, err := legalActionMap(state, seat)
 	if err != nil {
 		return nil, err
 	}
+	mask := maskFromLegal(legal)
 
-	channels := ObservationPlaneChannels
-	if oracle {
-		channels = OracleObservationPlaneChannels
-	}
+	channels := observationChannels(oracle, lookahead)
 	planes := make([]float32, channels*ObservationPlaneHeight*ObservationPlaneWidth)
 	scalars := make([]float32, ObservationScalarCount)
 
@@ -148,18 +149,23 @@ func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64, o
 	scalars[41] = legalDiscardDangerRange(state, seat, mask)
 	setMatchContextScalars(scalars, state, seat)
 
-	if oracle {
-		// Append the three opponents' concealed hands, relative to `seat`,
-		// mirroring the self closed-hand threshold encoding. right=+1, across=+2, left=+3.
-		setThresholdPlanes(planes, 39, faceCountsFromTiles(right.ClosedHand))
-		setThresholdPlanes(planes, 43, faceCountsFromTiles(across.ClosedHand))
-		setThresholdPlanes(planes, 47, faceCountsFromTiles(left.ClosedHand))
+	if lookahead > 0 {
+		if err := setLookaheadPlanes(planes, ObservationPlaneChannels, state, seat, legal, selfAnalysis); err != nil {
+			return nil, err
+		}
 	}
 
-	planeChannels := uint32(ObservationPlaneChannels)
 	if oracle {
-		planeChannels = uint32(OracleObservationPlaneChannels)
+		// The three opponents' concealed hands, relative to `seat`, after the
+		// public and look-ahead channels, mirroring the self closed-hand
+		// threshold encoding. right=+1, across=+2, left=+3.
+		base := ObservationPlaneChannels + LookaheadPlaneCount(lookahead)
+		setThresholdPlanes(planes, base, faceCountsFromTiles(right.ClosedHand))
+		setThresholdPlanes(planes, base+4, faceCountsFromTiles(across.ClosedHand))
+		setThresholdPlanes(planes, base+8, faceCountsFromTiles(left.ClosedHand))
 	}
+
+	planeChannels := uint32(channels)
 	return &pb.SeatObservation{
 		Seat:               seat,
 		Planes:             planes,
@@ -178,7 +184,7 @@ func encodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64, o
 }
 
 func EncodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (*pb.SeatObservation, error) {
-	return encodeObservation(state, seat, decisionIndex, false, nil, 0)
+	return encodeObservation(state, seat, decisionIndex, false, 0, nil, 0)
 }
 
 // EncodeObservationWithEvents is the serving-side entry point for encoding a
@@ -190,10 +196,10 @@ func EncodeObservation(state *pb.GameState, seat uint32, decisionIndex uint64) (
 // internal/rl/serving_parity_test.go (gate layer 1 of the Spec B2c hard
 // parity gate).
 func EncodeObservationWithEvents(state *pb.GameState, seat uint32, decisionIndex uint64, events []engine.PublicEvent, window uint32) (*pb.SeatObservation, error) {
-	return encodeObservation(state, seat, decisionIndex, false, events, window)
+	return encodeObservation(state, seat, decisionIndex, false, 0, events, window)
 }
 
-func emptyObservation(state *pb.GameState, decisionIndex uint64, oracle bool, window uint32) *pb.SeatObservation {
+func emptyObservation(state *pb.GameState, decisionIndex uint64, oracle bool, lookahead uint32, window uint32) *pb.SeatObservation {
 	activePlayer := uint32(0)
 	phase := pb.GamePhase_PHASE_INIT
 	if state != nil {
@@ -201,10 +207,7 @@ func emptyObservation(state *pb.GameState, decisionIndex uint64, oracle bool, wi
 		phase = state.Phase
 	}
 
-	channels := ObservationPlaneChannels
-	if oracle {
-		channels = OracleObservationPlaneChannels
-	}
+	channels := observationChannels(oracle, lookahead)
 	return &pb.SeatObservation{
 		Seat:               activePlayer,
 		Planes:             make([]float32, channels*ObservationPlaneHeight*ObservationPlaneWidth),

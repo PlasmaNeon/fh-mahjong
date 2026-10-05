@@ -5,7 +5,7 @@ import hashlib
 import io
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 import torch
@@ -17,6 +17,34 @@ from .config import EnvConfig
 from .model import PolicyValueNet, infer_model_config
 from .storage import load_checkpoint_from_bytes
 from .types import Observation
+
+
+def family_sampling_actions(legal_actions: Sequence[int], sample_action_family: str) -> list[int]:
+    """The actions a sampled decision draws from: every legal action, or none (the decision stays
+    greedy) when `sample_action_family` names a family and some legal action is outside it."""
+    if sample_action_family in {"", "all", "*"}:
+        return list(legal_actions)
+    if all(action_family(action_id) == sample_action_family for action_id in legal_actions):
+        return list(legal_actions)
+    return []
+
+
+def sample_from_logits(logits: np.ndarray, actions: Sequence[int], temperature: float, top_k: int,
+                       rng: np.random.Generator) -> int:
+    """Serving's sampler: one draw from softmax(logits / temperature) over `actions`, restricted
+    to the `top_k` highest-logit actions when `top_k` > 0. `logits` is one row over all actions."""
+    candidate_actions = np.asarray(actions, dtype=np.int64)
+    legal_logits = np.asarray(logits)[list(actions)].astype(np.float64)
+    if top_k > 0 and legal_logits.size > top_k:
+        top_indices = np.argpartition(-legal_logits, top_k - 1)[:top_k]
+        top_indices = top_indices[np.argsort(-legal_logits[top_indices])]
+        candidate_actions = candidate_actions[top_indices]
+        legal_logits = legal_logits[top_indices]
+    scaled = legal_logits / temperature
+    scaled -= float(np.max(scaled))
+    probabilities = np.exp(scaled)
+    probabilities /= float(np.sum(probabilities))
+    return int(rng.choice(candidate_actions, p=probabilities))
 
 
 @dataclass(frozen=True)
@@ -99,7 +127,8 @@ class CheckpointPolicy:
         payload = torch.load(io.BytesIO(data), map_location="cpu")
         saved_state = payload["model"]
         metadata = payload.get("metadata")
-        model = PolicyValueNet(EnvConfig(), infer_model_config(saved_state, metadata))
+        config = infer_model_config(saved_state, metadata)
+        model = PolicyValueNet(EnvConfig(lookahead_version=config.lookahead_version), config)
         step = load_checkpoint_from_bytes(data, model)
         model.to(device)
         return cls(
@@ -216,24 +245,16 @@ class CheckpointPolicy:
         else:
             logits, value = self.model(planes, scalars, action_mask, events=events, event_lengths=event_lengths)
         greedy_action_id = int(torch.argmax(logits, dim=1).item())
-        sampling_actions = [] if force_greedy else self._sampling_actions(legal_actions)
+        sampling_actions = (
+            [] if force_greedy else family_sampling_actions(legal_actions, self.sample_action_family)
+        )
         sampling_applied = (
             not force_greedy and self.sample_temperature > 0.0 and bool(sampling_actions)
         )
         if sampling_applied:
             legal_actions = sampling_actions
-            candidate_actions = np.asarray(legal_actions, dtype=np.int64)
-            legal_logits = logits[0, legal_actions].detach().cpu().numpy().astype(np.float64)
-            if self.sample_top_k > 0 and legal_logits.size > self.sample_top_k:
-                top_indices = np.argpartition(-legal_logits, self.sample_top_k - 1)[: self.sample_top_k]
-                top_indices = top_indices[np.argsort(-legal_logits[top_indices])]
-                candidate_actions = candidate_actions[top_indices]
-                legal_logits = legal_logits[top_indices]
-            scaled = legal_logits / self.sample_temperature
-            scaled -= float(np.max(scaled))
-            probabilities = np.exp(scaled)
-            probabilities /= float(np.sum(probabilities))
-            action_id = int(self._rng.choice(candidate_actions, p=probabilities))
+            action_id = sample_from_logits(logits[0].detach().cpu().numpy(), legal_actions,
+                                           self.sample_temperature, self.sample_top_k, self._rng)
         else:
             action_id = greedy_action_id
         if action_id not in legal_actions:
@@ -321,13 +342,6 @@ class CheckpointPolicy:
         finite = np.where(np.isfinite(logp), logp, np.finfo(np.float32).min).astype(np.float32)
         return (torch.from_numpy(finite).to(self.device),
                 torch.from_numpy(value.astype(np.float32)).to(self.device))
-
-    def _sampling_actions(self, legal_actions: list[int]) -> list[int]:
-        if self.sample_action_family in {"", "all", "*"}:
-            return list(legal_actions)
-        if all(action_family(action_id) == self.sample_action_family for action_id in legal_actions):
-            return list(legal_actions)
-        return []
 
 
 def load_policy_from_manifest(

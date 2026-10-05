@@ -175,6 +175,9 @@ func FHEnvPoolNew(requestPtr *C.char, requestLen C.int) C.uint64_t {
 	if request.GetConfig().GetEventHistoryWindow() > rl.MaxEventHistoryWindow {
 		return 0
 	}
+	if request.GetConfig().GetLookaheadVersion() > rl.MaxLookaheadVersion {
+		return 0
+	}
 	poolMu.Lock()
 	defer poolMu.Unlock()
 

@@ -436,3 +436,36 @@ func BenchmarkCalculateWithWilds(b *testing.B) {
 		Calculate(counts, 3, 0)
 	}
 }
+
+func winTestTiles(faces string) []*pb.Tile {
+	suits := map[byte]pb.Suit{'m': pb.Suit_SUIT_MAN, 'p': pb.Suit_SUIT_PIN, 's': pb.Suit_SUIT_SOU, 'z': pb.Suit_SUIT_JIHAI}
+	out := make([]*pb.Tile, 0, len(faces)/2)
+	for i := 0; i < len(faces); i += 2 {
+		out = append(out, &pb.Tile{Id: uint32(500 + i), Suit: suits[faces[i+1]], Value: uint32(faces[i] - '0')})
+	}
+	return out
+}
+
+func TestWinningTilesListsTheDrawsThatCompleteATenpaiHand(t *testing.T) {
+	// 123m 456p 789s 111z + 5m: a single wait on 5m, three copies not in hand.
+	tiles, total := WinningTiles(winTestTiles("1m2m3m4p5p6p7s8s9s1z1z1z5m"), 0, nil)
+	if total != 3 || len(tiles) != 1 || tiles[0].Suit != pb.Suit_SUIT_MAN || tiles[0].Value != 5 || tiles[0].Remaining != 3 {
+		t.Fatalf("single wait: got %+v total %d, want 5m x3", tiles, total)
+	}
+	// 123m 456p 789s 11z + 34m: 2m or 5m (3 + 4 copies).
+	if _, total := WinningTiles(winTestTiles("1m2m3m4p5p6p7s8s9s1z1z3m4m"), 0, nil); total != 7 {
+		t.Fatalf("two-sided wait: total %d, want 7", total)
+	}
+	// A wild draw completes any tenpai hand: 9m wild adds its 4 - 0 held copies.
+	if _, total := WinningTiles(winTestTiles("1m2m3m4p5p6p7s8s9s1z1z3m4m"), 0, winTestTiles("9m")); total != 11 {
+		t.Fatalf("wild wait: total %d, want 11", total)
+	}
+	// Not tenpai: nothing completes it.
+	far := winTestTiles("1m2m4m5m7p8p1s2s4s5s1z1z2z")
+	if routes := AnalyzeHand(far, 0, nil).Routes; routes.Overall < 1 {
+		t.Fatalf("precondition: hand must be at least 1-shanten, got %+v", routes)
+	}
+	if tiles, total := WinningTiles(far, 0, nil); total != 0 || len(tiles) != 0 {
+		t.Fatalf("non-tenpai hand: got %+v total %d", tiles, total)
+	}
+}

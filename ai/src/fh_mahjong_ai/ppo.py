@@ -456,16 +456,17 @@ def _ppo_update(model, optimizer, batch: RolloutBatch, advantages: np.ndarray,
     model_config = getattr(model, "model_config", None)
     has_aux = bool(getattr(model_config, "aux_heads", False))
     belief_target = None
+    pc = int(getattr(model, "policy_channels", 39))
     if has_aux:
         plane_channels = (planes_h if host_transfer else planes).shape[1]
-        if plane_channels < 51:
+        if plane_channels < pc + 12:
             raise ValueError(
-                f"model has aux_heads enabled but planes have only {plane_channels} "
-                "channels (need 51 for the belief-target oracle-threshold planes "
-                "39:51); this would silently compute wrong belief targets."
+                f"model has aux_heads enabled but planes have only {plane_channels} channels "
+                f"(need {pc + 12} for the belief-target oracle-threshold planes {pc}:{pc + 12}); "
+                "this would silently compute wrong belief targets."
             )
         if not host_transfer:
-            belief_target = (planes[:, 39:51] > 0).float().squeeze(-1)
+            belief_target = (planes[:, pc : pc + 12] > 0).float().squeeze(-1)
     metric_names = (list(_PPO_METRICS) + (list(_AUX_METRICS) if has_aux else [])
                     + (["distill_kl"] if distill else []))
 
@@ -566,7 +567,7 @@ def _ppo_update(model, optimizer, batch: RolloutBatch, advantages: np.ndarray,
                 # derived per minibatch from the SAME plane values (an exact
                 # comparison, so the result is byte-identical either way).
                 mb["belief"] = (belief_target[idx] if belief_target is not None
-                                else (mb["planes"][:, 39:51] > 0).float().squeeze(-1))
+                                else (mb["planes"][:, pc : pc + 12] > 0).float().squeeze(-1))
                 mb["dealin"] = dealin_t[idx]
                 mb["rank"] = rank_t[idx]
             if distill:

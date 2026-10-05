@@ -248,6 +248,13 @@ def load_checkpoint_from_bytes(
     return int(payload.get("step", 0))
 
 
+def checkpoint_lookahead_version(path: Path) -> int:
+    """The look-ahead version a checkpoint was trained with (0 when its metadata predates the field)."""
+    payload = torch.load(Path(path), map_location="cpu")
+    model_config = (payload.get("metadata") or {}).get("model_config") or {}
+    return int(model_config.get("lookahead_version", 0))
+
+
 def load_checkpoint(path: Path, model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None) -> int:
     return load_checkpoint_from_bytes(Path(path).read_bytes(), model, optimizer)
 

@@ -440,6 +440,10 @@ _LEGACY_ECHO_ADDITIONS = {
         "growth_blocks",       # absent from every train_state.pt saved before deep16-rezero
         "event_output_dim",    # absent from every train_state.pt saved before gru-width
         "trunk_rezero",        # absent before mortal-scale-scratch Amendment 3 (2026-08-27)
+        "lookahead_version",   # absent before the look-ahead planes (2026-10-04)
+    },
+    "env_config": {
+        "lookahead_version",   # absent before the look-ahead planes (2026-10-04)
     },
     "ppo_config": {
         "collect_dispatch_chunk",  # absent from every train_state.pt saved before data-scale-960 Amendment 2
@@ -479,6 +483,9 @@ _LEGACY_ECHO_PINNED_VALUES = {
         "suit_augment": False,  # no run before the field existed augmented
         "suit_distill_coef": 0.0,  # no run before the field existed distilled
     },
+    # No run before the field existed used look-ahead planes.
+    "model_config": {"lookahead_version": 0},
+    "env_config": {"lookahead_version": 0},
 }
 
 

@@ -87,6 +87,7 @@ def _check_comparable(
     allow_missing_config: bool,
     allow_bridge_mismatch: bool,
     allow_window_mismatch: bool = False,
+    allow_lookahead_mismatch: bool = False,
 ) -> None:
     if protocol_a != protocol_b:
         label_a = protocol_a if protocol_a else "greedy"
@@ -114,6 +115,17 @@ def _check_comparable(
             "reports are not comparable: evaluator differs "
             f"({evaluator_a or 'sequential'!r} vs {evaluator_b or 'sequential'!r}); "
             "regenerate the comparator with the same evaluator settings"
+        )
+    # Look-ahead planes on vs off is a different observation protocol. Reports
+    # written before the field existed carry no lookahead_version; every one of
+    # them observed version 0, so absence reads as 0 rather than missing config.
+    lookahead_a = report_a.get("lookahead_version", 0)
+    lookahead_b = report_b.get("lookahead_version", 0)
+    if lookahead_a != lookahead_b and not allow_lookahead_mismatch:
+        raise ValueError(
+            f"reports are not comparable: lookahead_version differs ({lookahead_a!r} vs "
+            f"{lookahead_b!r}) — pass --allow-lookahead-mismatch when the look-ahead planes "
+            "are the intervention under test"
         )
     for key in _COMPAT_KEYS:
         in_a = key in report_a
@@ -228,11 +240,12 @@ def paired_comparison(
     allow_missing_config: bool = False,
     allow_bridge_mismatch: bool = False,
     allow_window_mismatch: bool = False,
+    allow_lookahead_mismatch: bool = False,
 ) -> Dict[str, Any]:
     report_a, protocol_a = _unwrap_report(report_a)
     report_b, protocol_b = _unwrap_report(report_b)
     _check_comparable(report_a, report_b, protocol_a, protocol_b, allow_missing_config,
-                      allow_bridge_mismatch, allow_window_mismatch)
+                      allow_bridge_mismatch, allow_window_mismatch, allow_lookahead_mismatch)
     bridge_mismatched = (
         report_a.get("bridge_lib_sha256") != report_b.get("bridge_lib_sha256")
     )
@@ -299,6 +312,11 @@ def paired_comparison(
             if report_a.get("event_history_window") != report_b.get("event_history_window")
             else "match"
         ),
+        "lookahead_check": (
+            "mismatch-allowed"
+            if report_a.get("lookahead_version", 0) != report_b.get("lookahead_version", 0)
+            else "match"
+        ),
         "tail_metrics": tail,
         "tail_gate": tail_gate,
         "deal_in_rate_a": report_a.get("deal_in_rate"),
@@ -324,6 +342,8 @@ def _format_text(result: Dict[str, Any], label_a: str, label_b: str) -> str:
         lines.append("  WARNING: simulator libraries differ — cross-simulator comparison, not a checkpoint gate")
     if result.get("window_check") == "mismatch-allowed":
         lines.append("  NOTE: event_history_window differs — the window is the intervention under test")
+    if result.get("lookahead_check") == "mismatch-allowed":
+        lines.append("  NOTE: lookahead_version differs — the look-ahead planes are the intervention under test")
     tail = result.get("tail_metrics")
     if tail is None:
         lines.append("  NOTE: no tail metrics — reports predate the tail-aware evaluator")
@@ -368,6 +388,12 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         "the window itself is the intervention under test; the result is labeled",
     )
     parser.add_argument(
+        "--allow-lookahead-mismatch",
+        action="store_true",
+        help="permit differing lookahead_version values — for the look-ahead lap's comparison where "
+        "the planes themselves are the intervention under test; the result is labeled",
+    )
+    parser.add_argument(
         "--allow-bridge-mismatch",
         action="store_true",
         help="permit differing simulator library digests for a deliberate cross-simulator comparison "
@@ -386,6 +412,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         allow_missing_config=args.allow_missing_config,
         allow_bridge_mismatch=args.allow_bridge_mismatch,
         allow_window_mismatch=args.allow_window_mismatch,
+        allow_lookahead_mismatch=args.allow_lookahead_mismatch,
     )
     if args.json:
         print(json.dumps(result, indent=2))

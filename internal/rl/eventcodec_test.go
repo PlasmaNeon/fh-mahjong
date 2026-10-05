@@ -358,7 +358,7 @@ func (e *Env) lastObservationForTest() *pb.SeatObservation {
 	if !ok {
 		seat = e.game.State.ActivePlayer
 	}
-	obs, err := encodeObservation(e.game.State, seat, e.decisionCount, e.config.OracleObservation, e.game.PublicEvents(), e.config.EventHistoryWindow)
+	obs, err := encodeObservation(e.game.State, seat, e.decisionCount, e.config.OracleObservation, e.config.LookaheadVersion, e.game.PublicEvents(), e.config.EventHistoryWindow)
 	if err != nil {
 		return nil
 	}

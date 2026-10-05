@@ -122,6 +122,15 @@ def _extract_bearer_token(handler: "PolicyRequestHandler") -> Optional[str]:
     return header[len(_BEARER_PREFIX):]
 
 
+def _require_servable(policy) -> None:
+    """The backend sends 39 public planes; a look-ahead checkpoint needs planes it never requests."""
+    version = int(getattr(policy.model.model_config, "lookahead_version", 0) or 0)
+    if version > 0:
+        raise RuntimeError(
+            f"checkpoint uses look-ahead planes (lookahead_version={version}); serving supports 0 only "
+            "until the backend requests them (worklog/specs/20261004-discard-call-lookahead-planes.md)")
+
+
 def _read_and_verify_checkpoint(path: Path, expected_sha256: Optional[str]) -> tuple[bytes, str]:
     """Open `path` exactly once, validate it, read its bytes off that SAME
     file descriptor, compute their sha256, and — when the caller supplied
@@ -401,6 +410,7 @@ class PolicyHolder:
                 seed=current.sample_seed,
                 symmetry=current.symmetry,
             )
+            _require_servable(new_policy)
             # Validate the NEW policy fully BEFORE swapping the reference: an
             # event-window mismatch against the currently-serving policy is a
             # contract break (the model's event encoder expects a fixed-width
@@ -1080,6 +1090,7 @@ def main() -> None:
         sample_seed=args.sample_seed,
         symmetry=args.symmetry_average,
     )
+    _require_servable(policy)
     holder = PolicyHolder(
         policy,
         manifest_path=args.manifest,

@@ -26,11 +26,11 @@ func TestOracleObservationAppendsOpponentHands(t *testing.T) {
 	env := oracleTestEnv(t)
 	state := env.game.State
 
-	normal, err := encodeObservation(state, 0, 0, false, nil, 0)
+	normal, err := encodeObservation(state, 0, 0, false, 0, nil, 0)
 	if err != nil {
 		t.Fatalf("normal encode: %v", err)
 	}
-	oracle, err := encodeObservation(state, 0, 0, true, nil, 0)
+	oracle, err := encodeObservation(state, 0, 0, true, 0, nil, 0)
 	if err != nil {
 		t.Fatalf("oracle encode: %v", err)
 	}
