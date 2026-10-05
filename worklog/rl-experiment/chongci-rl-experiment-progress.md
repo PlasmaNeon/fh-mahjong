@@ -1154,6 +1154,44 @@ Interpretation: learners on the same table are unpaired; differences between the
                 not the averaging. Per hand the pattern points roughly balance — a style trade,
                 not shown to be an EV loss.
 
+### 2026-10-05 — strong-table benchmarks of the look-ahead arms: more Seven Pairs, no gain
+
+Setup:          as the 2026-10-04 entry, at main `e1bcd5d1` (mixed-version tables, PR #282: a v0
+                opponent at a v1 table reads its native first 39 channels). Features arm `iter_150`
+                (`b0a3dfd9`, lookahead_version 1) and control arm `iter_150` (`f9662491`), both from
+                `ea6d4d41`, all learners suit-averaged; lap record
+                [`20261004-discard-call-lookahead-planes.md`](../specs/20261004-discard-call-lookahead-planes.md).
+                ea6d vs aug150 rerun at `e1bcd5d1` reproduced the 2026-10-04 report exactly.
+                Reports: `wsl:/root/fh-mahjong-runs/measure-20261004/lookahead/`
+
+| mean placement ±CI95 (~0.036) | vs aug150 | vs prod275 | vs anchor075 |
+|---|---|---|---|
+| ea6d `ea6d4d41` | +0.067 | +0.140 | +0.131 |
+| control `f9662491` | +0.080 | +0.149 | +0.113 |
+| features `b0a3dfd9` | +0.099 | +0.167 | +0.086 |
+
+| head-to-head (suit-avg learner vs 3× plain) | mean placement | averaging baseline (X vs 3× X) |
+|---|---|---|
+| features vs control | +0.048 ± 0.036 | control +0.070 ± 0.036 |
+| control vs ea6d | +0.043 ± 0.037 | ea6d +0.072 ± 0.037 |
+
+| per hand, same tables | features | control |
+|---|---|---|
+| Seven Pairs | 0.75–0.83% | 0.57–0.67% |
+| win rate | 24.7–25.8% | 25.0–26.4% |
+| avg win | 237–241 | 227–231 |
+| Common Win 朋胡 | 1.7–1.8% | 2.0–2.1% |
+
+Interpretation: all three policies sit within noise at every table. With the Seven Pairs
+                look-ahead plane the net makes ~25% more Seven Pairs (still below aug150's 1.07%
+                and prod275's 1.22%) and bigger, fewer wins, and is not stronger — consistent with
+                the registered features − control −0.0066 FAIL. The current best's low Seven Pairs
+                rate is a style choice, not an information gap. Both arms make more Independence
+                than ea6d (13.3–13.6% vs 12.5–12.8% of hands at the aug150 and anchor075 tables):
+                further training, not the features.
+                Head-to-head tables need the averaging baseline: averaging alone is worth +0.07 against
+                one's own plain net.
+
 ## Maintenance Protocol
 
 Record a lap twice: a pre-registration entry before any training compute is spent, and an
