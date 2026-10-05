@@ -169,11 +169,13 @@ evaluation failure aborts with an error and a nil `*Report`.
   always naturally rolled (nothing has run `finalizeRoundEnd` yet); every
   later chongci round had its dealer forced via `SetNextDealer` inside the
   previous round's `finalizeRoundEnd` (renchan or winner-seat succession), so
-  replay must force it too. `replayRound` only calls `SetNextDealer` for
-  `roundIdx > 0` — getting this wrong desyncs the deal from action 0 with no
-  helpful error, since the wall shuffle silently diverges rather than
-  erroring outright (verifyRoundSetup then catches the resulting deal
-  mismatch, but the root cause is this asymmetry, not a corrupt paipu).
+  replay must force it too. Classic rolls naturally on every hand, including
+  capped classic matches with nonzero scores; explicit `MatchMode` metadata
+  takes precedence over the legacy score-based mode inference. `replayRound`
+  only calls `SetNextDealer` for later Chongci hands. The two-hand classic
+  study regression verifies seeded deals, trace reconstruction and settlement.
+  Choosing the wrong dealer-roll path shifts the wall shuffle before action
+  zero; `verifyRoundSetup` catches the resulting deal mismatch.
 - **Round-start verification via a throwaway recorder.** `replayRound`
   attaches its own `engine.PaipuRecorder` before `Start()` purely to read
   back `CurrentRound().Deals`/`.WildTiles` — the exact snapshot `dealTiles()`

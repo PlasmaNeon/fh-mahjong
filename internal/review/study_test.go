@@ -10,12 +10,65 @@ import (
 	"testing"
 	"time"
 
+	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/engine"
 	"github.com/plasma/fh-mahjong/internal/review/reviewtest"
 	"github.com/plasma/fh-mahjong/internal/rl"
+	"github.com/plasma/fh-mahjong/internal/rules"
 	pb "github.com/plasma/fh-mahjong/proto"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestStudyReconstructsClassicMultiRoundDealerRolls(t *testing.T) {
+	const seed uint64 = 11
+	game := engine.NewGame("review-classic-two-hands", &rules.FenghuaRuleset{}, engine.MatchOptions{
+		Mode:          pb.MatchMode_MATCH_MODE_CLASSIC,
+		ChongciConfig: &pb.ChongciConfig{StartingScore: 25000, BustThreshold: 0, MaxHands: 2},
+	})
+	game.SetWallSeed(engine.SeedFromUint64(seed))
+	game.Recorder = engine.NewPaipuRecorder(game.State.MatchId, "fenghua")
+	for seat := uint32(0); seat < 4; seat++ {
+		game.Recorder.AddPlayer(seat, "Bot", 0)
+	}
+	game.Recorder.SetMatchMeta(engine.PaipuMatchMeta{MatchMode: "classic"})
+	if err := game.Start(); err != nil {
+		t.Fatal(err)
+	}
+	for hand := 0; hand < 2; hand++ {
+		driveGameWithHeuristicsTraced(t, game, bot.NewHeuristicPolicy(), seed)
+		if game.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+			if err := readyAllPlayersForNextRound(game, seed); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	p := game.Recorder.Finalize(finalScores(game))
+	if game.State.Phase != pb.GamePhase_PHASE_MATCH_END || len(p.Rounds) != 2 {
+		t.Fatalf("expected a complete two-hand classic match, got phase %v and %d rounds", game.State.Phase, len(p.Rounds))
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err = ValidateImport(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ds, err := extractDecisions(p, 0, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := [2]bool{}
+	for _, d := range ds {
+		seen[d.RoundIndex] = true
+		if d.Branch == nil {
+			t.Fatal("study decision lost its rollout branch")
+		}
+	}
+	if !seen[0] || !seen[1] {
+		t.Fatal("study omitted decisions from a classic hand")
+	}
+}
 
 func TestRolloutBranchesRetainTheReviewedPolicyContext(t *testing.T) {
 	p := generateHeuristicPaipuV2(t, 7, engine.MatchOptions{})

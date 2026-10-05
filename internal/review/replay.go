@@ -69,8 +69,8 @@ func extractDecisionsContext(ctx context.Context, paipu *engine.Paipu, eventWind
 // replayRound re-drives a single round from a fresh classic-mode game. Every
 // round is independently reproducible from its own recorded wall seed and
 // dealer, so a fresh classic game (not the original chongci match) is
-// sufficient — the paipu never records the original ChongciConfig, and none
-// is needed since each round's wall/dealer/deal are self-contained.
+// sufficient for tile reconstruction: each round's wall/dealer/deal is
+// self-contained. Policy match context is applied separately by reviewState.
 func replayRound(paipu *engine.Paipu, roundIdx int, decisionIndex uint64, eventWindow uint32) ([]Decision, uint64, error) {
 	return replayRoundCapture(paipu, roundIdx, decisionIndex, eventWindow, false)
 }
@@ -101,7 +101,8 @@ func replayRoundCaptureContext(ctx context.Context, paipu *engine.Paipu, roundId
 	// run finalizeRoundEnd yet); every later chongci hand had its dealer
 	// forced via SetNextDealer inside the previous hand's finalizeRoundEnd
 	// (renchan or winner-seat succession), so replay must force it too.
-	if roundIdx > 0 {
+	// Classic continues to consume a natural dealer roll on every hand.
+	if roundIdx > 0 && isChongciPaipu(paipu) {
 		game.SetNextDealer(round.Dealer)
 	}
 	// A throwaway recorder gives us the exact deal/wild snapshot the engine
