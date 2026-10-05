@@ -111,3 +111,22 @@ def test_play_out_horizons_at_a_hand_boundary():
     boundary = lambda: _FakeResult([_FakeMeta(0, seat=0, rewards=(1.0, 0, 0, 0), round_outcome={"x": 1})])  # noqa: E731
     assert play_out(_FakePool([boundary()]), _FakeForward(), [5], 0, "hand", 0.99)[0] == 1.0
     assert abs(play_out(_FakePool([boundary()]), _FakeForward(), [5], 0, "next", 0.99)[0] - (1.0 + 0.99 * 2.0)) < 1e-12
+
+
+@requires_go_lib
+def test_cli_writes_records_and_summary(tmp_path, monkeypatch):
+    import json
+    import fh_mahjong_ai.scripts.search_diagnostic as cli
+    from fh_mahjong_ai.storage import model_config_metadata, save_checkpoint
+    config = ModelConfig(**SMALL_MODEL, event_window=8, privileged_critic=True, aux_heads=True)
+    path = tmp_path / "m.pt"
+    save_checkpoint(path, PolicyValueNet(EnvConfig(), config), metadata={"model_config": model_config_metadata(config)})
+    monkeypatch.setattr("sys.argv", ["fh-mj-search-diagnostic", "--checkpoint", str(path),
+                                     "--bridge-lib", os.environ["FH_MAHJONG_BRIDGE_LIB"], "--out", str(tmp_path / "out"),
+                                     "--states", "1", "--worlds", "4", "--pool-worlds", "8",
+                                     "--contested-min", "0", "--keep-every", "1", "--device", "cpu",
+                                     "--chongci-max-hands", "2"])
+    cli.main()
+    records = (tmp_path / "out" / "records.jsonl").read_text().splitlines()
+    summary = json.loads((tmp_path / "out" / "summary.json").read_text())
+    assert len(records) == 1 and summary["states"] == 1 and summary["primary"] == "belief/next/z1"
