@@ -236,11 +236,16 @@ func FHSearchPoolNew(envHandle C.uint64_t, requestPtr *C.char, requestLen C.int)
 	// root_seat is proto3 optional: present ⇒ pin the search root explicitly
 	// (duplicate-seat eval); absent ⇒ let NewSearchPool fall back to
 	// currentActionSeat() (all-four-learning self-play).
+	opts := rl.SearchPoolOptions{
+		OraclePlanes:       request.GetOraclePlanes(),
+		TrueState:          request.GetTrueState(),
+		DeterminizationIDs: request.GetDeterminizationIds(),
+	}
 	var pool *rl.SearchPool
 	if request.RootSeat != nil {
-		pool, err = rl.NewSearchPool(env, int(request.GetClones()), request.GetSeed(), uint64(request.GetMaxRolloutDecisions()), request.GetDeterminizations(), request.GetRootSeat())
+		pool, err = rl.NewSearchPoolWithOptions(env, int(request.GetClones()), request.GetSeed(), uint64(request.GetMaxRolloutDecisions()), request.GetDeterminizations(), opts, request.GetRootSeat())
 	} else {
-		pool, err = rl.NewSearchPool(env, int(request.GetClones()), request.GetSeed(), uint64(request.GetMaxRolloutDecisions()), request.GetDeterminizations())
+		pool, err = rl.NewSearchPoolWithOptions(env, int(request.GetClones()), request.GetSeed(), uint64(request.GetMaxRolloutDecisions()), request.GetDeterminizations(), opts)
 	}
 	if err != nil {
 		return 0
@@ -272,6 +277,21 @@ func FHSearchPoolStep(handle C.uint64_t, requestPtr *C.char, requestLen C.int) C
 	}
 
 	response, err := pool.Step(request)
+	if err != nil {
+		return errorResult(err)
+	}
+	return marshalResult(response)
+}
+
+//export FHSearchPoolRoot
+func FHSearchPoolRoot(handle C.uint64_t, requestPtr *C.char, requestLen C.int) C.FHBytesResult {
+	searchPoolMu.Lock()
+	pool, ok := searchPools[uint64(handle)]
+	searchPoolMu.Unlock()
+	if !ok {
+		return errorResult(errors.New("invalid search pool handle"))
+	}
+	response, err := pool.RootObservations()
 	if err != nil {
 		return errorResult(err)
 	}

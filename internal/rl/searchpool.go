@@ -60,6 +60,7 @@ type SearchPool struct {
 	config   *pb.EnvConfig
 	maxDec   uint64
 	rootSeat uint32
+	oracle   bool
 }
 
 type searchClone struct {
@@ -133,7 +134,26 @@ type searchClone struct {
 // (c',k) in different candidate groups share the identical determinized world
 // AND the identical sampled future, so candidates are compared on paired worlds
 // (variance-reducing) and the live env's future is never consulted.
+// SearchPoolOptions extends NewSearchPool for the search-teacher diagnostic
+// (worklog/specs/20261005-search-teacher-diagnostic.md). The zero value is the
+// July behaviour.
+type SearchPoolOptions struct {
+	// OraclePlanes makes every clone row carry the opponents' hands, which in a
+	// re-dealt clone are samples, never the true hands.
+	OraclePlanes bool
+	// TrueState keeps the live wall and hands (no RedealUnseen): ground truth
+	// only, and refused together with OraclePlanes.
+	TrueState bool
+	// DeterminizationIDs, when set, gives clone i world DeterminizationIDs[i % len].
+	DeterminizationIDs []uint64
+}
+
 func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64, determinizations uint32, rootSeat ...uint32) (*SearchPool, error) {
+	return NewSearchPoolWithOptions(e, clones, seed, maxRolloutDecisions, determinizations, SearchPoolOptions{}, rootSeat...)
+}
+
+// NewSearchPoolWithOptions is NewSearchPool with the diagnostic options.
+func NewSearchPoolWithOptions(e *Env, clones int, seed uint64, maxRolloutDecisions uint64, determinizations uint32, opts SearchPoolOptions, rootSeat ...uint32) (*SearchPool, error) {
 	if e == nil || e.game == nil || e.game.State == nil {
 		return nil, fmt.Errorf("search pool: nil env")
 	}
@@ -143,6 +163,9 @@ func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64, 
 	cfg := normalizeConfig(e.config)
 	if cfg.OracleObservation {
 		return nil, fmt.Errorf("search pool: oracle observation is forbidden in search")
+	}
+	if opts.TrueState && opts.OraclePlanes {
+		return nil, fmt.Errorf("search pool: true_state clones cannot emit oracle planes")
 	}
 	if cfg.EventHistoryWindow > MaxEventHistoryWindow {
 		return nil, fmt.Errorf("search pool: event_history_window %d exceeds maximum %d",
@@ -178,15 +201,20 @@ func NewSearchPool(e *Env, clones int, seed uint64, maxRolloutDecisions uint64, 
 		determinizations = uint32(clones)
 	}
 
-	p := &SearchPool{config: cfg, maxDec: maxRolloutDecisions, rootSeat: seat}
+	p := &SearchPool{config: cfg, maxDec: maxRolloutDecisions, rootSeat: seat, oracle: opts.OraclePlanes}
 	for i := 0; i < clones; i++ {
 		k := uint64(uint32(i) % determinizations)
+		if len(opts.DeterminizationIDs) > 0 {
+			k = opts.DeterminizationIDs[i%len(opts.DeterminizationIDs)]
+		}
 		g := e.game.CloneForBranch()
 		if g == nil {
 			return nil, fmt.Errorf("search pool: clone %d failed", i)
 		}
-		if err := g.RedealUnseen(seat, seed*1000003+k); err != nil {
-			return nil, err
+		if !opts.TrueState {
+			if err := g.RedealUnseen(seat, seed*1000003+k); err != nil {
+				return nil, err
+			}
 		}
 		p.clones = append(p.clones, &searchClone{env: &Env{
 			config:        cfg,
@@ -341,7 +369,7 @@ func (p *SearchPool) advanceClone(clone *searchClone) slotResult {
 			// boundary. Emit THIS row (real decision state + real mask) with the
 			// captured outcome attached; Python scores and skips the clone.
 			if isRoot && clone.awaitingBootstrap {
-				obs, err := encodeObservation(state, seat, env.decisionCount, false, env.config.LookaheadVersion, env.game.PublicEvents(), env.config.EventHistoryWindow)
+				obs, err := encodeObservation(state, seat, env.decisionCount, p.oracle, env.config.LookaheadVersion, env.game.PublicEvents(), env.config.EventHistoryWindow)
 				if err != nil {
 					return slotResult{err: err}
 				}
@@ -353,14 +381,14 @@ func (p *SearchPool) advanceClone(clone *searchClone) slotResult {
 			// Decision cap, checked ONLY at a root decision so the truncation row is
 			// an in-distribution root decision state with a real mask.
 			if isRoot && p.maxDec > 0 && clone.decisions >= p.maxDec {
-				obs, err := encodeObservation(state, seat, env.decisionCount, false, env.config.LookaheadVersion, env.game.PublicEvents(), env.config.EventHistoryWindow)
+				obs, err := encodeObservation(state, seat, env.decisionCount, p.oracle, env.config.LookaheadVersion, env.game.PublicEvents(), env.config.EventHistoryWindow)
 				if err != nil {
 					return slotResult{err: err}
 				}
 				return slotResult{truncated: true, rewards: env.scoreDeltaReward(), observation: obs}
 			}
 			// Ordinary live-decision row: encode the acting seat to drive rollout.
-			obs, err := encodeObservation(state, seat, env.decisionCount, false, env.config.LookaheadVersion, env.game.PublicEvents(), env.config.EventHistoryWindow)
+			obs, err := encodeObservation(state, seat, env.decisionCount, p.oracle, env.config.LookaheadVersion, env.game.PublicEvents(), env.config.EventHistoryWindow)
 			if err != nil {
 				return slotResult{err: err}
 			}
@@ -387,11 +415,27 @@ func (p *SearchPool) cloneObservationForTest(i int, seat uint32) *pb.SeatObserva
 		return nil
 	}
 	clone := p.clones[i]
-	obs, err := encodeObservation(clone.env.game.State, seat, clone.env.decisionCount, false, clone.env.config.LookaheadVersion, clone.env.game.PublicEvents(), clone.env.config.EventHistoryWindow)
+	obs, err := encodeObservation(clone.env.game.State, seat, clone.env.decisionCount, p.oracle, clone.env.config.LookaheadVersion, clone.env.game.PublicEvents(), clone.env.config.EventHistoryWindow)
 	if err != nil {
 		return nil
 	}
 	return obs
+}
+
+// RootObservations encodes every clone's root-seat observation before any
+// step: one row per clone, slot i = clone i.
+func (p *SearchPool) RootObservations() (*pb.EnvPoolStepResponse, error) {
+	response := &pb.EnvPoolStepResponse{}
+	for i, clone := range p.clones {
+		obs, err := encodeObservation(clone.env.game.State, p.rootSeat, clone.env.decisionCount, p.oracle,
+			clone.env.config.LookaheadVersion, clone.env.game.PublicEvents(), clone.env.config.EventHistoryWindow)
+		if err != nil {
+			return nil, err
+		}
+		response.Slots = append(response.Slots, &pb.SlotState{Slot: uint32(i), Seat: p.rootSeat, HasObservation: true})
+		appendObservationRow(response, obs)
+	}
+	return response, nil
 }
 
 // Close releases the pool's clones.
