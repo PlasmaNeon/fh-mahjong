@@ -4,6 +4,7 @@
 package review
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -22,6 +23,10 @@ type Decision struct {
 	DecisionIndex uint64 // monotone counter across the whole match
 	ChosenAction  int    // 204-catalog id actually taken (rl.ActionPass for silent windows)
 	Observation   *pb.SeatObservation
+	PositionIndex int    // last already-applied canonical action, -1 = deal
+	ChoiceSource  string // recorded | inferred | unknown
+	ActualTileID  *int
+	Branch        *engine.Game // internal only; never serialized
 }
 
 // ExtractDecisions replays every round of the paipu deterministically and
@@ -37,10 +42,21 @@ func ExtractDecisions(paipu *engine.Paipu, eventWindow uint32) ([]Decision, erro
 	if paipu == nil || len(paipu.Rounds) == 0 {
 		return nil, fmt.Errorf("paipu has no rounds")
 	}
+	return extractDecisions(paipu, eventWindow, false)
+}
+
+func extractDecisions(paipu *engine.Paipu, eventWindow uint32, capture bool) ([]Decision, error) {
+	return extractDecisionsContext(context.Background(), paipu, eventWindow, capture)
+}
+
+func extractDecisionsContext(ctx context.Context, paipu *engine.Paipu, eventWindow uint32, capture bool) ([]Decision, error) {
+	if paipu == nil || len(paipu.Rounds) == 0 {
+		return nil, fmt.Errorf("paipu has no rounds")
+	}
 	var decisions []Decision
 	var decisionIndex uint64
 	for roundIdx := range paipu.Rounds {
-		roundDecisions, next, err := replayRound(paipu, roundIdx, decisionIndex, eventWindow)
+		roundDecisions, next, err := replayRoundCaptureContext(ctx, paipu, roundIdx, decisionIndex, eventWindow, capture)
 		if err != nil {
 			return nil, fmt.Errorf("round %d: %w", roundIdx, err)
 		}
@@ -53,9 +69,20 @@ func ExtractDecisions(paipu *engine.Paipu, eventWindow uint32) ([]Decision, erro
 // replayRound re-drives a single round from a fresh classic-mode game. Every
 // round is independently reproducible from its own recorded wall seed and
 // dealer, so a fresh classic game (not the original chongci match) is
-// sufficient — the paipu never records the original ChongciConfig, and none
-// is needed since each round's wall/dealer/deal are self-contained.
+// sufficient for tile reconstruction: each round's wall/dealer/deal is
+// self-contained. Policy match context is applied separately by reviewState.
 func replayRound(paipu *engine.Paipu, roundIdx int, decisionIndex uint64, eventWindow uint32) ([]Decision, uint64, error) {
+	return replayRoundCapture(paipu, roundIdx, decisionIndex, eventWindow, false)
+}
+
+func replayRoundCapture(paipu *engine.Paipu, roundIdx int, decisionIndex uint64, eventWindow uint32, capture bool) ([]Decision, uint64, error) {
+	return replayRoundCaptureContext(context.Background(), paipu, roundIdx, decisionIndex, eventWindow, capture)
+}
+
+func replayRoundCaptureContext(ctx context.Context, paipu *engine.Paipu, roundIdx int, decisionIndex uint64, eventWindow uint32, capture bool) ([]Decision, uint64, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, decisionIndex, err
+	}
 	round := &paipu.Rounds[roundIdx]
 	seed, err := engine.SeedFromBase64(round.WallSeed)
 	if err != nil {
@@ -64,6 +91,9 @@ func replayRound(paipu *engine.Paipu, roundIdx int, decisionIndex uint64, eventW
 
 	game := engine.NewGame(paipu.MatchID, &rules.FenghuaRuleset{}, engine.MatchOptions{})
 	game.SetWallSeed(seed)
+	if round.PrevailingWind != 0 {
+		game.State.PrevailingWind = round.PrevailingWind
+	}
 	// dealTiles() only consumes an extra mt.GenU32() call for a *natural*
 	// dealer roll when no override is queued; forcing SetNextDealer would
 	// skip that draw and desync the wall shuffle from the original run. The
@@ -71,7 +101,8 @@ func replayRound(paipu *engine.Paipu, roundIdx int, decisionIndex uint64, eventW
 	// run finalizeRoundEnd yet); every later chongci hand had its dealer
 	// forced via SetNextDealer inside the previous hand's finalizeRoundEnd
 	// (renchan or winner-seat succession), so replay must force it too.
-	if roundIdx > 0 {
+	// Classic continues to consume a natural dealer roll on every hand.
+	if roundIdx > 0 && isChongciPaipu(paipu) {
 		game.SetNextDealer(round.Dealer)
 	}
 	// A throwaway recorder gives us the exact deal/wild snapshot the engine
@@ -87,13 +118,16 @@ func replayRound(paipu *engine.Paipu, roundIdx int, decisionIndex uint64, eventW
 	}
 
 	r := &roundReplayer{
-		game:          game,
-		paipu:         paipu,
-		round:         round,
-		roundIdx:      roundIdx,
-		decisionIndex: decisionIndex,
-		eventWindow:   eventWindow,
-		lastDiscard:   -1,
+		game:           game,
+		ctx:            ctx,
+		paipu:          paipu,
+		round:          round,
+		roundIdx:       roundIdx,
+		decisionIndex:  decisionIndex,
+		eventWindow:    eventWindow,
+		lastDiscard:    -1,
+		responseCursor: -1,
+		captureBranch:  capture,
 	}
 	if err := r.run(); err != nil {
 		return nil, decisionIndex, err
@@ -138,6 +172,7 @@ func verifyRoundSetup(game *engine.Game, round *engine.PaipuRound) error {
 // feeding each recorded decision back into engine.Game and recording a
 // Decision wherever the acting seat had more than one legal option.
 type roundReplayer struct {
+	ctx               context.Context
 	game              *engine.Game
 	paipu             *engine.Paipu
 	round             *engine.PaipuRound
@@ -151,6 +186,10 @@ type roundReplayer struct {
 	decisionIndex     uint64
 	eventWindow       uint32 // forwarded to rl.EncodeObservationWithEvents; 0 disables event history
 	decisions         []Decision
+	matchedRow        *engine.PaipuDecision
+	captureBranch     bool
+	responseCursor    int
+	responseBase      *engine.Game
 	flowerIndex       map[uint32]int // per-seat cursor into player.FlowerMelds for "flower" record verification
 }
 
@@ -160,11 +199,21 @@ type roundReplayer struct {
 func (r *roundReplayer) run() error {
 	r.flowerIndex = initialFlowerCounts(r.round)
 	for {
+		if r.ctx != nil {
+			if err := r.ctx.Err(); err != nil {
+				return err
+			}
+		}
 		switch r.game.State.Phase {
 		case pb.GamePhase_PHASE_ROUND_END, pb.GamePhase_PHASE_MATCH_END:
 			if r.cursor != len(r.round.Actions) {
 				return fmt.Errorf("round %d: %d trailing unconsumed paipu action(s) starting at index %d (%s)",
 					r.roundIdx, len(r.round.Actions)-r.cursor, r.cursor, r.round.Actions[r.cursor].Act)
+			}
+			if r.captureBranch {
+				if err := r.verifySettlement(); err != nil {
+					return err
+				}
 			}
 			return r.verifyTraceConsumed()
 
@@ -220,7 +269,7 @@ func (r *roundReplayer) stepPlayerTurn() error {
 	if err := r.crossCheckDecision(seat, legal, &id); err != nil {
 		return err
 	}
-	if len(legal) > 1 {
+	if len(legal) > 1 || r.captureBranch {
 		if err := r.recordDecision(seat, r.cursor, id); err != nil {
 			return err
 		}
@@ -233,6 +282,12 @@ func (r *roundReplayer) stepPlayerTurn() error {
 
 	if err := game.ProcessPlayerAction(seat, act); err != nil {
 		return fmt.Errorf("round %d action %d: engine rejected recorded %s: %w", r.roundIdx, actionIdx, pa.Act, err)
+	}
+	if game.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
+		r.responseCursor = actionIdx
+		if r.captureBranch {
+			r.responseBase = game.CloneForBranch()
+		}
 	}
 	return nil
 }
@@ -362,9 +417,46 @@ func matchingPendingSeat(pending []uint32, discarder uint32, peeked *engine.Paip
 // internal/rl/serving_parity_test.go), so this is not a behavior change for
 // existing (window-0) callers.
 func (r *roundReplayer) recordDecision(seat uint32, actionIndex int, chosenAction int) error {
+	if r.captureBranch && r.decisionIndex >= 4096 {
+		return fmt.Errorf("full analysis is limited to 4096 decisions per replay; split this long paipu into completed matches")
+	}
 	obs, err := rl.EncodeObservationWithEvents(reviewState(r.game.State, r.paipu, r.roundIdx), seat, r.decisionIndex, r.game.PublicEvents(), r.eventWindow)
 	if err != nil {
 		return fmt.Errorf("round %d: encode observation for seat %d: %w", r.roundIdx, seat, err)
+	}
+	position := r.cursor - 1
+	source := "recorded"
+	var actualTile *int
+	if r.game.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS {
+		position = r.responseCursor
+		if chosenAction == rl.ActionPass {
+			source = "inferred"
+		}
+	}
+	if r.matchedRow != nil {
+		if r.matchedRow.ChosenID >= 0 && !r.matchedRow.LegalIDsError {
+			chosenAction = r.matchedRow.ChosenID
+			source = "recorded"
+		} else {
+			source = "unknown"
+		}
+	} else if r.paipu.Version >= 2 {
+		source = "unknown"
+	}
+	if chosenAction >= rl.DiscardBase && chosenAction < rl.DiscardBase+rl.DiscardCount && source == "recorded" && actionIndex >= 0 && actionIndex < len(r.round.Actions) && r.round.Actions[actionIndex].Act == "discard" {
+		if t := r.round.Actions[actionIndex].Tile; t != nil {
+			v := *t
+			actualTile = &v
+		}
+	}
+	var branch *engine.Game
+	if r.captureBranch {
+		if r.game.State.Phase == pb.GamePhase_PHASE_WAIT_DISCARDS && r.responseBase != nil {
+			branch = r.responseBase.CloneForBranch()
+		} else {
+			branch = r.game.CloneForBranch()
+		}
+		branch.State = reviewState(branch.State, r.paipu, r.roundIdx)
 	}
 	r.decisions = append(r.decisions, Decision{
 		Seat:          seat,
@@ -373,6 +465,10 @@ func (r *roundReplayer) recordDecision(seat uint32, actionIndex int, chosenActio
 		DecisionIndex: r.decisionIndex,
 		ChosenAction:  chosenAction,
 		Observation:   obs,
+		PositionIndex: position,
+		ChoiceSource:  source,
+		ActualTileID:  actualTile,
+		Branch:        branch,
 	})
 	r.decisionIndex++
 	return nil
@@ -430,6 +526,7 @@ const maxTraceLookahead = 2
 // silently — the matched row there may legitimately record a losing bidder's
 // actual call, not a pass, so only legality is checked there).
 func (r *roundReplayer) crossCheckDecision(seat uint32, legal map[int]*pb.PlayerAction, wantID *int) error {
+	r.matchedRow = nil
 	if len(legal) > 1 {
 		r.multiOptionPoints++
 	}
@@ -452,6 +549,7 @@ func (r *roundReplayer) crossCheckDecision(seat uint32, legal map[int]*pb.Player
 	}
 
 	if row := &r.round.Decisions[r.traceCursor]; row.Seat == seat {
+		r.matchedRow = row
 		r.traceMatched[r.traceCursor] = true
 		r.advanceTraceCursor()
 		return r.verifyTraceRow(row, legal, wantID)
@@ -469,6 +567,7 @@ func (r *roundReplayer) crossCheckDecision(seat uint32, legal map[int]*pb.Player
 		if row.Seat != seat || !chosenIsLegal(row, legal) {
 			continue
 		}
+		r.matchedRow = row
 		r.traceMatched[i] = true
 		return r.verifyTraceRow(row, legal, wantID)
 	}
@@ -857,4 +956,35 @@ func faceIndex34FromTileID(id uint32) int {
 		return -1
 	}
 	return index
+}
+
+func (r *roundReplayer) verifySettlement() error {
+	got, want := r.game.State.RoundResult, r.round.Result
+	if got == nil || want == nil {
+		return fmt.Errorf("missing final settlement")
+	}
+	if got.IsDraw != (want.Type == "draw") {
+		return fmt.Errorf("settlement win/draw mismatch")
+	}
+	if !got.IsDraw {
+		if want.Winner == nil || int(got.WinnerSeat) != *want.Winner {
+			return fmt.Errorf("settlement winner mismatch")
+		}
+		if want.WinType == "tsumo" && got.WinType != pb.ActionType_ACTION_TSUMO || want.WinType == "ron" && got.WinType != pb.ActionType_ACTION_RON {
+			return fmt.Errorf("settlement win type mismatch")
+		}
+	}
+	var payouts [4]int32
+	for _, v := range got.Payouts {
+		if v.Seat >= 4 {
+			return fmt.Errorf("invalid engine payout")
+		}
+		payouts[v.Seat] = v.Amount
+	}
+	for seat, amount := range want.ScoreChanges {
+		if amount != payouts[seat] {
+			return fmt.Errorf("settlement payout mismatch at seat %d", seat)
+		}
+	}
+	return nil
 }

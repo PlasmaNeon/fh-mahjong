@@ -193,7 +193,7 @@ func (s *Server) handleGetReview(c *gin.Context) {
 	}
 
 	var row storage.MatchReview
-	err = s.DB.Where("match_id = ? AND checkpoint_id = ?", matchID, sha).First(&row).Error
+	err = s.DB.Where("match_id = ? AND checkpoint_id = ? AND schema_version = ?", matchID, sha, review.SchemaVersion).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no cached review for the current checkpoint"})
 		return
@@ -227,7 +227,7 @@ func (s *Server) matchHasAnyCachedReview(matchID string) (bool, error) {
 // policy server).
 func (s *Server) serveNewestReview(c *gin.Context, matchID string) {
 	var row storage.MatchReview
-	err := s.DB.Where("match_id = ?", matchID).Order("created_at DESC").First(&row).Error
+	err := s.DB.Where("match_id = ? AND schema_version = ?", matchID, review.SchemaVersion).Order("created_at DESC").First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no cached review for this match"})
 		return
@@ -454,7 +454,7 @@ func (s *Server) handlePostReview(c *gin.Context) {
 	if s.DB != nil && !force {
 		if !legacy {
 			var cached storage.MatchReview
-			err := s.DB.Where("match_id = ? AND checkpoint_id = ?", matchID, currentSha).First(&cached).Error
+			err := s.DB.Where("match_id = ? AND checkpoint_id = ? AND schema_version = ?", matchID, currentSha, review.SchemaVersion).First(&cached).Error
 			if err == nil {
 				c.Data(http.StatusOK, "application/json", []byte(cached.ReportJSON))
 				return
@@ -469,7 +469,7 @@ func (s *Server) handlePostReview(c *gin.Context) {
 			// True legacy server (healthz ok, no sha field): today's
 			// newest-row fallback.
 			var cached storage.MatchReview
-			err := s.DB.Where("match_id = ?", matchID).Order("created_at DESC").First(&cached).Error
+			err := s.DB.Where("match_id = ? AND schema_version = ?", matchID, review.SchemaVersion).Order("created_at DESC").First(&cached).Error
 			if err == nil {
 				c.Data(http.StatusOK, "application/json", []byte(cached.ReportJSON))
 				return
@@ -536,7 +536,7 @@ func buildReviewKey(matchID, currentSha string, legacy bool) string {
 	if legacy {
 		shaPart = "<legacy>"
 	}
-	return fmt.Sprintf("%s|sha=%s", matchID, shaPart)
+	return fmt.Sprintf("%s|sha=%s|schema=%d", matchID, shaPart, review.SchemaVersion)
 }
 
 // reviewBuildOutcome is the fully-resolved HTTP result of one review build
@@ -756,13 +756,14 @@ func reviewCacheCheckpointID(report *review.Report) string {
 // there is no read-then-write gap for a second writer to race into.
 func (s *Server) cacheMatchReview(ctx context.Context, matchID, checkpointID string, reportJSON []byte) error {
 	row := storage.MatchReview{
-		MatchID:      matchID,
-		CheckpointID: checkpointID,
-		ReportJSON:   string(reportJSON),
-		CreatedAt:    time.Now(),
+		SchemaVersion: review.SchemaVersion,
+		MatchID:       matchID,
+		CheckpointID:  checkpointID,
+		ReportJSON:    string(reportJSON),
+		CreatedAt:     time.Now(),
 	}
 	return s.DB.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "match_id"}, {Name: "checkpoint_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"report_json", "created_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"report_json", "created_at", "schema_version"}),
 	}).Create(&row).Error
 }

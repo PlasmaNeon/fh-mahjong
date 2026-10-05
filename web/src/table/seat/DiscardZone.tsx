@@ -42,12 +42,16 @@ export function DiscardZone({
               transition={{
                 opacity: { duration: 0.08, ease: 'easeOut' },
               }}
+              data-replay-called={tile.called || undefined}
+              data-replay-tsumogiri={tile.fromDrawn || undefined}
               className={`discard-lane__tile ${isCallableDiscard ? 'discard-lane__tile--callable' : ''}`}
-              style={{
-                '--discard-row': Math.min(Math.floor(index / 6), 3),
-                '--discard-column': index < 18 ? index % 6 : index - 18,
-                visibility: hiddenTileIds?.has(tile.id) ? 'hidden' : undefined,
-              } as CSSProperties}
+              style={
+                {
+                  '--discard-row': Math.min(Math.floor(index / 6), 3),
+                  '--discard-column': index < 18 ? index % 6 : index - 18,
+                  visibility: hiddenTileIds?.has(tile.id) ? 'hidden' : undefined,
+                } as CSSProperties
+              }
             >
               <motion.div
                 layout="position"
@@ -55,7 +59,7 @@ export function DiscardZone({
                   layout: { duration: 0.18, ease: 'easeOut' },
                 }}
                 className={`pov-${direction} small`}
-                data-board-tile-id={tile.id}
+                data-board-tile-id={tile.called ? undefined : tile.id}
                 data-board-tile-role="discard"
               >
                 <TileComponent tile={tile} size="small" isWild={isWildTile(tile)} noGlow={isCallableDiscard} />

@@ -169,11 +169,13 @@ evaluation failure aborts with an error and a nil `*Report`.
   always naturally rolled (nothing has run `finalizeRoundEnd` yet); every
   later chongci round had its dealer forced via `SetNextDealer` inside the
   previous round's `finalizeRoundEnd` (renchan or winner-seat succession), so
-  replay must force it too. `replayRound` only calls `SetNextDealer` for
-  `roundIdx > 0` — getting this wrong desyncs the deal from action 0 with no
-  helpful error, since the wall shuffle silently diverges rather than
-  erroring outright (verifyRoundSetup then catches the resulting deal
-  mismatch, but the root cause is this asymmetry, not a corrupt paipu).
+  replay must force it too. Classic rolls naturally on every hand, including
+  capped classic matches with nonzero scores; explicit `MatchMode` metadata
+  takes precedence over the legacy score-based mode inference. `replayRound`
+  only calls `SetNextDealer` for later Chongci hands. The two-hand classic
+  study regression verifies seeded deals, trace reconstruction and settlement.
+  Choosing the wrong dealer-roll path shifts the wall shuffle before action
+  zero; `verifyRoundSetup` catches the resulting deal mismatch.
 - **Round-start verification via a throwaway recorder.** `replayRound`
   attaches its own `engine.PaipuRecorder` before `Start()` purely to read
   back `CurrentRound().Deals`/`.WildTiles` — the exact snapshot `dealTiles()`
@@ -274,3 +276,17 @@ evaluation failure aborts with an error and a nil `*Report`.
     `MaxHands` limit and only an approximation (a lower bound) for one that
     ended early (e.g. a bust-out). Revisit if a future paipu format version
     starts recording the original `ChongciConfig`.
+
+## Full replay study (schema 2)
+
+`BuildStudy` adds genuine per-action round-return evaluations and public-information risk/draw estimates to the existing policy report. `positionIndex` points to the last applied canonical action before a choice; `id` distinguishes responses sharing an event. V2 losing bids use their recorded trace action. Inferred/unknown choices and forced actions are excluded from agreement. Schema 1 cache rows are not served as schema 2.
+
+- `import.go` validates native Fenghua v1/v2 uploads before model work. Missing operation tiles/source seats, invalid IDs and oversized envelopes fail closed. Legacy prevailing wind 0 is supported.
+- `study.go` compares **all** legal candidates in paired public unseen worlds under the reviewed checkpoint through terminal round payout. Default: 32 worlds, 128 risk worlds, seed 20261004, 512 rollout decisions; full reconstruction is bounded to 4096 decisions. Mean payout and standard error are Fenghua points, not Mortal Q or win probability. Completed chunks are checkpointed and identity-checked on resume.
+- `risk.go` samples uniform unseen allocations conditioned on auto-revealed flowers using the authoritative scorer. Joint opponent frequency is measured in the same worlds; contributor patterns/examples are hypothetical. Zero hits do not prove safety. Draw opportunity uses pre-draw public counts, excludes ordinary flowers, and labels normal/haitei/wangpai draws.
+- `chongci_context.go` uses explicit v2 match/config metadata when available, retaining the historical context fallback for v1. No privileged critic value is used for action evaluation.
+- `study_test.go`, `positions_test.go` cover candidate evaluation, durable resume, checkpoint changes, pre-choice anchors and recorded bid provenance. The opt-in real checkpoint smoke uses `FH_REVIEW_SMOKE_URL`; ordinary CI uses the shared deterministic stub.
+
+Advanced reconstruction checks cancellation between actions and verifies recorded terminal winner, win type and per-seat payout against the authoritative engine. Recorded prevailing wind is applied before round setup.
+
+Scorer-backed regressions verify copy-weighted legal-tsumo opportunities (without counting the winning draw twice), hidden-allocation invariance, and equality of branch/root policy context. Draw estimates are rebuilt on resume without repeating complete candidate evaluations.

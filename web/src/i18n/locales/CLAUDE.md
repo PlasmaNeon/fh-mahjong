@@ -15,3 +15,7 @@
 - Consumers use `useI18n()` from `../I18nContext.tsx` rather than importing these directly.
 
 Direct play adds `brand.direct` and localized invitation-entry labels/errors under `lobby.*`.
+
+`review.ts` adds the five-language typed reviewer namespace without duplicating the full app resources. `ReviewKey` is the dotted key union and `reviewResources` maps each supported language to a complete resource. All locales must retain named interpolation placeholders; `studyUtils.test.ts` checks this.
+
+`reviewPatterns.ts` localizes all 41 registered Fenghua scoring pattern ids in five reviewer languages. Unknown or legacy missing ids retain their recorded display label; persisted ids are never renamed.

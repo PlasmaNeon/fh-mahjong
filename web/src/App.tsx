@@ -47,6 +47,7 @@ function AppRoutes() {
                 <Route path="/room/:roomId" element={<PrivateRoomRoute />} />
                 <Route path="/match/:matchId" element={<Game />} />
                 <Route path="/replay" element={<ReplayLibrary />} />
+                <Route path="/replay/import/:importId" element={<Replay />} />
                 <Route path="/replay/:matchId" element={<Replay />} />
                 <Route path="/tools/calc" element={<Calc />} />
                 <Route path="/tools/shanten" element={<Shanten />} />

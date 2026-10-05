@@ -21,6 +21,9 @@ import (
 
 // Server encapsulates the Gin router and DB connection
 type Server struct {
+	studyMu     sync.Mutex
+	studyActive map[string]studyExecution
+
 	Router     *gin.Engine
 	DB         *gorm.DB
 	Hub        *Hub
@@ -143,6 +146,7 @@ func NewServer(db *gorm.DB, hub *Hub, matchmaker *Matchmaker) *Server {
 	}
 
 	server := &Server{
+		studyActive:       make(map[string]studyExecution),
 		Router:            router,
 		DB:                db,
 		Hub:               hub,
@@ -203,6 +207,15 @@ func (s *Server) setupRoutes() {
 			protected.POST("/rooms/:roomId/mode", s.handlePrivateTableMode)
 
 			protected.POST("/matches/:matchId/review", s.handlePostReview)
+			protected.POST("/replay-imports", s.handleReplayImport)
+			protected.GET("/replay-imports", s.handleListReplayImports)
+			protected.GET("/replay-imports/:importId", s.handleReadReplayImport)
+			protected.GET("/replay-imports/:importId/review", s.handleGetStudy)
+			protected.POST("/replay-imports/:importId/review", s.handlePostStudy)
+			protected.GET("/matches/:matchId/study", s.handleGetStudy)
+			protected.POST("/matches/:matchId/study", s.handlePostStudy)
+			protected.GET("/review-jobs/:jobId", s.handleGetStudyJob)
+			protected.DELETE("/review-jobs/:jobId", s.handleCancelStudyJob)
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -21,16 +22,19 @@ var ErrUnreviewable = errors.New("unreviewable paipu")
 // gaps are surfaced in its SeatSummary.
 const topGapCount = 5
 
+const SchemaVersion = 2
+
 // Report is the reviewer-facing critique of a completed match: the served
 // policy's action distribution at every reviewable decision, plus per-seat
 // rollups. Field names/types are a cross-task contract with the frontend —
 // do not rename without updating Tasks 6/7.
 type Report struct {
-	SchemaVersion  int    `json:"schemaVersion"` // 1
-	MatchID        string `json:"matchId"`
-	Ruleset        string `json:"ruleset"`
-	CheckpointPath string `json:"checkpointPath"`
-	CheckpointStep int    `json:"checkpointStep"`
+	Study          *StudyMetadata `json:"study,omitempty"`
+	SchemaVersion  int            `json:"schemaVersion"` // 1
+	MatchID        string         `json:"matchId"`
+	Ruleset        string         `json:"ruleset"`
+	CheckpointPath string         `json:"checkpointPath"`
+	CheckpointStep int            `json:"checkpointStep"`
 	// CheckpointSha256 is the content hash of the checkpoint that actually
 	// produced every decision in this report (round 17, Finding 2) — unlike
 	// CheckpointPath, it survives a same-path hot reload, so it's what a
@@ -58,6 +62,14 @@ type Report struct {
 // ReportDecision is one reviewed decision: the policy's legal-action
 // distribution at that point, and which action was actually chosen.
 type ReportDecision struct {
+	Risk          *RiskAssessment  `json:"risk,omitempty"`
+	Draw          *DrawOpportunity `json:"draw,omitempty"`
+	ID            string           `json:"id"`
+	PositionIndex int              `json:"positionIndex"`
+	ChoiceSource  string           `json:"choiceSource"`
+	ActualTileID  *int             `json:"actualTileId,omitempty"`
+	RecommendedID int              `json:"recommendedActionId"`
+
 	Seat        uint32  `json:"seat"`
 	Round       int     `json:"round"`
 	ActionIndex int     `json:"actionIndex"`
@@ -73,8 +85,9 @@ type ReportDecision struct {
 
 // ActionProb is one legal action's catalog id and probability.
 type ActionProb struct {
-	ActionID int     `json:"actionId"`
-	Prob     float32 `json:"prob"`
+	Evaluation *ActionEvaluation `json:"evaluation,omitempty"`
+	ActionID   int               `json:"actionId"`
+	Prob       float32           `json:"prob"`
 }
 
 // SeatSummary rolls up one seat's decisions across the match.
@@ -133,7 +146,7 @@ func BuildReport(ctx context.Context, paipu *engine.Paipu, client PolicyClient, 
 	}
 
 	report := &Report{
-		SchemaVersion:    1,
+		SchemaVersion:    SchemaVersion,
 		MatchID:          paipu.MatchID,
 		Ruleset:          paipu.Ruleset,
 		CheckpointPath:   info.Path,
@@ -166,11 +179,17 @@ func buildReportDecision(d Decision, res PolicyResult) (ReportDecision, error) {
 			continue
 		}
 		p := res.Probs[idx]
+		if math.IsNaN(float64(p)) || math.IsInf(float64(p), 0) || p < 0 {
+			return ReportDecision{}, fmt.Errorf("invalid probability for action %d", idx)
+		}
 		sumLegal += p
 		actions = append(actions, ActionProb{ActionID: idx, Prob: p})
 	}
 	if len(actions) == 0 {
 		return ReportDecision{}, fmt.Errorf("no legal actions in mask")
+	}
+	if sumLegal <= 0 || math.IsInf(float64(sumLegal), 0) {
+		return ReportDecision{}, fmt.Errorf("invalid legal probability total")
 	}
 	if sumLegal > 0 {
 		for i := range actions {
@@ -193,13 +212,18 @@ func buildReportDecision(d Decision, res PolicyResult) (ReportDecision, error) {
 	}
 
 	return ReportDecision{
-		Seat:        d.Seat,
-		Round:       d.RoundIndex,
-		ActionIndex: d.ActionIndex,
-		ChosenID:    d.ChosenAction,
-		ChosenProb:  chosenProb,
-		Value:       res.Value,
-		Actions:     actions,
+		ID:            fmt.Sprintf("r%d-d%d-s%d", d.RoundIndex, d.DecisionIndex, d.Seat),
+		PositionIndex: d.PositionIndex,
+		ChoiceSource:  d.ChoiceSource,
+		ActualTileID:  d.ActualTileID,
+		RecommendedID: actions[0].ActionID,
+		Seat:          d.Seat,
+		Round:         d.RoundIndex,
+		ActionIndex:   d.ActionIndex,
+		ChosenID:      d.ChosenAction,
+		ChosenProb:    chosenProb,
+		Value:         res.Value,
+		Actions:       actions,
 	}, nil
 }
 
@@ -225,7 +249,7 @@ func buildSeatSummaries(decisions []ReportDecision) []SeatSummary {
 	var sumProbBySeat [4]float32
 
 	for i, d := range decisions {
-		if d.Seat >= 4 {
+		if d.Seat >= 4 || len(d.Actions) < 2 || (d.ChoiceSource != "" && d.ChoiceSource != "recorded") {
 			continue
 		}
 		summaries[d.Seat].Decisions++

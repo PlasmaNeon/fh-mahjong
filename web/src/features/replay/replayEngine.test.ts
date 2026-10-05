@@ -49,6 +49,9 @@ describe('ReplayEngine steal-from-discard melds', () => {
       { act: 'pon', seat: CLAIMER, tiles: [36, 37], from: DISCARDER },
     ])
     expect(state.players[DISCARDER].discards).toHaveLength(0)
+    expect(state.players[DISCARDER].replayDiscards).toEqual([
+      expect.objectContaining({ id: 38, called: true }),
+    ])
     const meld = state.players[CLAIMER].melds[0]
     expect(meld.type).toBe('pon')
     expect(meld.from).toBe(DISCARDER)
@@ -81,4 +84,15 @@ describe('ReplayEngine steal-from-discard melds', () => {
     ])
     expect(state.players[CLAIMER].melds).toHaveLength(0)
   })
+})
+
+it('retains drawn-discard provenance and resets it on a later hand discard', () => {
+  const state = finalState([
+    { act: 'draw', seat: DISCARDER, tile: 0 },
+    { act: 'discard', seat: DISCARDER, tile: 0 },
+    { act: 'draw', seat: DISCARDER, tile: 1 },
+    { act: 'discard', seat: DISCARDER, tile: 100 },
+  ])
+  expect(state.players[DISCARDER].replayDiscards[0]).toMatchObject({ id: 0, fromDrawn: true })
+  expect(state.players[DISCARDER].replayDiscards[1]).toMatchObject({ id: 100, fromDrawn: false })
 })

@@ -6,7 +6,7 @@
 
 ### Library and navigation
 - **ReplayLibrary.tsx** — Opens raw match IDs or shared `/replay/:matchId` links and lists the signed-in account's cursor-paginated completed games with open/copy actions and full loading/offline/empty states.
-- **replayReference.ts** — Strictly extracts a **local** replay match ID from raw IDs, relative routes, or HTTP(S) links. Pasted origins are never navigated or fetched.
+- **replayReference.ts** — Strictly resolves raw IDs, relative routes, or HTTP(S) bookmarks to **local** match/import routes. Library bookmarks retain only round/cursor/seat/study/advice/decision state; other query fields and pasted origins are never navigated or fetched. The legacy match-ID parser retains its existing contract.
 
 ### Playback
 - **Replay.tsx** — Fetches paipu, advances the local `ReplayEngine`, and adapts replay state into the same `TableBoard` / `TableRoundResultOverlay` presenter live play uses. Transport controls, perspective selector, and "show all hands" toggle live in a lacquer side drawer that becomes a bottom sheet on narrow screens.
@@ -26,3 +26,19 @@
 - The replay route opts out of forced landscape rotation (`.stage-rotator--replay`) so its control drawer stays reachable in portrait.
 - Paipu lists only completed (`MATCH_END`) matches, which is why an endless match mode never appears in the library.
 - Building a review needs `POLICY_SERVER_URL` on the backend, or `POST` returns 503. `GET` never builds; it returns 404 until a report is cached.
+
+## Adapted AI study viewer
+
+The current viewer uses `ReviewStudy.tsx`, `studyClient.ts`, `useStudy.ts`, and `studyUtils.ts`. The legacy `ReviewPanel`/client remain compatible for existing consumers/tests. New route `/replay/import/:importId` reads account-owned native uploads; `ReplayLibrary` previews JSON/player selection and uploads via cookie/CSRF before optional background analysis. Imported replay IDs never enter public live-match storage.
+
+The slate table and 300px lacquer drawer remain the shared presenter. Drawer views are Decision/Rounds/Risk. All legal action probabilities and genuine payout evaluations remain available; per-tile confidence, exact actual-copy marker, best-action outline and optional risk annotations are presentation-only fields. `ReplayEngine.replayDiscards` preserves dim called-discard footprints and tsumogiri dots while `discards` keeps its canonical removal semantics. The center HUD remains compact; dice/wall/wangpai context uses its existing corner slot. Settlement keys carry stable pattern IDs.
+
+Study mode hides actual/AI/future results, including future starting scores; revealing one decision does not reveal final standings. Inferred/unknown choices do not count toward agreement. Rating discloses its included denominator and uses fully evaluated, non-flat action ranges. Risk and tsumo logs disclose the cumulative proxy, not a calibrated game probability. Five reviewer languages use the shared i18n provider, with English fallback outside translated namespaces.
+
+Jobs poll with abort/generation guards, expose partial/pending values, cancel, retry and reopen cached work. Bookmarks restore round/cursor/seat/study/stable decision; malformed numeric fields are bounded. Ratio threshold persists locally. Keyboard shortcuts retain event/round/play controls and add Alt+arrows for decisions, error jumps and toggles. Focused-table wheel stepping is opt-in and uses a non-passive listener. Static/pure tests cover spoilers, duplicate tile/ID 0 markers, ratio, rating, uncertainty absence, locale placeholders and bookmark bounds.
+
+Portrait replay keeps the table in a compact landscape proportion above its scrollable controls. Risk contributor details use a native modal dialog with Escape and focus restoration.
+
+Confidence bars above concealed-hand tiles use a fully opaque slate background, including the empty portion, so table artwork cannot show through. Their placement and the hand geometry remain unchanged.
+
+Candidate columns sort by confidence or expected payout without changing the policy recommendation. Bookmarks retain advice visibility and the selected decision even when responses share a cursor. Discard logs include individual-opponent cumulative proxies and observed outcomes only after the event is visible in study mode.

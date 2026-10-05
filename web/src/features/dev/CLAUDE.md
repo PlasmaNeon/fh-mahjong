@@ -41,3 +41,5 @@ Unified side hands additionally have a constant 60-unit local inset (left moves 
 TableSample omits the decorative Fenghua corner badge.
 
 Unified exposed tiles prioritize legibility: opponents use 28x38 and self uses 34x46; flowers have an independent 32x42 rail. Side seats containing a four-wide kan use 26x34 at three melds and 24x32 at four to keep the fixed hand anchor and a single meld row even for direct kans.
+
+`TableSample?review=1` adds explicitly synthetic advice/risk annotations to the local hand for crowded/four-kan geometry checks. These values are layout fixtures, never production AI reports.

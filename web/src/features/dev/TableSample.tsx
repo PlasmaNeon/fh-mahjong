@@ -147,7 +147,17 @@ export default function TableSample() {
   const [demoChiiChoiceOpen, setDemoChiiChoiceOpen] = useState(false)
   const [demoChiiSelectedTileId, setDemoChiiSelectedTileId] = useState<number | null>(null)
   const handInteractive = fixture === 'active' || fixture === 'called-hand' || fixture === 'crowded' || fixture === 'wild-hand' || fixture === 'flower-heavy'
-  const tablePlayers = fixture === 'flower-heavy' ? flowerHeavyPlayers : fixture === 'called-hand' ? calledPlayers : fixture === 'crowded' ? crowdedPlayers : fixture === 'meld-heavy' ? meldHeavyPlayers : players
+  const fixturePlayers = fixture === 'flower-heavy' ? flowerHeavyPlayers : fixture === 'called-hand' ? calledPlayers : fixture === 'crowded' ? crowdedPlayers : fixture === 'meld-heavy' ? meldHeavyPlayers : players
+  // Explicit synthetic annotations for geometry checks, never an AI report.
+  const reviewPreview = previewParams.get('review') === '1'
+  const tablePlayers = reviewPreview ? fixturePlayers.map(player => player.seat !== 0 ? player : {
+    ...player,
+    reviewAnnotations: Object.fromEntries((player.closedHand ?? []).map((tile, index) => [tile.id, {
+      label: 'Synthetic layout fixture', confidence: index === 0 ? 0.65 : 0.025,
+      scale: index === 0 ? 1 : 0.04, actual: index === 1, best: index === 0, risk: 0.12,
+      opponents: [{ seat: 1, ron: 0.04 }, { seat: 2, ron: 0.06 }, { seat: 3, ron: 0.03 }],
+    }])),
+  }) : fixturePlayers
   const demoChiiEligibleIds = demoChiiChoiceOpen
     ? eligibleChiiTileIds(demoChiiActions, selfConcealed, demoChiiSelectedTileId)
     : new Set<number>()
@@ -227,7 +237,7 @@ export default function TableSample() {
   const callableTile = southDiscards[southDiscards.length - 1]!
 
   return (
-    <div className="stage-rotator" style={rotatedPreview ? {
+    <div className={`stage-rotator${reviewPreview ? ' table-sample-review' : ''}`} style={rotatedPreview ? {
       position: 'fixed', top: '50%', left: '50%', width: '100dvh', height: '100dvw',
       transform: 'translate(-50%, -50%) rotate(90deg)', transformOrigin: 'center center', overflow: 'hidden',
     } : undefined}>
@@ -260,7 +270,7 @@ export default function TableSample() {
                 return tile.suit === indicator.suit && tile.value === indicator.value
               }}
               hudChips={[{ label: 'East 2' }, { label: '58 tiles' }]}
-              actionBar={actionBar}
+              actionBar={reviewPreview ? undefined : actionBar}
               liftedTileId={liftedTileId}
               onHandTileClick={demoChiiChoiceOpen
                 ? (tile) => {

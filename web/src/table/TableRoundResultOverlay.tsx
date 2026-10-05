@@ -108,7 +108,7 @@ export function TableRoundResultOverlay({
                   <div className="round-result-section-label">{t('result.ledger')}</div>
                   <div className="round-result-breakdown-grid">
                     {breakdown.map((entry, index) => (
-                      <div key={`${entry.name}-${index}`} className="round-result-breakdown-item">
+                      <div key={entry.patternId ?? `${entry.name}-${index}`} className="round-result-breakdown-item">
                         <div className="round-result-breakdown-name">{entry.name}</div>
                         <div className="round-result-breakdown-points">+{entry.points}</div>
                       </div>

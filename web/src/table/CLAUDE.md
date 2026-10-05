@@ -81,3 +81,7 @@ Compact readability uses 26x36 discard tiles and 24x32 opponent exposed tiles wi
 The four-row reservation follows the wall budget: 144 - 52 dealt - 2*diceSum = 68..88 normal draws, plus at most one haitei draw. Ordinary cyclic play yields at most 18..23 discards for the busiest seat (20 at dice sum 7); calls skew this distribution. This is a rules-based design bound, not an empirical percentile. `discardClearance.test.ts` checks the four-row depth, while the crowded browser fixture checks the extended final row.
 
 Side seats keep `justify-content: space-between`: the concealed hand starts at a fixed anchor regardless of meld count. Do not end-align the hand toward exposed melds; that moves the whole hand whenever a meld forms. Keep the outer meld/flower anchor fixed as well, letting the intervening gap absorb changes.
+
+## Optional replay annotations
+
+`PlayerTableView.reviewAnnotations` is keyed by physical tile ID and contains only presentation data (probability/scale, actual/best flags, joint/per-opponent risk). `ClosedHand` attaches it to existing tile wrappers without reserving additional hand width or changing fixed geometry. It is absent in live play. `TileLike.called/fromDrawn` are optional replay-only river presentation flags; called footprints omit flight destination IDs. `RoundResultBreakdownEntry.patternId` supplies stable settlement keys when available. Replay owns all annotation styling.

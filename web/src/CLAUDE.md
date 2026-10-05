@@ -65,3 +65,5 @@ Contains all React components, context providers, custom hooks, and utility func
 - Network calls should use `getApiUrl()` / `getWebSocketUrl()` instead of hard-coded same-origin `/api` paths so the frontend can run behind Vercel while talking to a separate backend host.
 - Menu routes use Direct play light surfaces and blue controls; live/replay tables use the scoped slate-blue table skin. Home and `/play` now share the production Direct play entry; ordinary menu routes use the light DirectShell while table materials remain scoped to gameplay.
 - Private-room identity is account-backed. Browser storage never contains a session token; multi-tab play uses the same signed-in account.
+
+Replay adds `/replay/import/:importId` for private native paipu uploads and uses the existing shared table plus a Decision/Rounds/Risk study drawer. Its background job client is account-bound and guards obsolete responses. The reviewer namespace supports five languages through the shared i18n provider.

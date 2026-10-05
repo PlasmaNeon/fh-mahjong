@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseReplayReference } from './replayReference'
+import { parseReplayLocation, parseReplayReference } from './replayReference'
 
 describe('parseReplayReference', () => {
   it('accepts a raw match id', () => {
@@ -19,5 +19,35 @@ describe('parseReplayReference', () => {
     expect(parseReplayReference('/replay/one/more')).toBeNull()
     expect(parseReplayReference('javascript:alert(1)')).toBeNull()
     expect(parseReplayReference('')).toBeNull()
+  })
+})
+
+describe('parseReplayLocation', () => {
+  it('opens private import bookmarks locally with the selected viewer state', () => {
+    expect(
+      parseReplayLocation(
+        'https://shared.example/replay/import/native-7?round=2&cursor=22&seat=2&study=0&advice=1&decision=r2-d15-s2',
+      ),
+    ).toBe('/replay/import/native-7?round=2&cursor=22&seat=2&study=0&advice=1&decision=r2-d15-s2')
+  })
+
+  it('retains match bookmarks and raw match ids while dropping unrelated query data', () => {
+    expect(parseReplayLocation(' table-7 ')).toBe('/replay/table-7')
+    expect(parseReplayLocation('/replay/table-7?token=secret&cursor=3&analyze=1#fragment')).toBe('/replay/table-7?cursor=3')
+    expect(parseReplayLocation('/replay/import/native-7?cursor=3&cursor=4')).toBe('/replay/import/native-7?cursor=3')
+  })
+
+  it('rejects invalid protocols, nested routes and encoded path separators', () => {
+    for (const input of [
+      '',
+      'javascript:alert(1)',
+      'file:///replay/import/native-7',
+      '/room/native-7',
+      '/replay/import/native-7/more',
+      '/replay/import/native%2F7',
+      '/replay/import/%',
+    ]) {
+      expect(parseReplayLocation(input)).toBeNull()
+    }
   })
 })

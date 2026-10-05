@@ -6,6 +6,8 @@ export type TileLike = {
   id: number
   suit: number
   value: number
+  fromDrawn?: boolean
+  called?: boolean
 }
 
 // Suit 0 (SUIT_UNKNOWN) marks a tile the server anonymized for an opponent's
@@ -29,7 +31,19 @@ export type MeldLike = {
   addedTileId?: number | null
 }
 
+export type ReviewTileAnnotation = {
+  label: string
+  confidence?: number
+  scale?: number
+  actual?: boolean
+  best?: boolean
+  risk?: number
+  opponents?: { seat: number; ron: number }[]
+}
 export type PlayerTableView = {
+  // Optional replay presentation; absent in live play. Tile IDs distinguish duplicates.
+  reviewAnnotations?: Record<number, ReviewTileAnnotation>
+
   seat: number
   seatWind?: number
   score?: number
@@ -57,6 +71,8 @@ export type HandTileChoice = {
 }
 
 export type RoundResultBreakdownEntry = {
+  patternId?: string
+
   name: string
   points: number
 }
