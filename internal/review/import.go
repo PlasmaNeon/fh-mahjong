@@ -7,9 +7,22 @@ import (
 
 	"github.com/plasma/fh-mahjong/internal/engine"
 	"github.com/plasma/fh-mahjong/internal/rl"
+	pb "github.com/plasma/fh-mahjong/proto"
 )
 
 const MaxImportBytes = 10 << 20
+
+// validWildTile checks a recorded wild tile. A standard wild is a real tile
+// whose id must match its face. Flower wilds are built by face — the other
+// three flowers of the indicator's group — so the engine records them without
+// an id; a recorder that sets one must use that flower's own id.
+func validWildTile(w engine.PaipuTile) bool {
+	if w.Suit == pb.Suit_SUIT_FLOWER {
+		return w.Value >= 1 && w.Value <= 8 && (w.ID == 0 || w.ID == 135+w.Value)
+	}
+	s, v := engine.TileFromId(w.ID)
+	return w.ID < 144 && s == w.Suit && v == w.Value
+}
 
 // ValidateImport validates the JSON envelope before any model work. Seed/deal,
 // trace and action legality are additionally verified by ExtractDecisions.
@@ -82,8 +95,7 @@ func ValidateImport(data []byte) (*engine.Paipu, error) {
 			}
 		}
 		for _, w := range r.WildTiles {
-			s, v := engine.TileFromId(w.ID)
-			if w.ID >= 144 || s != w.Suit || v != w.Value {
+			if !validWildTile(w) {
 				return nil, fmt.Errorf("round %d: invalid wild tile", i+1)
 			}
 		}

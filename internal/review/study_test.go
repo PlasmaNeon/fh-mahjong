@@ -46,6 +46,9 @@ func TestStudyReconstructsClassicMultiRoundDealerRolls(t *testing.T) {
 	if game.State.Phase != pb.GamePhase_PHASE_MATCH_END || len(p.Rounds) != 2 {
 		t.Fatalf("expected a complete two-hand classic match, got phase %v and %d rounds", game.State.Phase, len(p.Rounds))
 	}
+	if got, err := engine.SeedFromBase64(p.Rounds[1].WallSeed); err != nil || got != engine.SeedFromUint64(seed*1000+2) {
+		t.Fatalf("the second classic hand's wall is not pinned (err %v)", err)
+	}
 	data, err := json.Marshal(p)
 	if err != nil {
 		t.Fatal(err)
