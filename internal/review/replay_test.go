@@ -104,9 +104,13 @@ func driveGameWithHeuristics(t *testing.T, game *engine.Game, policy bot.Policy,
 // deliberately differs from internal/rl's splitmix deriveHandSeed -- changing it
 // would change every recorded paipu.
 func readyAllPlayersForNextRound(game *engine.Game, baseSeed uint64) error {
-	return rl.ReadyAllPlayersForNextRound(game, func(handNum uint64) uint64 {
-		return baseSeed*1000 + handNum
-	})
+	nextHandSeed := func(handNum uint64) uint64 { return baseSeed*1000 + handNum }
+	// rl re-seeds only Chongci hands; pin the next hand in every mode so
+	// multi-hand classic fixtures are deterministic too (same seed rl uses).
+	if game.State.Phase == pb.GamePhase_PHASE_ROUND_END {
+		game.SetWallSeed(engine.SeedFromUint64(nextHandSeed(uint64(game.State.HandNum) + 1)))
+	}
+	return rl.ReadyAllPlayersForNextRound(game, nextHandSeed)
 }
 
 func finalScores(game *engine.Game) [4]int32 {
