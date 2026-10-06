@@ -85,3 +85,26 @@ common worlds, so a paired standard error can gate every override.
 - The belief log-likelihood equals minus the head's training BCE (summed) on the same planes.
 - The driver runs end to end on a few states through the Go bridge, and Δ = 0 for every state where a rule keeps
   the greedy choice.
+
+## Outcome — 2026-10-06: NO-GO
+
+Commit `e4c08253`, bridge `4260be54…`, checkpoint `f9662491…`; 4,000 contested discard states from 391 self-play games
+(seeds 910,000+), 01:51 PDT, about 80 minutes on the 4090. Δ in hand-score/1000 units, game-clustered CIs.
+
+| rule | mean Δ ± CI | override rate |
+|---|---|---|
+| **belief / next / z1 (primary)** | **+0.0021 ± 0.0022** (lower −0.0001) | 0.296 |
+| belief / next / z0, z2 | +0.0016 ± 0.0051, −0.0002 ± 0.0018 | 0.607, 0.113 |
+| belief / hand / z0, z1, z2 | −0.0016, −0.0008, −0.0003 | 0.569, 0.175, 0.016 |
+| uniform / next / z0, z1, z2 | +0.0024 ± 0.0050, +0.0020 ± 0.0036, +0.0010 ± 0.0029 | 0.585, 0.379, 0.227 |
+| uniform / hand / z0, z1, z2 | +0.0030 ± 0.0056, +0.0024 ± 0.0033, +0.0004 ± 0.0019 | 0.624, 0.256, 0.039 |
+
+- The primary rule's lower bound is below 0, and no other rule clears the Bonferroni level: **no-go**.
+- Every rule's hindsight-best rate (0.72–0.74) matches the greedy choice's (0.734): search picks the true-wall best
+  candidate no more often than the policy does.
+- Belief weights are sharply peaked: effective sample size 1.2 / 2.7 / 6.5 (10th / 50th / 90th percentile) of 256
+  worlds, 3 / 7 / 13 distinct worlds of 32.
+
+Even at its point estimate the primary rule gains about 2 points per contested decision. Search with the privileged
+critic does not choose better than the suit-averaged policy, so search-as-teacher is closed: no gameplay probe, no
+reruns with tuned settings. Records: `/root/fh-mahjong-runs/search-diagnostic-20261006/`.
