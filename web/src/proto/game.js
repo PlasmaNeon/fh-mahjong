@@ -12741,6 +12741,9 @@ export const game = $root.game = (() => {
          * @property {number|undefined} [maxRolloutDecisions] SearchPoolNewRequest maxRolloutDecisions
          * @property {number|undefined} [determinizations] SearchPoolNewRequest determinizations
          * @property {number|null|undefined} [rootSeat] SearchPoolNewRequest rootSeat
+         * @property {boolean|undefined} [oraclePlanes] SearchPoolNewRequest oraclePlanes
+         * @property {boolean|undefined} [trueState] SearchPoolNewRequest trueState
+         * @property {Array.<number|Long>|undefined} [determinizationIds] SearchPoolNewRequest determinizationIds
          */
 
         /**
@@ -12752,6 +12755,7 @@ export const game = $root.game = (() => {
          * @param {game.ISearchPoolNewRequest=} [properties] Properties to set
          */
         function SearchPoolNewRequest(properties) {
+            this.determinizationIds = [];
             if (properties)
                 for (let keys = Object.keys(properties), i = 0; i < keys.length; ++i)
                     if (properties[keys[i]] != null)
@@ -12798,6 +12802,30 @@ export const game = $root.game = (() => {
          */
         SearchPoolNewRequest.prototype.rootSeat = null;
 
+        /**
+         * SearchPoolNewRequest oraclePlanes.
+         * @member {boolean} oraclePlanes
+         * @memberof game.SearchPoolNewRequest
+         * @instance
+         */
+        SearchPoolNewRequest.prototype.oraclePlanes = false;
+
+        /**
+         * SearchPoolNewRequest trueState.
+         * @member {boolean} trueState
+         * @memberof game.SearchPoolNewRequest
+         * @instance
+         */
+        SearchPoolNewRequest.prototype.trueState = false;
+
+        /**
+         * SearchPoolNewRequest determinizationIds.
+         * @member {Array.<number|Long>} determinizationIds
+         * @memberof game.SearchPoolNewRequest
+         * @instance
+         */
+        SearchPoolNewRequest.prototype.determinizationIds = $util.emptyArray;
+
         // OneOf field names bound to virtual getters and setters
         let $oneOfFields;
 
@@ -12841,6 +12869,16 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 4, wireType 0 =*/32).uint32(message.determinizations);
             if (message.rootSeat != null && Object.hasOwnProperty.call(message, "rootSeat"))
                 writer.uint32(/* id 5, wireType 0 =*/40).uint32(message.rootSeat);
+            if (message.oraclePlanes != null && Object.hasOwnProperty.call(message, "oraclePlanes"))
+                writer.uint32(/* id 6, wireType 0 =*/48).bool(message.oraclePlanes);
+            if (message.trueState != null && Object.hasOwnProperty.call(message, "trueState"))
+                writer.uint32(/* id 7, wireType 0 =*/56).bool(message.trueState);
+            if (message.determinizationIds != null && message.determinizationIds.length) {
+                writer.uint32(/* id 8, wireType 2 =*/66).fork();
+                for (let i = 0; i < message.determinizationIds.length; ++i)
+                    writer.uint64(message.determinizationIds[i]);
+                writer.ldelim();
+            }
             return writer;
         };
 
@@ -12897,6 +12935,25 @@ export const game = $root.game = (() => {
                         message.rootSeat = reader.uint32();
                         break;
                     }
+                case 6: {
+                        message.oraclePlanes = reader.bool();
+                        break;
+                    }
+                case 7: {
+                        message.trueState = reader.bool();
+                        break;
+                    }
+                case 8: {
+                        if (!(message.determinizationIds && message.determinizationIds.length))
+                            message.determinizationIds = [];
+                        if ((tag & 7) === 2) {
+                            let end2 = reader.uint32() + reader.pos;
+                            while (reader.pos < end2)
+                                message.determinizationIds.push(reader.uint64());
+                        } else
+                            message.determinizationIds.push(reader.uint64());
+                        break;
+                    }
                 default:
                     reader.skipType(tag & 7);
                     break;
@@ -12950,6 +13007,19 @@ export const game = $root.game = (() => {
                 if (!$util.isInteger(message.rootSeat))
                     return "rootSeat: integer expected";
             }
+            if (message.oraclePlanes != null && message.hasOwnProperty("oraclePlanes"))
+                if (typeof message.oraclePlanes !== "boolean")
+                    return "oraclePlanes: boolean expected";
+            if (message.trueState != null && message.hasOwnProperty("trueState"))
+                if (typeof message.trueState !== "boolean")
+                    return "trueState: boolean expected";
+            if (message.determinizationIds != null && message.hasOwnProperty("determinizationIds")) {
+                if (!Array.isArray(message.determinizationIds))
+                    return "determinizationIds: array expected";
+                for (let i = 0; i < message.determinizationIds.length; ++i)
+                    if (!$util.isInteger(message.determinizationIds[i]) && !(message.determinizationIds[i] && $util.isInteger(message.determinizationIds[i].low) && $util.isInteger(message.determinizationIds[i].high)))
+                        return "determinizationIds: integer|Long[] expected";
+            }
             return null;
         };
 
@@ -12982,6 +13052,24 @@ export const game = $root.game = (() => {
                 message.determinizations = object.determinizations >>> 0;
             if (object.rootSeat != null)
                 message.rootSeat = object.rootSeat >>> 0;
+            if (object.oraclePlanes != null)
+                message.oraclePlanes = Boolean(object.oraclePlanes);
+            if (object.trueState != null)
+                message.trueState = Boolean(object.trueState);
+            if (object.determinizationIds) {
+                if (!Array.isArray(object.determinizationIds))
+                    throw TypeError(".game.SearchPoolNewRequest.determinizationIds: array expected");
+                message.determinizationIds = [];
+                for (let i = 0; i < object.determinizationIds.length; ++i)
+                    if ($util.Long)
+                        (message.determinizationIds[i] = $util.Long.fromValue(object.determinizationIds[i])).unsigned = true;
+                    else if (typeof object.determinizationIds[i] === "string")
+                        message.determinizationIds[i] = parseInt(object.determinizationIds[i], 10);
+                    else if (typeof object.determinizationIds[i] === "number")
+                        message.determinizationIds[i] = object.determinizationIds[i];
+                    else if (typeof object.determinizationIds[i] === "object")
+                        message.determinizationIds[i] = new $util.LongBits(object.determinizationIds[i].low >>> 0, object.determinizationIds[i].high >>> 0).toNumber(true);
+            }
             return message;
         };
 
@@ -12998,6 +13086,8 @@ export const game = $root.game = (() => {
             if (!options)
                 options = {};
             let object = {};
+            if (options.arrays || options.defaults)
+                object.determinizationIds = [];
             if (options.defaults) {
                 object.clones = 0;
                 if ($util.Long) {
@@ -13007,6 +13097,8 @@ export const game = $root.game = (() => {
                     object.seed = options.longs === String ? "0" : 0;
                 object.maxRolloutDecisions = 0;
                 object.determinizations = 0;
+                object.oraclePlanes = false;
+                object.trueState = false;
             }
             if (message.clones != null && message.hasOwnProperty("clones"))
                 object.clones = message.clones;
@@ -13023,6 +13115,18 @@ export const game = $root.game = (() => {
                 object.rootSeat = message.rootSeat;
                 if (options.oneofs)
                     object._rootSeat = "rootSeat";
+            }
+            if (message.oraclePlanes != null && message.hasOwnProperty("oraclePlanes"))
+                object.oraclePlanes = message.oraclePlanes;
+            if (message.trueState != null && message.hasOwnProperty("trueState"))
+                object.trueState = message.trueState;
+            if (message.determinizationIds && message.determinizationIds.length) {
+                object.determinizationIds = [];
+                for (let j = 0; j < message.determinizationIds.length; ++j)
+                    if (typeof message.determinizationIds[j] === "number")
+                        object.determinizationIds[j] = options.longs === String ? String(message.determinizationIds[j]) : message.determinizationIds[j];
+                    else
+                        object.determinizationIds[j] = options.longs === String ? $util.Long.prototype.toString.call(message.determinizationIds[j]) : options.longs === Number ? new $util.LongBits(message.determinizationIds[j].low >>> 0, message.determinizationIds[j].high >>> 0).toNumber(true) : message.determinizationIds[j];
             }
             return object;
         };

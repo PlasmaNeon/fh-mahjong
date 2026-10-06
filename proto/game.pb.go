@@ -3375,9 +3375,18 @@ type SearchPoolNewRequest struct {
 	// currentActionSeat() can surface a lower-numbered heuristic opponent's
 	// interrupt while the learning seat's decision is the one being searched.
 	// Absent ⇒ fall back to currentActionSeat() (all-four-learning self-play).
-	RootSeat      *uint32 `protobuf:"varint,5,opt,name=root_seat,json=rootSeat,proto3,oneof" json:"root_seat,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	RootSeat *uint32 `protobuf:"varint,5,opt,name=root_seat,json=rootSeat,proto3,oneof" json:"root_seat,omitempty"`
+	// Clones emit oracle observations (the opponents' re-dealt hands). Allowed
+	// because a re-dealt clone's hidden state is a sample, not the true hands.
+	OraclePlanes bool `protobuf:"varint,6,opt,name=oracle_planes,json=oraclePlanes,proto3" json:"oracle_planes,omitempty"`
+	// Clones keep the live wall and hands (no RedealUnseen): ground truth for
+	// diagnostics only. Refused together with oracle_planes.
+	TrueState bool `protobuf:"varint,7,opt,name=true_state,json=trueState,proto3" json:"true_state,omitempty"`
+	// When set, clone i re-deals world determinization_ids[i % len]; overrides
+	// the k = i % determinizations assignment (seeds still derive from seed, id).
+	DeterminizationIds []uint64 `protobuf:"varint,8,rep,packed,name=determinization_ids,json=determinizationIds,proto3" json:"determinization_ids,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *SearchPoolNewRequest) Reset() {
@@ -3443,6 +3452,27 @@ func (x *SearchPoolNewRequest) GetRootSeat() uint32 {
 		return *x.RootSeat
 	}
 	return 0
+}
+
+func (x *SearchPoolNewRequest) GetOraclePlanes() bool {
+	if x != nil {
+		return x.OraclePlanes
+	}
+	return false
+}
+
+func (x *SearchPoolNewRequest) GetTrueState() bool {
+	if x != nil {
+		return x.TrueState
+	}
+	return false
+}
+
+func (x *SearchPoolNewRequest) GetDeterminizationIds() []uint64 {
+	if x != nil {
+		return x.DeterminizationIds
+	}
+	return nil
 }
 
 var File_proto_game_proto protoreflect.FileDescriptor
@@ -3744,13 +3774,17 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x0fevent_histories\x18\n" +
 	" \x01(\fR\x0eeventHistories\x12!\n" +
 	"\fevent_counts\x18\v \x01(\fR\veventCounts\x120\n" +
-	"\x14event_history_window\x18\f \x01(\rR\x12eventHistoryWindow\"\xd2\x01\n" +
+	"\x14event_history_window\x18\f \x01(\rR\x12eventHistoryWindow\"\xc7\x02\n" +
 	"\x14SearchPoolNewRequest\x12\x16\n" +
 	"\x06clones\x18\x01 \x01(\rR\x06clones\x12\x12\n" +
 	"\x04seed\x18\x02 \x01(\x04R\x04seed\x122\n" +
 	"\x15max_rollout_decisions\x18\x03 \x01(\rR\x13maxRolloutDecisions\x12*\n" +
 	"\x10determinizations\x18\x04 \x01(\rR\x10determinizations\x12 \n" +
-	"\troot_seat\x18\x05 \x01(\rH\x00R\brootSeat\x88\x01\x01B\f\n" +
+	"\troot_seat\x18\x05 \x01(\rH\x00R\brootSeat\x88\x01\x01\x12#\n" +
+	"\roracle_planes\x18\x06 \x01(\bR\foraclePlanes\x12\x1d\n" +
+	"\n" +
+	"true_state\x18\a \x01(\bR\ttrueState\x12/\n" +
+	"\x13determinization_ids\x18\b \x03(\x04R\x12determinizationIdsB\f\n" +
 	"\n" +
 	"_root_seat*c\n" +
 	"\x04Suit\x12\x10\n" +

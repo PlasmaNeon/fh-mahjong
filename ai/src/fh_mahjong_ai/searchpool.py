@@ -14,6 +14,7 @@ rather than a terminal state.
 from __future__ import annotations
 
 import ctypes
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Sequence
 
@@ -34,10 +35,14 @@ class GoSearchPool:
     """ctypes wrapper over the FHSearchPool* exports (one FFI call per round)."""
 
     def __init__(self, bridge: CtypesGoBridge, clones: int, seed: int, max_rollout_decisions: int,
-                 determinizations: int = 0, root_seat: int | None = None) -> None:
+                 determinizations: int = 0, root_seat: int | None = None, oracle_planes: bool = False,
+                 true_state: bool = False, determinization_ids: Sequence[int] = ()) -> None:
         if clones < 1:
             raise ValueError("clones must be >= 1")
-        self.env_config = bridge.config
+        # Rows carry 51 channels when clones emit oracle planes; the shared
+        # decoder checks the channel count against env_config.
+        self.env_config = (dataclasses.replace(bridge.config, oracle_observation=True)
+                           if oracle_planes else bridge.config)
         self.clones = int(clones)
         self._handle = 0
         self._library = bridge.library
@@ -49,6 +54,9 @@ class GoSearchPool:
             seed=int(seed),
             max_rollout_decisions=int(max_rollout_decisions),
             determinizations=int(determinizations),
+            oracle_planes=bool(oracle_planes),
+            true_state=bool(true_state),
+            determinization_ids=[int(i) for i in determinization_ids],
         )
         # root_seat pins the search root EXPLICITLY (proto3 optional, so seat 0 is
         # distinct from absent). Required under duplicate-seat evaluation, where the
@@ -97,6 +105,13 @@ class GoSearchPool:
             round_ended=round_ended,
         )
 
+    def root_observations(self) -> PoolStepResult:
+        """Every clone's root-seat observation before any step (slot i = clone i)."""
+        raw = self._call_bytes(self._library.FHSearchPoolRoot, self._handle, b"")
+        response = game_pb2.EnvPoolStepResponse()
+        response.ParseFromString(raw)
+        return GoEnvPool._decode_response(self, response)
+
     def close(self) -> None:
         if getattr(self, "_handle", 0):
             self._library.FHSearchPoolClose(self._handle)
@@ -115,6 +130,8 @@ class GoSearchPool:
         self._library.FHSearchPoolNew.restype = ctypes.c_uint64
         self._library.FHSearchPoolStep.argtypes = [ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
         self._library.FHSearchPoolStep.restype = FHBytesResult
+        self._library.FHSearchPoolRoot.argtypes = [ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        self._library.FHSearchPoolRoot.restype = FHBytesResult
         self._library.FHSearchPoolClose.argtypes = [ctypes.c_uint64]
         self._library.FHSearchPoolClose.restype = None
         self._library.FHFree.argtypes = [ctypes.c_void_p]

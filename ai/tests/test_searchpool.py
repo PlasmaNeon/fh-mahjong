@@ -92,3 +92,32 @@ def test_go_search_pool_step_shapes_and_determinism():
         np.testing.assert_array_equal(result_a.action_masks, result_b.action_masks)
         assert [(m.slot, m.seat, m.terminated, m.truncated, m.has_observation) for m in result_a.slots] == \
             [(m.slot, m.seat, m.terminated, m.truncated, m.has_observation) for m in result_b.slots]
+
+
+@requires_go_lib
+def test_go_search_pool_diagnostic_options():
+    from fh_mahjong_ai.bridge import BridgeError, CtypesGoBridge
+    from fh_mahjong_ai.searchpool import GoSearchPool
+
+    config = _chongci_config()
+    with CtypesGoBridge(config) as bridge:
+        live = bridge.reset(seed=101)
+        pool = GoSearchPool(bridge, clones=4, seed=7, max_rollout_decisions=64, oracle_planes=True,
+                            root_seat=live.seat)
+        roots = pool.root_observations()
+        pool.close()
+        assert roots.planes.shape == (4, 51, 42, 1)
+        assert np.array_equal(roots.planes[:, :39], np.repeat(live.planes[None], 4, axis=0))
+        with pytest.raises(BridgeError):
+            GoSearchPool(bridge, clones=2, seed=7, max_rollout_decisions=64, oracle_planes=True, true_state=True)
+        truth = GoSearchPool(bridge, clones=2, seed=7, max_rollout_decisions=64, true_state=True)
+        assert truth.root_observations().planes.shape == (2, 39, 42, 1)
+        truth.close()
+        weigh = GoSearchPool(bridge, clones=8, seed=7, max_rollout_decisions=64, oracle_planes=True)
+        worlds = weigh.root_observations().planes
+        weigh.close()
+        picked = GoSearchPool(bridge, clones=2, seed=7, max_rollout_decisions=64, oracle_planes=True,
+                              determinization_ids=[6, 3])
+        again = picked.root_observations().planes
+        picked.close()
+        assert np.array_equal(again[0], worlds[6]) and np.array_equal(again[1], worlds[3])

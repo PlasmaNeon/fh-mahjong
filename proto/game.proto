@@ -551,4 +551,13 @@ message SearchPoolNewRequest {
   // interrupt while the learning seat's decision is the one being searched.
   // Absent ⇒ fall back to currentActionSeat() (all-four-learning self-play).
   optional uint32 root_seat = 5;
+  // Clones emit oracle observations (the opponents' re-dealt hands). Allowed
+  // because a re-dealt clone's hidden state is a sample, not the true hands.
+  bool oracle_planes = 6;
+  // Clones keep the live wall and hands (no RedealUnseen): ground truth for
+  // diagnostics only. Refused together with oracle_planes.
+  bool true_state = 7;
+  // When set, clone i re-deals world determinization_ids[i % len]; overrides
+  // the k = i % determinizations assignment (seeds still derive from seed, id).
+  repeated uint64 determinization_ids = 8;
 }
