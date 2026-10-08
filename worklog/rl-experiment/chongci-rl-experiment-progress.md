@@ -1192,6 +1192,27 @@ Interpretation: all three policies sit within noise at every table. With the Sev
                 Head-to-head tables need the averaging baseline: averaging alone is worth +0.07 against
                 one's own plain net.
 
+### 2026-10-07 — flush probe: skipping a free Mixed One Suit cut costs about 26 points
+
+Setup:          `f9662491` self-play (plain greedy, all four seats), seeds 930,000–933,199 (3,200 chongci matches,
+                screening only), look-ahead planes on for labelling. Positions: exactly one off-suit numbered tile
+                blocks a flush, and cutting it is as fast as the best alternative (same shanten after, useful tiles
+                within 10%). Where the suit-averaged choice differs, both cuts are played to the hand end on the
+                TRUE wall (`GoSearchPool(true_state=True)`), policy continuing. Throwaway script, not committed.
+
+| 3,496 positions, 1,567 games | takes flush cut | Δ(flush − policy) when skipped, ± game-clustered CI95 |
+|---|---|---|
+| all | 46.6% | **+26 ± 15 pts** (n 1,867) |
+| ready after the cut | 57.3% | **+50 ± 32 pts** (n 667) |
+| not ready | 38.0% | +12 ± 15 (n 1,200) |
+| Mixed One Suit (honors) | 44.6% | +23 ± 15 (n 1,805) |
+| Pure One Suit | 73.8% | +125 ± 133 (n 62) |
+
+Interpretation: a real value blind spot, not a style choice: at equal speed the policy skips the flush cut about
+                half the time and loses points doing so, most when the cut leaves it ready. It reproduces the
+                ai-training-monitor probe's ~48% on heuristic-bot positions. About one such skip per game, so a few
+                points per seat per match. Look-ahead v1 (speed features) did not help; the gap is hand value.
+
 ## Maintenance Protocol
 
 Record a lap twice: a pre-registration entry before any training compute is spent, and an
