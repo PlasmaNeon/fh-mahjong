@@ -1,73 +1,81 @@
 # internal/engine/
 
-> Game state machine engine and the RuleEngine interface contract.
+> The ruleset-agnostic game state machine and the `RuleEngine` contract.
 
-## Overview
+`Game` drives one match — wall, deal, turns, interrupt windows, round end, match end — and
+delegates every rule decision to the injected `RuleEngine`. Overview in
+[`docs/architecture.md`](../../docs/architecture.md).
 
-This package contains the ruleset-agnostic game driver (`Game` struct) and the interface that all ruleset plugins must implement (`RuleEngine`). The `Game` struct manages the full lifecycle of a single match: wall initialization, dealing, turn rotation, interrupt resolution, and round-end handling. It delegates all rule-specific logic (hand evaluation, scoring, valid actions) to the injected `RuleEngine`.
+## Key files
 
-## Key Files
+- **game.go** — `Game`:
+  - `NewGame(matchID, ruleset, MatchOptions)` — classic or Chongci; the prevailing wind is East
+    and never changes.
+  - `ProcessPlayerAction(seat, action)` — the single entry point for players and bots.
+    `handleActiveTurnAction` (discard, kan, flower, tsumo), `handleInterruptAction` (pon, chii,
+    ron, kan during `WAIT_DISCARDS`).
+  - `ResolveInterrupts()` — priority resolution once every eligible seat has responded or the
+    room's timer fires. After a pon/chii it refreshes the claimer's valid actions.
+  - `ExecuteSystemDraw()` / `ExecuteDeadWallDraw()` — wall draws. A normal draw clears all
+    kong/flower bonus flags.
+  - `SetWallSeed(seed)`, `SetNextDealer(seat)` — deterministic setup for RL, replay, and tests.
+  - `InterruptQueued(seat)` — read-only view of queued interrupt responses (RL wrappers).
+  - `finalizeRoundEnd()` / `startNextRound()` — payouts, Chongci dealer succession and bust
+    check, next hand (scores carry over).
+- **clone.go** — `CloneForBranch()`: an isolated copy for what-if rollouts; drops the recorder
+  and timers so a branch cannot touch replay logs or schedule work.
+- **redeal.go** — `RedealUnseen(actingSeat, seed)`: search determinization. Re-deals opponents'
+  concealed hands and the undrawn wall from the acting seat's unseen pool, keeps all public state
+  and wall geometry, clears the interrupt queue, and recomputes every non-acting seat's valid
+  actions against its new hand (see invariants). `RedealUnseenForReview` canonicalizes the unseen
+  pool by tile id first, so identical public states never depend on the true allocation.
+  `VisibleWildIndicator()` returns the public indicator.
+- **events.go** — the always-on per-round public event log (`PublicEvent`, `PublicEvents()`),
+  captured at the same call sites as the paipu recorder but never nil-guarded. Cleared at deal,
+  copied by `CloneForBranch`. `FaceIndex42` / `FaceIndex34` / `FaceIndex42FromID` are the single
+  definition of the 42-face space (man 0–8, pin 9–17, sou 18–26, jihai 27–33, flower 34–41);
+  `internal/rl` and `internal/review` wrap them. Tsumo, ron, and haitei refuse log no event.
+- **paipu.go** — paipu DTOs and `PaipuRecorder`:
+  - Records the canonical action stream per round, player labels (`Kind`, `Difficulty`,
+    `PolicyID`; absent in old paipu), and round results.
+  - **Paipu v2** (`PaipuVersion = 2`): `PaipuRound.Decisions` — one row per player decision
+    (legal catalog ids, chosen id, source, fallback reason, checkpoint identity), separate from
+    the pass-free `Actions` stream — and `PaipuMatchMeta` (status, placements, server commit,
+    mode, contract versions), stamped by `internal/api` at persist time. `RecordDecision` falls
+    back to the just-closed round when the recorded action itself ended the round.
+  - `ProtoEnumsRevision = 1` guards the raw enum ints embedded in paipu JSON; bump it if
+    `proto/game.proto` renumbers one.
+  - The engine stays provenance-blind: catalog encoding and source labels come from the caller.
+- **rule_engine.go** — `RuleEngine`: `GetInitialWall`, `EvaluateHand`, `CalculatePayouts`,
+  `GetValidActions`, `GetValidInterrupts`, `ResolveInterruptPriority`.
+- **mt19937.go** — Mersenne Twister wall shuffle for 108/136/144-tile walls, matching Tenhou's
+  exactly (`testdata/`). `SeedFromUint64()` expands a compact seed via SplitMix64.
 
-- **game.go** — `Game` struct: central state machine
-  - `NewGame(matchID, ruleset, MatchOptions)` — Constructor, injects a RuleEngine and optional match-mode config; sets `PrevailingWind` to East (1), which no hand changes
-  - `CloneForBranch()` — Isolated deterministic copy for RL what-if rollouts; drops recorder/timer so branch evaluation cannot mutate replay logs or schedule async work
-  - Optional `Recorder` hook captures paipu events at authoritative game-engine action points
-  - `SetWallSeed(seed)` — One-shot deterministic wall seed injection used by replay verification and the RL environment
-  - `InterruptQueued(seat)` — Read-only helper for RL wrappers to see which WAIT_DISCARDS responses have already been submitted
-  - `ProcessPlayerAction(seat, action)` — Main entry point from network layer
-  - `handleActiveTurnAction()` — Discard, Kan, Flower Reveal, Tsumo
-  - `handleInterruptAction()` — Pon, Chii, Ron during WAIT_DISCARDS
-  - `ResolveInterrupts()` — Priority resolution after timer/all responses. After Pon/Chii, calls `GetValidActions()` to populate valid actions for the claiming player
-  - `ExecuteSystemDraw()` / `ExecuteDeadWallDraw()` — Wall draws. `ExecuteSystemDraw` clears all kong/flower bonus flags at start to prevent stale flags
-  - **Wall-consumption invariant**: dead-wall (kong/flower) replacement draws descend from the back and, once the wangpai is exhausted, cross past `wangpaiBoundary` into the live wall. `ExecuteSystemDraw` MUST skip any live-wall index already taken by a dead-wall draw (`isTileConsumedByDeadWall`) — otherwise the same physical tile is dispensed twice, producing a phantom duplicate tile id in a hand (corrupts hand counts/scoring and yields duplicate legal actions). Regression-gated by `internal/rl/env_fuzz_test.go`
-  - Draw-time flower handling is enforced in the game loop: any non-wild flower drawn from the live wall, dead wall, or accepted haitei is auto-revealed immediately, even if multiple revealable flowers are present
-  - If a flower/kan supplementary dead-wall draw exhausts the wall or ends a Chongci match, keep the terminal phase; never restore `PHASE_PLAYER_TURN` with an empty valid-action set, including interrupt-Kan claims
-  - Claim-time flower handling matches draw-time behavior: after a Chii/Pon handoff, any non-wild flowers already in the claimer's concealed hand are auto-revealed before valid actions are sent
-  - `revealInitialFlowers(dealer)` — Auto-separates flower tiles from all players' hands after dealing. Loops through all 4 seats starting from dealer, moves flowers to `FlowerMelds`, draws replacements from dead wall. Called after `dealTiles()` and after dealer's 14th tile draw
-  - `startNextRound()` — Reset for next round (keeps scores)
-  - Kong/flower bonus flag lifecycle: `HasBloomingFlowerKong` set after flower reveal + dead wall draw; all flags cleared on next normal `ExecuteSystemDraw`
-  - `GameState` carries round dice details (`dice1`, `dice2`, `dice_sum`) and a live `wangpai_tiles_left` counter for frontend/debug visibility
-  - `PlayerState.LastDiscardFromDrawn`: public tsumogiri flag; true when the player's most recent discard was their just-drawn tile. Set in the discard handler; persists until their next discard (reset in `startNextRound`). It lives on the player, not on `ActiveDiscard`, because the common no-interrupt discard clears `ActiveDiscard` during the same turn-advance, before the state is broadcast
-  - Private fields: `wall`, `wallIndex`, `deadWallIndex`, `interruptQueue`, `interruptTimer`, `wallSeedOverride`
-  - `RedealUnseen(actingSeat, seed)` — search determinization: re-deals the 3 opponents' concealed hands + undrawn wall from the acting seat's unseen pool (seeded); visible state and wall geometry fixed; remaps opponents' `DrawnTileId` positionally and clears the interrupt queue (queued responses are hidden info). Also refreshes every non-acting seat's `ValidActions` against its new hand: at an open WAIT_DISCARDS window it recomputes interrupts via `Rules.GetValidInterrupts` (the exact `offerInterrupts` call), applying the same haitei Ron-only restriction via the shared `filterRonOnlyInterrupts` helper so a fork landing inside a haitei window never offers Chii/Pon/Kan; otherwise it clears them — stale interrupt options reference tiles the reshuffle moved, and serving one would corrupt the hand (phantom open meld appended without reducing the closed hand → duplicate tile ids). The refresh recomputes for EVERY non-acting seat regardless of whether its PRE-redeal `ValidActions` were empty: eligibility derives from the hidden hand, so gating on prior non-emptiness would leak the true hidden hands into which seats the rollout re-asks (a seat whose redealt hand newly gains a Ron/Pon/Kan MUST be admitted). A seat whose refreshed interrupts come back empty honestly drops out of the window. Guarded by `TestRedealUnseen_GainingEligibilityAdmitted`. The ACTIVE DISCARDER (`State.ActivePlayer`) is EXCLUDED from the open-window recompute and its `ValidActions` cleared even when its redealt hand matches its own discard: a player never interrupts its own discard (the live `offerInterrupts` always clears the discarder), and since `handleInterruptAction` counts every non-empty `ValidActions` toward window completeness, a phantom discarder interrupt would inflate the expected-response count into a window the live engine can never reach. This matters only when the search root ≠ discarder (the root is already skipped). Guarded by `TestRedealUnseen_DiscarderExcludedFromOpenWindow`. The acting seat's `ValidActions` are untouched (its hand did not move). Clone-only use (`CloneForBranch`).
+## Invariants
 
-- **events.go** — Always-on per-round public event log (`PublicEventType`, `PublicEvent`, `Game.PublicEvents()`), captured at the same call sites that feed the optional paipu `Recorder` but never nil-guarded — RL envs never attach a recorder but still need the public record. Cleared in `dealTiles` via `resetRoundEvents()` at round start, value-copied by `CloneForBranch`, left untouched by `RedealUnseen` (every logged entry is public information, so a determinized clone's log stays valid). `FaceIndex42()` / `FaceIndex34()` / `FaceIndex42FromID()` are the **single** definition of the 42-face tile space (man 0-8, pin 9-17, sou 18-26, jihai 27-33, flower 34-41), shared by the event codec, the RL action catalog and observation encoder, and post-game review. `internal/rl` and `internal/review` wrap them rather than redefining the table — do not re-inline the mapping; `internal/rl` renders the log observer-relative into `SeatObservation` (Spec B1). Tsumo/Ron/HaiteiRefuse deliberately produce no event. `RedealUnseen` erases non-root DRAW faces from the clone's log (search honesty — a redealt seat's own pre-redeal faces would be unmasked at encode time; root-invariance tested in internal/rl).
+- **Never import `internal/rules`.** Rules arrive through `RuleEngine` only.
+- `Game.State` (`*pb.GameState`) is mutated only here; the API layer serializes and broadcasts.
+- **Wall consumption.** Dead-wall replacement draws descend from the back and can cross into the
+  live wall; `ExecuteSystemDraw` must skip indices they consumed (`isTileConsumedByDeadWall`) or
+  a tile is dealt twice. Gated by `internal/rl/env_fuzz_test.go`.
+- **Flowers.** Non-wild flowers auto-reveal on every draw source (live wall, dead wall, accepted
+  haitei) and after a chii/pon handoff; wild flowers stay in hand. `revealInitialFlowers` runs
+  after the deal and after the dealer's 14th tile.
+- If a replacement draw exhausts the wall or ends a Chongci match, keep the terminal phase; never
+  return to `PLAYER_TURN` with no valid actions.
+- `PlayerState.LastDiscardFromDrawn` (public tsumogiri flag) lives on the player, not on
+  `ActiveDiscard`, because a no-interrupt discard clears `ActiveDiscard` before the broadcast.
+- **Redeal honesty.** `RedealUnseen` recomputes interrupts for every non-acting seat regardless
+  of its pre-redeal eligibility (gating on it would leak the true hands), excludes the active
+  discarder (a player never interrupts its own discard), applies the haitei ron-only filter, and
+  erases non-root draw faces from the clone's event log. Guarded by
+  `TestRedealUnseen_GainingEligibilityAdmitted` and `TestRedealUnseen_DiscarderExcludedFromOpenWindow`.
+- A naturally rolled dealer consumes one extra `GenU32()`; `SetNextDealer` skips it. Replays must
+  pick the same path or the shuffle desyncs.
 
-- **paipu.go** — Structured paipu recording support:
-  - Paipu JSON DTOs for players, rounds, actions, melds, and results
-  - `PaipuPlayer` carries seat-composition labels for dataset use: `Kind` ("human"/"bot"), `Difficulty` ("heuristic"/"rl"), `PolicyID` (RL serving checkpoint identity). All `omitempty` — absent in old paipu, readers must treat absence as unknown
-  - `TileFromId()` to map engine tile IDs back to suit/value pairs for replay export
-  - `PaipuRecorder` that tracks the canonical round flow directly from core engine events; `AddPlayerInfo()` records a fully-labelled seat entry, `AddPlayer()` remains for callers without composition info
-  - **Paipu v2** (`worklog/specs/2026-08-09-paipu-v2-provenance-design.md`) — `PaipuVersion = 2` (bump-guarded) adds two things on top of the v1 `Actions` replay stream:
-    - `PaipuRound.Decisions []PaipuDecision` — a per-round supervision trace, one row per player decision (`index`, `seat`, `chosenId`/`legalIds` as `internal/rl` catalog action IDs, `legalIdsError` when the snapshot failed, `source` `"human"|"remote"|"fallback"|"heuristic"`, `fallbackReason`, `checkpoint` `{name, step, sha256}` for remote decisions). It is separate from `Actions` (which stays canonical and pass-free) so declined-claim passes get recorded without polluting the replay stream. `RecordDecision(d)` appends to `currentRound`, or — when `currentRound` is already nil because this very action closed the round (a winning tsumo/ron, haitei accept, exhaustive-draw discard all run their round-end path, including `EndRound`, inside the same `ProcessPlayerAction` the caller is recording) — to the just-closed round at `Rounds[len(Rounds)-1]` instead (the "terminal-action rescue"). A no-op with zero rounds recorded.
-    - `PaipuMatchMeta` (via `SetMatchMeta`, idempotent) — v2 header fields stamped once at persist time by the caller (`internal/api`), not the engine: `status`/`completionReason`/`placements`/`serverCommit`/`matchMode`/`chongci`/`rulesetVersion`/`eventContractVersion`/`protoEnumsRevision`/`actionCatalogVersion`. All `omitempty`; absent (empty struct) on any v1 paipu.
-    - `ProtoEnumsRevision = 1` — guards the raw proto enum ints embedded in paipu JSON (`PaipuTile.Suit`); bump if `proto/game.proto` ever renumbers an enum a paipu embeds.
-    - The engine stays provenance-blind by design: `PaipuDecision`/`PaipuMatchMeta` are plain data types here, but catalog encoding (`rl.EncodeAction`/`rl.LegalActions`) and provenance labelling happen at the `internal/api` call site, which may import both `engine` and `rl`.
+## Test gotchas
 
-- **rule_engine.go** — `RuleEngine` interface:
-  - `GetInitialWall()` — Generate tile deck
-  - `EvaluateHand()` → (score, breakdown, canWin)
-  - `CalculatePayouts()` — Tsumo/Ron payment distribution
-  - `GetValidActions()` — Legal moves for active player
-  - `GetValidInterrupts()` — Legal steal actions for other players
-  - `ResolveInterruptPriority()` — Pick winner among competing claims
-
-- **mt19937.go** — Mersenne Twister PRNG for deterministic, reproducible wall shuffles (supports 108, 136, and 144 tile walls)
-  - `SeedFromUint64()` expands a compact uint64 seed into the full MT19937 state for RL/test callers, consuming both 32-bit halves from each SplitMix64 output
-- **game_test.go** — Unit tests for game loop phases
-
-## Subdirectories
-
-- **testdata/** — Tenhou shuffle fixtures for the MT19937 exact-match test
-
-## Architecture Notes
-
-- **CRITICAL**: `internal/engine` must NEVER import `internal/rules/`. The dependency flows one way: `internal/rules/` implements `engine.RuleEngine`.
-- `Game.State` is a `*pb.GameState` (Protobuf). All state mutations happen here; the API layer just serializes and broadcasts.
-- Paipu recording lives in `internal/engine/` so replay exports observe the same authoritative transitions the live engine uses.
-- The interrupt system uses a map queue + timer. The room layer starts the timer; `ResolveInterrupts()` can be called either when all responses arrive or when the timer fires.
-  - **Test gotcha**: `handleInterruptAction()` only auto-resolves once *every* seat with valid actions has responded. A unit test that submits a single claim and starts from a random deal can flake: another seat may coincidentally hold a valid interrupt (e.g. a pon) on the discarded tile, so the lone claim stays queued in `PHASE_WAIT_DISCARDS` and never resolves. Such tests must drive resolution explicitly — see `resolveLoneClaim()` in `game_test.go`, which calls `ResolveInterrupts()` when still waiting (modeling timer expiry with the submitter as sole claimant). For tests asserting exact post-draw board state (wall count, supplement tile), pin the deal with `SetWallSeed(SeedFromUint64(n))`.
-
-## Review sampling
-
-`RedealUnseenForReview` is a clone-only variant of `RedealUnseen`. It canonicalizes the unknown pool by tile ID before seeded sampling (so identical public states do not depend on true private allocation), keeps non-wild auto-revealed flowers out of concealed hands, preserves public/root information and wall geometry, and uses the existing queue/eligibility/history refresh. Live search's original sampling behavior stays in `RedealUnseen`. `VisibleWildIndicator` returns a copy of the public indicator for visibility accounting. `TestReviewRedealIndependentOfPrivateArrangement` guards this boundary.
+- `handleInterruptAction` auto-resolves only after every eligible seat responds. From a random
+  deal another seat may also hold a claim, so a lone test claim can stay queued; drive it with
+  `resolveLoneClaim()` in `game_test.go`.
+- Pin the deal with `SetWallSeed(SeedFromUint64(n))` when asserting exact board state.

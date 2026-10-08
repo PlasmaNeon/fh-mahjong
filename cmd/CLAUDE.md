@@ -1,18 +1,14 @@
 # cmd/
 
-> Executable entry points for the project's Go binaries and compilation targets.
+> Go entry points. Run each as a package (`go run ./cmd/<name>`); several are multi-file.
 
-## Overview
+| Directory | Binary |
+|---|---|
+| `server/` | Production HTTP + WebSocket server |
+| `play/` | Terminal match: you in seat 0, heuristic bots in seats 1–3 |
+| `wasm/` | WebAssembly build of the ruleset's valid-action query (not loaded by the frontend) |
+| `rlbridge/` | c-shared library exposing the RL environment, env pool, and search pool to Python |
+| `rlpaipu/` | Writes a deterministic heuristic paipu (with a v2 decision trace) for the replay viewer |
+| `rlsmoke/` | Plays a real match against a live server and verifies paipu v2 provenance |
 
-Contains `main.go` files for each build target. The Go module produces six binaries: a production HTTP server, an interactive terminal match, a WebAssembly ruleset module, a c-shared RL bridge for Python training, an RL paipu fixture exporter for replay visualization, and a paipu-v2 rollout-gate smoke driver.
-
-## Subdirectories
-
-- **server/** — Production HTTP server (Gin + WebSocket, connects to PostgreSQL)
-- **play/** — Interactive terminal match: seat 0 is you, seats 1-3 are the shared heuristic bot
-- **wasm/** — WebAssembly build (`GOOS=js GOARCH=wasm`) of the ruleset's valid-action query; not loaded by the frontend
-- **rlbridge/** — c-shared build target exposing protobuf-based RL environment functions to Python via `ctypes`
-- **rlsmoke/** — Paipu-v2 rollout-gate smoke driver against a LIVE server: plays a real match end-to-end over the real protocol, then verifies every provenance gate. Exit 0 = gate satisfied. See [rlsmoke/CLAUDE.md](rlsmoke/CLAUDE.md).
-- **rlpaipu/** — Debug CLI that plays a deterministic heuristic round offline and writes replay-viewer-compatible paipu JSON, including a paipu-v2 decision trace. See [rlpaipu/CLAUDE.md](rlpaipu/CLAUDE.md).
-
-Each subdirectory has its own `CLAUDE.md` with entry-point detail, flags, and gotchas.
+Each subdirectory's `CLAUDE.md` has flags and gotchas.

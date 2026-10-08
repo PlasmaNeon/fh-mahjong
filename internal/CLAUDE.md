@@ -1,23 +1,25 @@
 # internal/
 
-All Go library packages live here, enforcing Go's `internal/` visibility boundary (only importable by code rooted at `github.com/plasma/fh-mahjong`). Entry points (`cmd/`) import from here; nothing outside this module can.
+> All Go library packages (module-private: importable only from `github.com/plasma/fh-mahjong`).
 
-## Package Map
+| Package | Role |
+|---------|------|
+| `engine` | Game state machine (`Game`) and the `RuleEngine` interface; ruleset-agnostic |
+| `rules` | `FenghuaRuleset`: hand evaluation, scoring, legality |
+| `rules/shanten` | Route-by-route shanten and useful-tile analysis (rules, bot, RL observation, shanten API) |
+| `api` | Gin REST + WebSocket server: auth, rooms, matchmaking, bot seats, persistence, review API |
+| `storage` | GORM models (users, sessions, matches, paipu, reviews, imports, study jobs) and migrations |
+| `bot` | Heuristic policy, policy interfaces, shadow wrapper |
+| `bot/remote` | HTTP client that plays a seat through a Python policy server |
+| `rl` | RL environment, observation encoder, 204-action catalog, env and search pools |
+| `review` | Paipu → decisions → policy report and replay study |
+| `tiles` | Shared tile keys, 0–33 index, wild sets, clones |
 
-| Package | Import path | Description |
-|---------|-------------|-------------|
-| `engine` | `…/internal/engine` | Game state machine (`Game` struct) and `RuleEngine` interface. Ruleset-agnostic: must never import `internal/rules/`. |
-| `rules` | `…/internal/rules` | Fenghua (`FenghuaRuleset`) scoring and hand evaluation plugin. Implements `engine.RuleEngine`. |
-| `rules/shanten` | `…/internal/rules/shanten` | Shanten-number and tile-efficiency analysis used by the rules engine and bot. |
-| `api` | `…/internal/api` | Gin-based REST + gorilla/websocket server. Bridges HTTP/WS clients to `engine.Game` sessions. |
-| `storage` | `…/internal/storage` | GORM models (users, sessions, matches, paipu, reviews) and migrations. |
-| `bot` | `…/internal/bot` | Deterministic heuristic bot and the policy interfaces used by `cmd/play`, empty seats, and RL. |
-| `bot/remote` | `…/internal/bot/remote` | HTTP client wrapper that drives an external policy server (e.g. Python RL model) as a bot player. |
-| `rl` | `…/internal/rl` | Deterministic RL environment wrapper (`Env`), observation encoder, and fixed 204-action catalog. |
-| `review` | `…/internal/review` | Paipu → decision reconstruction → champion policy critique (post-game review); drives `engine.Game`, reuses `rl` encoders, never oracle obs. |
-| `tiles` | `…/internal/tiles` | Shared low-level tile helpers (keying, 0-33 index, wild sets, cloning). `engine` does not import it. |
+## Dependency rules
 
-## Invariants
+- `engine` never imports `rules`; `RuleEngine` is the only coupling.
+- `tiles` imports only `proto`; `engine` does not use it.
+- `rl` imports `bot`; `bot/remote` imports `rl` (hence the separate package).
+- `review` may import `engine`, `rules`, `rl`, and `tiles`; it never feeds oracle observations.
 
-- `internal/engine` **must not** import `internal/rules` — the `RuleEngine` interface is the only coupling point.
-- All packages here are module-private (`internal/`). External projects cannot import them.
+How the packages fit together: [`docs/architecture.md`](../docs/architecture.md).

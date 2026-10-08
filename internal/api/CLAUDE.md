@@ -1,221 +1,100 @@
 # internal/api/
 
-> REST API + WebSocket server — authentication, game rooms, matchmaking, and real-time state sync.
+> REST + WebSocket server: auth, rooms, matchmaking, automated seats, persistence, replay and
+> review APIs. All game mutations go through `engine.Game`.
 
-## Overview
+Overview and configuration table: [`docs/architecture.md`](../../docs/architecture.md). Review
+pipeline: [`docs/replay-review.md`](../../docs/replay-review.md).
 
-This package implements the network layer: HTTP routes via Gin, WebSocket connections via gorilla/websocket, database-backed cookie sessions, and the room/matchmaker orchestration that connects players to game instances. All game mutations are delegated to `engine.Game`.
+## Routes (`server.go`)
 
-## Key Files
+| Access | Routes |
+|---|---|
+| Public | `POST /auth/register`, `POST /auth/login`, `GET /config`, `POST /tools/calc`, `POST /tools/shanten`, `GET /replays/:matchId`, `GET /matches/:matchId/review` (cache read only), `GET /ws` |
+| Session | `GET`/`DELETE /auth/session` |
+| Admin | `POST /replays/:matchId` (needs `X-Admin-Secret` = `ADMIN_SECRET`; 403 when unset) |
+| Signed in (mutations need `X-CSRF-Token`) | `GET`/`PATCH /users/me`, `GET /users/me/replays`, `POST /matchmaking/join`/`leave`, `POST /rooms`, `GET /rooms/:id`, `POST /rooms/:id/{join,seat,start,mode}`, `POST /matches/:id/review`, `/replay-imports[...]`, `/matches/:id/study`, `/review-jobs/:id` |
 
-- **server.go** — Gin HTTP server setup and route registration:
-  - Public: `/api/v1/auth/register`, `/api/v1/auth/login`
-  - Session: `GET /api/v1/auth/session`, `DELETE /api/v1/auth/session`
-  - Public: `GET /api/v1/config` (capability flags, e.g. `rlAgentAvailable`), `POST /api/v1/tools/calc`, `POST /api/v1/tools/shanten`, `GET /api/v1/replays/:matchId`, `GET /api/v1/matches/:matchId/review` (pure cache lookup — never builds a report, never calls the policy server), `/api/v1/ws`
-  - `POST /api/v1/replays/:matchId` — admin paipu upload; requires `X-Admin-Secret` equal to `ADMIN_SECRET` (403 when unset)
-  - Protected routes (30-day session cookie required; mutations also require `X-CSRF-Token`):
-    - `GET /api/v1/users/me`; `PATCH /api/v1/users/me` — update unique username and/or email
-    - `POST /api/v1/matchmaking/join` / `leave` — public queue
-    - `GET /api/v1/users/me/replays` — cursor-paginated completed paipu owned by the current account; malformed, aborted, active, and unowned matches are excluded
-    - `POST /api/v1/rooms` — explicitly create a private table and seat its host
-    - `/api/v1/rooms/:roomId` (GET) — read current seat config.
-    - `/api/v1/rooms/:roomId/join` (POST) — claim a seat.
-    - `/api/v1/rooms/:roomId/seat` (POST, host-only) — assign or clear an AI seat.
-    - `/api/v1/rooms/:roomId/start` (POST, host-only) — launch the match.
-    - `/api/v1/rooms/:roomId/mode` (POST, host-only) — set classic/chongci match mode. Private tables **default to chongci** (`newConfiguringTable`, shared `defaultChongciConfig`: 2000 start / bust at 0 / 50-hand cap). Both modes must reach `PHASE_MATCH_END` to persist as `completed` and appear under `/users/me/replays`, so `matchOptionsForPrivateTable` maps **classic → a single-hand match** (`classicSingleHandConfig`: start 0 / no bust / `MaxHands` 1 — "a 1-hand chongci") and **chongci → its host config**. The engine keeps `MatchMode == CLASSIC` for classic tables (random dealer, chongci UI hidden), but the cap config makes it terminate after one hand. (Uncapped classic — the public `fenghua` queue, nil `ChongciConfig` — is still endless and does not list.)
-    - `POST /api/v1/matches/:matchId/review` (host of a match, or anyone with a valid session — no per-match ownership check) — build (or serve the cached) review report; see review.go below. It requires a session because each build (especially `?force=1`) drives authenticated `/evaluate` load against the policy server shared with live RL agent traffic.
-  - Optional SPA/static serving from `web/dist` for single-service production deploys
-  - Production SPA asset mounts use explicit `GET`/`HEAD` file handlers for `/assets` and `/Regular_shortnames` so built JS/CSS/SVG requests resolve to real files instead of falling through to `index.html`
-  - Trusted proxy configuration via `TRUSTED_PROXIES` (defaults to trusting none)
-  - CORS configuration
+All routes sit under `/api/v1`. With `web/dist/index.html` present, unmatched non-API `GET`/`HEAD`
+routes serve the SPA shell; asset paths (`/assets/`, `/Regular_shortnames/`, static extensions)
+never fall back to it and return the file or 404.
 
-- **auth.go** — Username/email + password auth backed by opaque revocable sessions. Login/register/session return `{user, csrfToken}` and set an HttpOnly cookie; no credential is serialized in JSON or stored by frontend JavaScript
-- **cors.go** — Exact `FRONTEND_ORIGINS` allowlist, credentialed CORS, and the shared HTTP/WebSocket origin policy
+## Key files
 
-- **ws.go** — Cookie-authenticated, origin-checked WebSocket upgrade and client management:
-  - `Hub` struct — Manages all active WebSocket clients
-  - `HandleWebSocket()` — Upgrades HTTP → WS, creates `Client`
-  - Binary Protobuf message protocol
+- **auth.go**, **middleware.go**, **cors.go** — username/email + bcrypt login, opaque 30-day
+  HttpOnly session cookie (only its SHA-256 stored), constant-time CSRF check, exact
+  `FRONTEND_ORIGINS` allowlist shared by HTTP and WebSocket.
+- **ws.go**, **ws_client.go** — cookie-authenticated, origin-checked upgrade; the `Hub` owns
+  `UserRooms`. `WritePump` sends one frame per message (text and binary never batched) with a
+  fresh deadline each.
+- **room.go** — `Room`: four seats and one `engine.Game` on a single goroutine
+  (`ActionQueue` → `ProcessPlayerAction` → `BroadcastState`), the interrupt timer, per-seat
+  redaction, reconnect grace, and `persistMatch`.
+- **room_bot.go** — automated seats: any seat without a connected human plays through its
+  policy (seat override → room default → heuristic), with a human-paced delay and a circuit
+  breaker. Prefers `bot.ContextPolicy` and builds a `DecisionContext` with a copy of the raw
+  public event log.
+- **room_decisions.go** — the paipu v2 decision trace. `snapshotDecision` captures the pre-action
+  legal catalog ids and chosen id; `recordDecision` appends the row after the action succeeds;
+  `chooseSeatAction` returns the policy's provenance. Every explicit action and pass is traced;
+  `READY` acks and timeout auto-resolutions are not.
+- **matchmaker.go**, **queue.go**, **private_tables.go** — in-process queues (`fenghua`,
+  `chongci-fh`; idempotent join, `409 match_forming` on a late leave) and the private-table
+  lifecycle (create → join/seat → mode → start → active). Private tables default to Chongci
+  (2000 / bust 0 / 50 hands); classic private tables run as a one-hand match so they reach
+  `MATCH_END` and list in history. An RL seat triggers endpoint warmup before start. An active
+  table maps `tableId → matchId + participants`, so participants rejoin and outsiders get 409.
+  WebSocket `lobby_update` envelopes carry the full `PrivateTableState` JSON under `room`.
+- **paipu.go**, **replay_history.go** — paipu read path (`loadPaipuJSON`: in-memory store →
+  `paipu_records` → `matches.paipu_json` → checked-in fixtures) and the cursor-paginated account
+  replay list (completed, owned matches only).
+- **review.go**, **review_ratelimit.go** — policy report build/cache (see below).
+- **replay_imports.go**, **replay_study.go** — private paipu imports (≤ 10 MiB, deduplicated per
+  account) and resumable study jobs (30-minute budget, 90-second renewable lease, cancel/resume;
+  each attempt has its own worker id so a cancelled worker cannot overwrite a resumed one).
+- **calc.go**, **shanten.go** — stateless calculator endpoints, isolated from rooms so rules bugs
+  reproduce without a match.
+- **buildinfo.go** — `ServerCommit`, stamped via `-ldflags` from the Dockerfile's `GIT_COMMIT`
+  build arg (Zeabur does not pass it, so production paipu record `unknown`).
+- **response.go** — `respondError` / `abortError`, the single `{"error": msg}` shape.
 
-- **room.go** — Single match room orchestration:
-  - `Room` struct — 4 `Client` seats + 1 `engine.Game` engine
-  - `BotPolicy` — room-wide default automated-seat policy. Injected via `WithBotPolicy()` for server-wide swaps (e.g. remote AI for all seats).
-  - `WithBotPolicy()` — room option for injecting a non-default automated-seat policy while keeping the heuristic default
-  - `SeatPolicies` — per-seat override map. Populated by the matchmaker from the host's `PrivateTable` seat config; falls through to `BotPolicy` (then heuristic) when a seat is missing.
-  - `SeatInfos` — per-seat composition map (`SeatInfo{Kind, Name, UserID, Difficulty, PolicyID}`) captured by the matchmaker at match start. Drives paipu player labelling (`registerPaipuPlayers`): human seats are attributed via `SeatInfos`/`SeatOwners` (authoritative for the whole match — a reserved-but-offline human is still recorded as its owner, never as a bot), bot seats record their true difficulty ("heuristic"/"rl") and, for RL, the serving checkpoint identity (`Matchmaker.RLPolicyIdentity`, from the policy `/healthz`).
-  - Initializes `engine.PaipuRecorder` and registers all 4 seats at room start so paipu exports always have complete, labelled player metadata
-  - `closeSeatPolicies()` — called from `finishShutdown` before the matchmaker regains control: closes every distinct `closeableBotPolicy` (currently only `bot.ShadowPolicy`, via its `Close()`) across `SeatPolicies` + the room-wide `BotPolicy`, pointer-deduped so a policy installed both as a seat override and the room default is only closed once. Each room's `ShadowPolicy` instances are unique to that room (constructed fresh per RL seat in `Matchmaker.StartPrivateTable`), so this is the sole owner responsible for stopping their worker goroutines; the wrapped shadow/primary policies themselves are never touched (they may be long-lived and shared across rooms).
-  - `ActionQueue` channel — Serializes player actions
-  - `Run()` — Main goroutine: processes actions, broadcasts state, manages interrupt timer
-  - `BroadcastState()` — Serializes `GameState` Protobuf to all connected players
-  - Replay recording (appends state snapshots to binary blob)
-  - `persistMatch()` stamps the paipu v2 header via `Recorder.SetMatchMeta` before
-    marshaling: `status`/`completionReason` (`match_end` at natural
-    `PHASE_MATCH_END`; otherwise `aborted` with `drained` (server-drain, see the
-    `drained` atomic.Bool set by `markDrained()`) or `abandoned`), `placements`,
-    `serverCommit` (`ServerCommit`, see `buildinfo.go`), `matchMode`/`chongci`,
-    `rulesetVersion: "fenghua-v1"` (hardcoded — bump by hand if the ruleset
-    changes shape), and the version trio `eventContractVersion`
-    (`rl.EventContractV1`) / `protoEnumsRevision` (`engine.ProtoEnumsRevision`) /
-    `actionCatalogVersion` (`rl.ActionCatalogVersion`). Called once per
-    `persistMatch` run (idempotent on `SetMatchMeta`, so a snapshot-then-Finalize
-    double-persist just overwrites the same fields).
-- **room_bot.go** — Automated-seat ("bot") driving for a `Room`:
-  - `advanceAutomatedSeats()` / `advanceAutomatedSeatsN()` — Play through missing-seat turns, interrupt responses, and round-end `READY` actions, with a circuit-breaker (`maxAutomatedSeatIterations`) to avoid runaway automation loops
-  - `botWorkPending()` / `maybeScheduleBotTick()` — Decide when a paced bot step is due and arm a single delayed tick, keeping the room loop responsive to reconnects
-  - `isAutomatedSeat()`, `sleepBotThink()`, `policyForSeat()` — seat automation predicate, human-pace delay, and the per-seat → room-default → heuristic policy fallback (`fallbackHeuristicPolicy`)
-  - Every automated-seat call site type-asserts the resolved policy for `bot.ContextPolicy` first (`ChooseActionCtx`), falling back to the legacy `bot.Policy.ChooseAction` only when it isn't implemented. `buildDecisionContext(seat)` (room-lock held) snapshots the atomic decision: `r.Engine.State`, the seat, a room-owned monotonic `policyDecisionIndex` counter, and a **copy** of `r.Engine.PublicEvents()` (raw, unwindowed — each policy applies its own declared event window when it encodes for `/act`, per the DecisionContext design in `internal/bot`)
+## Invariants
 
-- **cmd/server/main.go (consumer, not in this package)** — the `RL_AGENT_POLICY_URL`/`RL_AGENT_EVENT_WINDOW` family: `RL_AGENT_SHADOW_POLICY_URL` + `RL_AGENT_SHADOW_EVENT_WINDOW` (default 128, capped at `rl.MaxEventHistoryWindow`) wrap the resolved RL primary in a `bot.ShadowPolicy` per RL seat; see `internal/bot/CLAUDE.md` for the wrapper itself.
+- **Redaction fails closed.** `redactedStateForSeat` hides other seats' concealed tiles behind
+  fake ids (≥ 1000, `SUIT_UNKNOWN`) re-randomized per recipient per broadcast, drops their
+  `valid_actions` and `shanten`, and clears `wall_seed`. Hands reveal at `ROUND_END`/`MATCH_END`.
+  Discards keep real ids. Only `MAHJONG_DEV_REVEAL_HANDS=1` (`make dev`) disables it — never in a
+  container or deployment.
+- **Persistence.** `persistMatch` runs once at room shutdown with retries: status `completed` at
+  `MATCH_END`, otherwise `aborted` (`drained` or `abandoned`), the in-progress hand kept via
+  `Snapshot`. It stamps the paipu v2 header, reconciles each RL seat's label with the checkpoints
+  that actually served it (`reconcileRLPolicyIDs`), and writes `MatchPlayer` rows. SIGTERM drains
+  active rooms (`DrainActiveRooms`); new starts during a drain get 503.
+- **Seats.** Close code `4000` releases a human seat immediately; an ordinary disconnect keeps it
+  for the grace period. When the last human leaves, the room shuts down instead of playing on
+  bot-only. Rooms send `UnbindRoom` on shutdown so the Hub never rejoins a dead room.
+- **RL warmup gate.** `StartPrivateTable` warms every configured policy endpoint (25 s budget)
+  with the table lock released, then re-validates the seat config. Warmup failure → 503 (table
+  stays configuring); a config change meanwhile → 409. The 503 body never names the endpoint.
+- **Review cache.** `POST /matches/:id/review` resolves the served checkpoint sha from `/healthz`
+  and reads the `(match, sha)` row; a miss builds and stores under that sha; an unknown sha falls
+  back to the newest row. `?force=1` always rebuilds. Builds are single-flighted per match and
+  limited to two at once. Status codes: 503 no `POLICY_SERVER_URL`, 404 no paipu, 422
+  unreviewable paipu, 502 policy-server failure (including a 403 because `POLICY_SERVER_TOKEN`
+  does not match the server's `FH_MJ_EVALUATE_TOKEN`).
+- **Review event window.** `REVIEW_EVENT_WINDOW` wins; otherwise `RL_AGENT_EVENT_WINDOW` is
+  inherited only when `POLICY_SERVER_URL` names the same service as the RL endpoint. An invalid
+  value means 0, never a clamp. The encoder and the client must use the same window.
+- **Training reads.** Any future training-data extractor must read server-recorded
+  `matches.paipu_json` from Postgres directly — never `loadPaipuJSON`, which an admin upload can
+  override.
+- The interrupt timer is armed at 1 hour (disabled for UI testing); its goroutine calls
+  `ResolveInterrupts()` directly, outside the room loop.
+- Use the shared `tiles` package for face keys, indices, and clones.
 
-- **room_decisions.go** — Paipu v2 supervision-trace capture (spec:
-  `worklog/specs/2026-08-09-paipu-v2-provenance-design.md` §2-3). This
-  is the single choke point where every explicit decision passes AND
-  provenance is known; the engine (`internal/engine/paipu.go`) stays
-  provenance-blind and just stores the rows.
-  - `snapshotDecision(seat, action)` — called BEFORE `Engine.ProcessPlayerAction`:
-    enumerates the PRE-action legal catalog IDs (`rl.LegalActions`) and encodes
-    the chosen action's catalog id (`rl.EncodeAction`); either failing sets
-    `snapErr` (never blocks play, just marks `legalIdsError` on the row).
-  - `recordDecision(seat, snap, prov)` — called AFTER the action succeeds;
-    builds an `engine.PaipuDecision` and appends it via `Engine.Recorder.RecordDecision`.
-  - `chooseSeatAction(seat)` — asks the seat's policy for an action, preferring
-    `bot.ProvenanceContextPolicy` > `bot.ContextPolicy` > legacy `bot.Policy`,
-    and returns the decision's `bot.DecisionProvenance` alongside it
-    (`humanProvenance()`/`heuristicProvenance()` for the fixed non-remote labels).
-  - **Capture rules**: every explicit player action (discard, claim, win,
-    flower choice, haitei accept/refuse) and every explicit/inferred pass is
-    traced, at both `room.go`'s human action path (`traced := ... != ACTION_READY`)
-    and `room_bot.go`'s automated-seat loop. `ACTION_READY` acks (round-flow
-    control, not gameplay) and timeout-driven auto-resolutions are **excluded** —
-    they are forced, not decisions.
-- **paipu.go** — Read-only paipu API:
-  - `handleGetPaipu()` — Loads persisted paipu JSON for a completed match and returns it as raw JSON
-  - Local-dev fallback: serves checked-in `testdata/paipu/<matchId>.json` fixtures when no in-memory/DB record exists, which keeps replay pages usable without a populated database
-  - Only queries the legacy `matches` table for canonical UUID match IDs; per-hand IDs like `match-1` skip the UUID-only lookup to avoid noisy Postgres cast errors
-- **replay_history.go** — Account-owned replay index:
-  - `GET /api/v1/users/me/replays?cursor=&limit=` requires the session cookie, defaults to 20 rows, caps at 50, and orders by `(end_time, match_id)` descending
-  - Cursors are opaque base64url values containing the last completion time and match ID, so equal timestamps paginate without duplicates
-  - Summaries combine relational ownership/result fields from `MatchPlayer` with historical player names and round counts from validated `PaipuJSON`; public `GET /replays/:matchId` remains unchanged
+## Tests
 
-- **review.go** — Post-game review report API, cached via `storage.MatchReview`:
-  - `(*Server) loadPaipuJSON(matchID) (string, bool)` — shared paipu source chain extracted from `paipu.go` (in-memory store → `paipu_records` → legacy `Match.PaipuJSON` UUID-guarded lookup → checked-in fixtures), reused by both `handleGetPaipu` and the review handlers so behavior stays identical between the two APIs.
-  - `GET /api/v1/matches/:matchId/review` — cache-only lookup: DB nil or no cached row → **404**; otherwise **200** with the newest cached report's raw JSON (`c.Data`, `application/json`).
-  - `POST /api/v1/matches/:matchId/review` — build-or-cached:
-    - `POLICY_SERVER_URL` env var unset → **503** `{"error":"reviewer unavailable"}` (no reviewer configured; checked before any paipu lookup).
-    - No paipu found for `matchId` (via `loadPaipuJSON`) → **404**.
-    - Paipu JSON fails to unmarshal, or `review.BuildReport` fails with `errors.Is(err, review.ErrUnreviewable)` (decision-reconstruction/extraction failure) → **422** `{"error":"unreviewable paipu: ..."}`.
-    - Policy server call itself fails (network error, non-2xx, etc., NOT `ErrUnreviewable`) → **502**.
-    - Otherwise **200** with the report JSON (built fresh or served from cache).
-  - **Cache policy**: with a DB present, an unforced POST first resolves the CURRENTLY-SERVED checkpoint via `HTTPPolicyClient.CurrentCheckpointSha256()` (GET `/healthz`, in internal/review/policy_client.go). When that sha is known, the lookup is an exact `(matchID, checkpoint_id=sha)` row: a hit serves it as-is (even if a different checkpoint was reviewed for this match more recently — a rollback re-serves the old champion's own row without rebuilding); a miss builds fresh, recording the new row under that sha. When the sha can't be resolved (healthz unreachable, or a policy server that does not report `checkpoint_sha256`), this falls back to the newest cached `MatchReview` row by `created_at` — a stale row beats erroring a read-mostly endpoint over a healthz hiccup; a build that's actually needed still hits the same unreachable server and 502s. `?force=1` always builds fresh regardless. A fresh build upserts on `(MatchID, CheckpointID=reviewCacheCheckpointID(report))` — the report's own `CheckpointSha256` when known, else `CheckpointPath`: same champion re-reviewing overwrites its own row in place; a new champion (different `CheckpointID`) adds a new row so old champions' reports survive until pruned. DB nil (dev mode) → every POST builds fresh and nothing is cached; GET always 404s. `storage.MatchReview` has no `UpdatedAt` field, so a newest-row fallback hit refreshes no timestamp.
-  - **Concurrency**: every actual build (forced, or a cache miss) runs through `Server.reviewBuildGroup`, an `x/sync/singleflight.Group` keyed on `matchID` — concurrent requests for the SAME match id share one in-flight build and its result instead of each firing their own policy-server batch. `buildReviewOutcome` additionally acquires `Server.reviewBuildSem`, a server-wide semaphore of size `reviewBuildConcurrencyLimit` (2), so even distinct match ids can't stack up unbounded concurrent builds against the policy server and starve live `/act` traffic.
-  - `reviewEventWindow(policyURL)` resolves the `event_window` of the checkpoint served at `POLICY_SERVER_URL` (passed in as `policyURL`). **`REVIEW_EVENT_WINDOW`, not `RL_AGENT_EVENT_WINDOW`, is the env var that governs this** — `POLICY_SERVER_URL` may be a genuinely different server/checkpoint than the one `RL_AGENT_POLICY_URL`/`AI_BOT_POLICY_URL`/`RL_AGENT_EVENT_WINDOW` describe in `cmd/server/main.go`, and blindly inheriting `RL_AGENT_EVENT_WINDOW` would silently mis-speak review's own wire contract whenever the two diverge. Resolution order: (1) `REVIEW_EVENT_WINDOW` set → always wins, parsed via `parseReviewEventWindowEnv` (unset/empty → fallback below; unparseable or `> rl.MaxEventHistoryWindow` → rejected outright to 0, never clamped, never falls through to (2)); (2) `REVIEW_EVENT_WINDOW` unset → inherit `RL_AGENT_EVENT_WINDOW` ONLY when `policyURL` is empty, or names the same service (`remote.SameServiceEndpoint`) as the resolved RL endpoint (`remote.EffectiveRLEndpointURLFromEnv`: `RL_AGENT_POLICY_URL`, else `AI_BOT_POLICY_URL`, else the local default); otherwise logs the mismatch and defaults to 0. The resolved value is threaded into both `review.NewHTTPPolicyClientWithToken(policyURL, eventWindow, policyToken)` and `review.BuildReport(&paipu, client, eventWindow)` — they must always agree, since one encodes the observations and the other enriches the `/evaluate` payload from them.
-  - **`POLICY_SERVER_TOKEN`**: read directly in `handlePostReview` alongside `POLICY_SERVER_URL` and passed to `review.NewHTTPPolicyClientWithToken` as the third argument. `serve_policy.py`'s `/evaluate` is disabled entirely (403) unless launched with `--evaluate-token`/`FH_MJ_EVALUATE_TOKEN`, so this env var must be set to the SAME value on the backend or every review request gets a 403 from the policy server — surfaced here as the existing **502** `policy server evaluation failed` path (not a new status code; the 403's detail is logged server-side via the same `log.Printf`, never returned to the caller). Unset here (empty string) attaches no `Authorization` header at all (`HTTPPolicyClient`'s zero-value token behavior) — only viable against a policy server that likewise has no evaluate token configured.
-  - See `internal/review/` for `BuildReport`/`ExtractDecisions`/`HTTPPolicyClient` and `internal/storage/models.go` for the `MatchReview` model.
-
-- **queue.go** — `InMemoryQueue`, the mutex-guarded in-process FIFO the matchmaker holds waiting players in: `Push`/`PushUnique`/`Items`/`Len`/`PopN`. There is no Redis; matchmaking is single-process by design.
-- **ws_client.go** — Individual player WebSocket connection:
-  - `Client` struct — UserID, Send channel, WebSocket conn
-  - `ReadPump()` / `WritePump()` — Goroutine message loops; queued JSON and protobuf payloads are written as separate text/binary frames with a fresh deadline per frame
-
-- **matchmaker.go** — Player queue and pairing:
-  - `Matchmaker` struct — Queue of waiting clients
-  - Matchmaking joins are idempotent per user/ruleset. `POST /api/v1/matchmaking/leave` atomically removes a waiting user and returns `409 match_forming` when the watcher already claimed the entry.
-  - Groups 4 players into a `Room`
-  - `BotPolicyFactory` creates one automated-seat policy per new room; the server uses this to enable remote AI bots without sharing policy state across matches
-  - Tracks `configuringTables` and exposes separate `CreatePrivateTable`, `JoinPrivateTable`, `MutatePrivateTable`, and `StartPrivateTable` operations. Join never creates missing state
-  - Tracks active private tables by `tableId` so the same `/room/:roomId` link cannot accidentally start a second game while the first one is still running
-  - Lets returning players from the original 4 receive an `"active"` private-table response with the current `matchId` instead of being re-queued
-  - **RL warmup admission gate** — `WarmRLEndpoints func(ctx) error` (wired by `cmd/server` to a `remote.WarmupManager`) is invoked from `StartPrivateTable` before any seat policy or Room is constructed, but ONLY for tables that seat at least one `DIFFICULTY_RL` bot. It blocks up to `rlWarmupBudget` (25s, covering primary + shadow) until every configured policy endpoint has taken a real forward pass. A warmup error FAILS the start with `ErrRLWarmupFailed` (handler → `503`, table stays `configuring` so the host can simply retry) — an RL room must never silently degrade to the heuristic because the model server was cold. Tables with no RL seat never call the hook at all.
-    - **Lock discipline (load-bearing)** — the warm runs with `table.mu` RELEASED: `StartPrivateTable` validates cheaply under the lock (`validateStartLocked` + seat signature), unlocks, warms, then re-acquires and RE-VALIDATES. Holding the lock across a ~25s warm would block that table's join/seat/state handlers and serialize repeated Start clicks. If the table was reconfigured meanwhile, the seat-signature check fails the start with `ErrPrivateTableChangedDuringStart` (handler → `409`, retryable).
-    - **Sanitized 503** — the wrapped warmup detail can name the internal policy endpoint, so `handlePrivateTableStart` responds with the `ErrRLWarmupFailed` sentinel text only; the full error is logged server-side by `warmRLEndpoints`.
-    - Env: `RL_AGENT_SHADOW_POLICY_TOKEN` (`cmd/server`) carries the candidate service's `FH_MJ_EVALUATE_TOKEN`, which token-gates its `/warmup`; `RL_AGENT_WARMUP_TTL` re-warms after the configured interval (**default 15m**, `0` = warm once per process).
-
-- **middleware.go** — Session-cookie lookup, expiry/revocation checks, current-user resolution, and constant-time CSRF validation
-
-- **buildinfo.go** — `ServerCommit` (default `"unknown"`), stamped at build
-  time via `-ldflags "-X .../internal/api.ServerCommit=$(git rev-parse --short HEAD)"`;
-  read into every persisted paipu's v2 `serverCommit` field (`room.go`'s
-  `persistMatch`). The repo's `Dockerfile` accepts a `GIT_COMMIT` build ARG and
-  passes it through this ldflag; **Zeabur's build does not currently supply
-  `GIT_COMMIT`**, so production paipu show `serverCommit: "unknown"` until the
-  deploy config is updated to pass it.
-
-- **response.go** — `respondError(c, status, msg)` / `abortError(c, status, msg)` — the single point for the API's `{"error": msg}` response shape. Handlers use `respondError` (`c.JSON`); middleware uses `abortError` (`c.AbortWithStatusJSON`, short-circuits the chain). Responses that carry extra keys beyond `error` stay inline.
-
-- **calc.go** — Hand evaluation API endpoint (stateless scoring calculator):
-  - Accepts structured calculator payloads: closed hand, win tile, single wild tile type, open melds, flower melds, winds, tsumo/ron, and kong bonus flags
-  - Open meld rows can carry per-kan kong flags; repeated flag selections across multiple kan melds are counted and stacked in the calculator response
-  - Validates meld shapes, hand size, tile copy limits, and wind ranges before scoring
-  - Translates request data into proto `GameState` / `PlayerState` / `Meld` values with unique tile IDs
-  - Returns `canWin`, total score, score breakdown, and a normalized debug summary for the frontend
-
-- **calc_test.go** — Calculator API coverage:
-  - Request validation failures
-  - Tsumo / Ron calculator responses
-  - Wild tile translation and scoring
-  - Open meld called-tile preservation
-  - Flower meld and kong-flag propagation into the evaluation state
-
-- **room_bot_test.go** — Automated-seat room coverage:
-  - Missing seats advance through legal bot actions
-  - `NewRoom()` initializes paipu recording for match replay export
-  - Round-end automation marks bot seats ready and can advance all-bot tables into the next round
-  - Paipu player registration includes placeholder bot seats alongside connected humans
-  - `room_remote_test.go` contains a skipped-by-default live remote-policy integration test; set `FH_MAHJONG_REMOTE_POLICY_TEST_URL=http://127.0.0.1:8765/act` when a Python policy server is running
-
-## Architecture Notes
-
-- All game actions flow: Client → WebSocket → Room.ActionQueue → engine.Game.ProcessPlayerAction() → BroadcastState()
-- The room processes actions sequentially via a single goroutine (no mutex needed for game state).
-- The Hub exclusively owns `UserRooms`. Rooms send `UnbindRoom` when their event loop shuts down so later WebSocket connections do not attempt to rejoin a dead room; cleanup removes only entries still pointing at that exact room.
-- Seats with no connected `Room.Seats` entry are treated as automated seats and act through the same authoritative engine path instead of being hard-coded to `PASS`.
-- Replay persistence has three outputs: the binary protobuf replay blob (`ReplayURL`), the structured paipu JSON (`PaipuJSON`), and relational `MatchPlayer` rows (seat labels + final score + placement, written by `persistMatchPlayers`). `persistMatch` runs once on room shutdown (with bounded retries for transient DB failures): status is `completed` at natural `PHASE_MATCH_END`, `aborted` otherwise — the in-progress hand is kept via `PaipuRecorder.Snapshot` (nil result). Before writing, `reconcileRLPolicyIDs` replaces each RL seat's match-start policy label with the checkpoints that actually served its /act responses and records remote/fallback/automated decision counts. An explicit table exit uses WebSocket close code `4000` and releases that human seat immediately; an ordinary disconnect retains its seat for the reconnect grace period. Once the final human seat is released, the room shuts down instead of allowing a bot-only match to continue. `Room.Done` is closed after persistence; `Matchmaker.DrainActiveRooms(timeout)` uses it on SIGINT/SIGTERM (cmd/server) so a redeploy persists in-flight matches instead of orphaning `in_progress` rows; the drain flips a `draining` flag atomic with room registration (`registerActiveRoom` refuses admission and the refused start deletes its Match row — `StartPrivateTable` returns 503).
-- The interrupt timer runs in a separate goroutine and calls `ResolveInterrupts()` directly — potential race condition to be aware of.
-- State broadcast is per-player redacted **by default (fail closed)** via `redactedStateForSeat`. Redaction is on for every client unless an operator explicitly sets `MAHJONG_DEV_REVEAL_HANDS=1` (`revealAllHands`), the local debug god-view that sends the raw master with every hand visible — never set it in a deployed environment. There is no deploy-specific opt-in; a missing/misconfigured env var stays redacted. The god-view is reached ONLY by running the backend with the flag explicitly — use `make dev` (go run). Never set it in a container/compose config: the docker-compose `server` service runs the production Dockerfile image and intentionally leaves redaction on, and Zeabur builds via the Dockerfile, which never sets it. For every *other* seat the closed hand + drawn tile are obfuscated (real id → fake id ≥ 1000, suit `SUIT_UNKNOWN`, so the frontend renders tile backs), `shanten` is zeroed, and `valid_actions` is dropped (its meld tiles would expose the concealed tiles backing a pon/chii/kan). The top-level `wall_seed` is cleared for everyone (it deterministically reconstructs the entire deal). Once a round/match ends (`PHASE_ROUND_END`/`PHASE_MATCH_END`, see `handsRevealed`) opponents' hands are revealed (`concealHands=false`) so players see the result.
-- The obfuscation map is re-randomized **per recipient per broadcast** (`newTileObfuscation`, generated inside `redactedStateForSeat`), not a per-match/per-deal map. No fake id persists across broadcasts, which defeats (1) cross-turn tracking of a concealed tile by its stable fake id and (2) de-anonymizing the map by correlating a revealed discard with the fake id that left an opponent's hand. Opponent hands are anonymous backs, so the frontend keys them by hand slot, not by the volatile fake id (see `web/src/table/seat/ClosedHand.tsx`).
-- Opponent **discards keep their real ids and faces** (public the moment made). Per-broadcast rotation means a real discard id can never be correlated to a concealed fake id (real < 144, fake ≥ 1000), so discards are not obfuscated. The client animates an opponent discard from a random hand slot (tedashi) or the drawn slot (tsumogiri) using the public `last_discard_from_drawn` flag — decoupled from real tile position — rather than tracking the discard back to a hand tile by id.
-- Private tables are a two-stage concept: `tableId` is the shareable waiting-room key, and once 4 players are ready the server records an active `tableId -> matchId + participant set` mapping so reconnects can rejoin the live room while non-participants are rejected.
-- WS `lobby_update` envelopes for rooms carry the full `PrivateTableState` as JSON under a `room` key (the waiting-room id), so the waiting room renders seat assignments directly from each broadcast.
-- `/api/v1/tools/calc` is intentionally isolated from room/game orchestration so rules bugs can be reproduced without creating a live match.
-- When `web/dist/index.html` exists, unmatched non-API `GET`/`HEAD` routes fall back to the frontend SPA shell so routes like `/tools/calc` and `/room/new` work behind the Go server.
-- Asset-like paths (`/assets/...`, `/Regular_shortnames/...`, and common static-file extensions) must never use the SPA fallback; they return the real file or `404`.
-- Tile-type keys, the 0-33 index, and proto Tile/Action deep-clones come from the shared `tiles` package (`github.com/plasma/fh-mahjong/internal/tiles`) — do not re-inline `suit*100+value` or re-add local `cloneTile`/`cloneAction`.
-- **Trusted read path for training (spec §9).** `loadPaipuJSON`'s fallback
-  chain (in-memory store → `paipu_records` → legacy `Match.PaipuJSON` →
-  checked-in fixtures) exists to serve `handleGetPaipu`/the review API to
-  players and is reachable via `handleUploadPaipu`, which is **admin-writable**
-  and, by construction, outranks the DB on read (the in-memory/`paipu_records`
-  entries are checked first). Any future training-data extraction pipeline
-  MUST read only server-recorded `matches.paipu_json` rows directly from
-  Postgres — never this chain — or an admin-supplied paipu could silently
-  poison a training set. No such extractor exists yet; enforce this rule when
-  one is built.
-
-- **server_test.go** — SPA/static serving regression coverage:
-  - Built JS asset requests return JavaScript, not `index.html`
-  - Missing asset requests return `404`, not the SPA shell
-
-- **review_test.go** — Review API coverage (in-memory sqlite + `httptest` stub policy server mirroring `internal/review/report_test.go`'s uniform-probs-over-legal-mask stub):
-  - No `POLICY_SERVER_URL` → 503 `{"error":"reviewer unavailable"}`
-  - Build against the checked-in `testdata/paipu/review-fixture.json` fixture (generated via `cmd/rlpaipu -seed 7`) → 200, `MatchReview` row persisted; a second POST hits the cache (no extra stub requests); GET returns the same cached body
-  - Policy server unreachable → 502
-  - GET for an unknown match → 404
-  - A paipu with no rounds → 422 (`review.ErrUnreviewable`)
-
-- **private_tables_test.go** — Seat-config + lifecycle regression coverage:
-  - First joiner is assigned host at seat 0; subsequent joiners claim the next empty seat
-  - Host can set/clear a bot seat; non-host gets 403
-  - `/start` rejects empty seats (400) and non-host callers (403)
-  - 1-human + 3-bot start path constructs an active private table and registers the host as a participant
-  - Returning participants on an active table get `"active"` with the existing `matchId`; outsiders get 409
-
-## Private paipu imports and analysis jobs
-
-`replay_imports.go` exposes authenticated `POST/GET /api/v1/replay-imports` and owner-only `GET /api/v1/replay-imports/:importId`. Native JSON is limited to 10 MiB; uploads are immutable, deduplicated per account, and isolated from live matches/history/training. Filename headers are percent-decoded and sanitized; CORS allows `X-Paipu-Filename`. Lists use a 20-row cursor and omit raw paipu JSON.
-
-`replay_study.go` exposes authenticated `GET/POST /matches/:matchId/study`, `GET/POST /replay-imports/:importId/review`, and owner-only `GET/DELETE /review-jobs/:jobId`. Builds share the existing two review slots/four queued requests and six-per-minute account limiter. Input/model SHA/schema/event-window/method/config define the build key. Source lookup only returns a matching current generation. Jobs have a 30-minute execution budget, 90-second renewable lease, durable partial report, cancellation and explicit interrupted/failed states. Each attempt has a unique worker identity: a cancelled old worker cannot overwrite or delete a resumed attempt. Restarted jobs resume through POST rather than claiming completion or silently restarting model work.
-
-`replay_study_test.go` protects ownership, CSRF, import isolation/dedup and cancel/resume attempts. Its opt-in localhost browser harness (`FH_REVIEW_BROWSER=1`) uses persistent SQLite at `/tmp/fh-review-browser.sqlite` and normal production auth/routes with a configured real policy; it is skipped in CI. It never provides synthetic advice.
-
-The browser harness optionally revalidates cheap draw estimates in stored real reports through `BuildStudy` resume when `FH_REVIEW_BROWSER_REFRESH_DRAWS=1`; checkpoint identity must match and existing real action evaluations are preserved.
+`room_remote_test.go` has a skipped-by-default live test: set
+`FH_MAHJONG_REMOTE_POLICY_TEST_URL=http://127.0.0.1:8765/act` with a policy server running.
+`replay_study_test.go` has an opt-in browser harness (`FH_REVIEW_BROWSER=1`, SQLite at
+`/tmp/fh-review-browser.sqlite`, a real policy server); CI skips it.

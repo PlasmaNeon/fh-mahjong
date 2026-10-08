@@ -8,8 +8,8 @@ import (
 )
 
 // MaxLookaheadVersion is the highest EnvConfig.lookahead_version the encoder
-// knows. Version 1 adds the 13 discard/call look-ahead channels of
-// worklog/specs/20261004-discard-call-lookahead-planes.md; 0 adds none.
+// knows. Version 1 adds the 13 discard/call look-ahead channels described in
+// docs/ai-player.md; 0 adds none.
 const MaxLookaheadVersion = 1
 
 // Channel offsets inside the version-1 block, which starts at channel 39.

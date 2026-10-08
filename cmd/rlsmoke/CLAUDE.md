@@ -4,7 +4,7 @@
 
 ## Overview
 
-End-to-end gate that plays a real match over the real protocol and then verifies every paipu-v2 provenance guarantee. **Exit 0 means the gate is satisfied and shadow-game accumulation may resume; anything else means it is not.**
+End-to-end gate that plays a real match over the real protocol and then verifies every paipu-v2 provenance guarantee. **Exit 0 means every provenance gate holds on the deployed stack; anything else means it does not.** Production rollouts run it before counting shadow games.
 
 It exercises the whole stack rather than mocking any of it:
 
@@ -42,8 +42,6 @@ go run ./cmd/rlsmoke -base-url https://<prod-host> -timeout 15m
 - zero `legalIdsError`
 - `status: "completed"`
 
-First ran clean against production 2026-08-12 (match `5ad64d61…`, 29 decisions, 22 remote with sha).
-
 ## Key Files
 
 - **main.go** — `run()` drives the sequence above; `postJSON`/`postProtoJSON`/`getJSON` are the REST helpers, `dialWS` opens the authenticated socket, `playToMatchEnd` is the bot pump, `waitForReplayListing` polls the replay index, and `verifyPaipu` applies the gates.
@@ -53,4 +51,4 @@ First ran clean against production 2026-08-12 (match `5ad64d61…`, 29 decisions
 
 - This talks to a live server; it is not part of `go test ./...` coverage of the engine. Treat a failure as "the deployed stack is not gate-clean", not "the code does not compile".
 - Sibling to `cmd/rlpaipu`, which generates a paipu fixture offline instead of verifying a live one.
-- Paipu-v2 background: `worklog/specs/2026-08-09-paipu-v2-provenance-design.md`.
+- Paipu v2 background: [`docs/architecture.md`](../../docs/architecture.md) ("Paipu v2").

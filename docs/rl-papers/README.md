@@ -1,8 +1,9 @@
 # RL Paper Read Reports
 
-This directory stores paper summaries and implementation notes for the Fenghua Mahjong AI effort.
+Paper summaries for the Fenghua Mahjong AI. How these ideas landed in the repo is in
+[`../ai-player.md`](../ai-player.md); what worked is in [`../ai-findings.md`](../ai-findings.md).
 
-## Primary References
+## Primary references
 
 1. [Suphx](./01-suphx.md)
 2. [Variational Oracle Guiding](./02-variational-oracle-guiding.md)
@@ -11,36 +12,34 @@ This directory stores paper summaries and implementation notes for the Fenghua M
 5. [Offline Reinforcement Learning Hands-On](./05-offline-rl-hands-on.md)
 6. [TD or not TD](./06-td-or-not-td.md)
 
-## Follow-Up Reading
+## Follow-up reading
 
-1. [Implicit Q-Learning (IQL)](./followups/07-iql.md)
-2. [TD3+BC / A Minimalist Approach to Offline RL](./followups/08-td3-bc.md)
-3. [Deep Transformer Q-Networks (DTQN)](./followups/09-dtqn.md)
-4. [GTrXL](./followups/10-gtrxl.md)
-5. [Mjx](./followups/11-mjx.md)
-6. [Official International Mahjong](./followups/12-official-international-mahjong.md)
-7. [Rethinking Decision Transformer via HRL](./followups/13-hierarchical-decision-transformer.md)
-8. [Privileged Information in POMDP RL](./followups/14-privileged-information-pomdp.md)
-9. [Tjong](./followups/15-tjong.md)
+7. [Implicit Q-Learning (IQL)](./followups/07-iql.md)
+8. [TD3+BC / A Minimalist Approach to Offline RL](./followups/08-td3-bc.md)
+9. [Deep Transformer Q-Networks (DTQN)](./followups/09-dtqn.md)
+10. [GTrXL](./followups/10-gtrxl.md)
+11. [Mjx](./followups/11-mjx.md)
+12. [Official International Mahjong](./followups/12-official-international-mahjong.md)
+13. [Rethinking Decision Transformer via HRL](./followups/13-hierarchical-decision-transformer.md)
+14. [Privileged Information in POMDP RL](./followups/14-privileged-information-pomdp.md)
+15. [Tjong](./followups/15-tjong.md)
 
-## Synthesis
+## Other directions surveyed
 
-- [Implementation Takeaways](./implementation-takeaways.md)
-- [RL Learning Roadmap And Mahjong AI Development Plan](./roadmap-and-development-plan.md)
+Tested in 2026-07; results in [`../ai-findings.md`](../ai-findings.md).
 
-Our own experiment record lives in `worklog/`:
-[Chongci RL Experiment Progress Note](../../worklog/rl-experiment/chongci-rl-experiment-progress.md).
+| Direction | Source | Outcome here |
+|---|---|---|
+| Regret-based policy gradient (ACH, LuckyJ) | [Actor-Critic Policy Optimization in a Large-Scale Imperfect-Information Game](https://openreview.net/forum?id=DTXZqTNV5nW) | Failed; regret minimization has no convergence guarantee in 4-player games |
+| Opponent-hand prediction as an auxiliary task | [DouZero+](https://arxiv.org/abs/2204.02558) | Shipped as the belief head in B2b |
+| Exploitability and population training | [SP-PSRO](https://arxiv.org/pdf/2207.06541), [self-play survey](https://arxiv.org/pdf/2408.01072) | Champion not exploitable; snapshot-pool opponents neutral |
+| Run-time policy adaptation (pMCPA) | [Suphx](https://arxiv.org/pdf/2003.13590) | Determinized search lost to the raw policy |
+| Massive-actor Monte-Carlo self-play | [DouZero](https://arxiv.org/abs/2106.06135) | Validates self-play without human data; not run as such |
+| Belief-state search (ReBeL, Student of Games) | [ReBeL](https://arxiv.org/abs/2007.13544) | Skipped: 2-player theory, out of reach on one GPU |
 
-## Suggested Reading Order
+## Study path
 
-1. RL Learning Roadmap And Mahjong AI Development Plan
-2. Chongci RL Experiment Progress Note (in `worklog/rl-experiment/`)
-3. Suphx
-4. Variational Oracle Guiding
-5. Offline RL Hands-On
-6. TD or not TD
-7. IQL and TD3+BC
-8. DTQN and GTrXL
-9. Tjong
-
-That order moves from Mahjong-specific ideas into concrete training-method choices and then into newer model directions.
+[`roadmap-and-development-plan.md`](./roadmap-and-development-plan.md) is a reading-and-exercise
+sequence from RL vocabulary to Mahjong-specific agents, tied to this codebase. Suggested order:
+the roadmap, Suphx, Variational Oracle Guiding, Offline RL Hands-On, TD or not TD, IQL and TD3+BC,
+DTQN and GTrXL, Tjong.

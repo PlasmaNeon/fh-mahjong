@@ -1,7 +1,7 @@
 # Shared Logic — Where It Lives
 
 Pages, packages, and scripts must not re-implement anything listed here; extend the shared home
-instead. Design record: `worklog/specs/2026-08-16-dedup-and-naming-refactor-design.md`.
+instead.
 
 ## Go
 

@@ -48,3 +48,6 @@ mlflow.db-*
 
 .superpowers/
 /rlbridge
+
+# Process records (plans, runbooks, lap logs) stay local; durable conclusions live in docs/
+/worklog/

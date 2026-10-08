@@ -63,7 +63,7 @@ def main() -> None:
                         "--resume-from-state")
     p.add_argument("--lookahead-version", type=int, choices=(0, 1), default=0,
                    help="per-action look-ahead planes (0 = none; 1 = 13 discard/call channels, "
-                        "worklog/specs/20261004-discard-call-lookahead-planes.md); "
+                        "docs/ai-player.md); "
                         "rejected-on-change at resume")
     p.add_argument("--suit-augment", action="store_true",
                    help="collect with a random suit permutation per decision: the policy acts "

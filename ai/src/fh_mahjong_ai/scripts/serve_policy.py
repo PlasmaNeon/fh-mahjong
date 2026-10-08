@@ -128,7 +128,7 @@ def _require_servable(policy) -> None:
     if version > 0:
         raise RuntimeError(
             f"checkpoint uses look-ahead planes (lookahead_version={version}); serving supports 0 only "
-            "until the backend requests them (worklog/specs/20261004-discard-call-lookahead-planes.md)")
+            "until the backend requests them (docs/ai-player.md)")
 
 
 def _read_and_verify_checkpoint(path: Path, expected_sha256: Optional[str]) -> tuple[bytes, str]:

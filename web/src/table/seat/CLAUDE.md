@@ -1,30 +1,20 @@
 # web/src/table/seat/
 
-> The per-seat presentation primitives assembled by the shared table presenter.
+> One seat's zones, composed four times by `TableBoard`. A fix here lands in live play and replay.
 
-## Overview
+- **SeatBundle.tsx** — assembles a seat lane; the unit `TableBoard` places per direction. Sets
+  `--seat-hand-tiles` from `handReserve.ts`.
+- **PlayerSeat.tsx** — concealed rail, flex gap, exposed melds, flowers. Names, winds, and scores
+  are in `../CenterHud.tsx`.
+- **ClosedHand.tsx** — the concealed rail with a dedicated drawn-tile slot. Redacted backs are
+  keyed by slot, not id. Accepts optional per-physical-id review annotations (absolute; they never
+  change reserved width or anchors).
+- **OpenMelds.tsx**, **OpenMeldZone.tsx** — exposed melds and their placement.
+- **FlowerZone.tsx** — revealed flowers.
+- **DiscardZone.tsx** — row/column coordinates in formation order (three rows of six, then an
+  extensible fourth); CSS chooses axis and direction per rotation. Accepts optional replay
+  called-footprint and tsumogiri attributes, which never claim flight destination ids.
+- **handReserve.ts** — `concealedHandReserveTiles(meldCount)`.
 
-One seat's worth of tabletop, decomposed into zones. `TableBoard.tsx` composes four of these (bottom/right/top/left) into a board; live play and replay both go through that same path, so a fix here lands in both.
-
-## Key Files
-
-- **SeatBundle.tsx** — Assembles one seat's zones into the seat lane. The unit `TableBoard` places per position.
-- **PlayerSeat.tsx** — The seat-lane composition: concealed-hand rail, flex gap, exposed meld rail, and flower rail for one seat. (Name, wind and score are rendered by `../CenterHud.tsx`, not here.)
-- **ClosedHand.tsx** — Concealed-hand rail. Keeps the drawn tile in a dedicated slot next to the rail rather than folding it back into the sorted closed-hand list.
-- **OpenMelds.tsx** / **OpenMeldZone.tsx** — Exposed meld rendering and its lane placement.
-- **FlowerZone.tsx** — Revealed flower tiles.
-- **DiscardZone.tsx** — The seat's discard tray.
-- **handReserve.ts** — `concealedHandReserveTiles`: how much hand rail to reserve, so the lane does not reflow as tiles leave the hand. Unit-tested in `handReserve.test.ts`.
-
-## Architecture Notes
-
-- **Geometry lives in CSS, not here.** Seat lanes own concealed-hand, flex-gap, open-meld, and flower geometry as reusable bottom/right/top/left primitives in `web/src/table/table-geometry.css`; these components supply structure and data.
-- Left/right lanes are intentionally not rotationally symmetric: right concealed hands flow `column-reverse`, left flow `column`; right exposed rails sit above the hand, left below it. Do not "fix" this into symmetry.
-- Tile CSS uses positional classes (`pov-bottom`, `pov-left`, `pov-top`, `pov-right`) with a `small` modifier.
-- Preview changes on `/tools/table-sample` (`features/dev/`), not by deploying a live match.
-
-`DiscardZone` assigns stable row/column coordinates in formation order: three rows of six, then an extensible fourth row. All four rotations use the same coordinates and CSS chooses their axis/direction. `DiscardZone.test.ts` covers the 18/24-tile boundaries and 30-tile overflow.
-
-## Replay study presentation
-
-`ClosedHand` supports optional per-physical-ID confidence and risk annotations on the same base/drawn wrappers; exact tile 0 and duplicate faces remain distinct. Bars and markers are absolute and must not change the reserved hand or meld/flower anchors. `DiscardZone` accepts optional called-footprint/tsumogiri attributes; called replay footprints do not claim live tile-flight destination IDs. These fields are absent in live views.
+Geometry lives in `../table-geometry.css`; these components supply structure and data. Tile
+classes `pov-bottom|left|top|right` with a `small` modifier set orientation and size.

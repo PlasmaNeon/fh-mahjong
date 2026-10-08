@@ -9,8 +9,8 @@ import (
 	pb "github.com/plasma/fh-mahjong/proto"
 )
 
-// This file captures the paipu v2 supervision trace (spec:
-// worklog/specs/2026-08-09-paipu-v2-provenance-design.md §2-3).
+// This file captures the paipu v2 supervision trace (docs/architecture.md,
+// "Paipu v2").
 // The room layer is the single choke point where every explicit decision
 // passes AND provenance is known; the engine stays provenance-blind.
 
