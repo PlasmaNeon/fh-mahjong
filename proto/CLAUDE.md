@@ -1,67 +1,47 @@
 # proto/
 
-> Protocol Buffer schemas — the single source of truth for all cross-language data structures.
+> `game.proto`, the single source of truth for every structure shared by Go, TypeScript, and
+> Python, plus the generated Go bindings (`game.pb.go`, never hand-edited).
 
-## Overview
+## game.proto
 
-This directory contains the Protobuf `.proto` definitions and auto-generated Go bindings. Every data type used across the Go backend, TypeScript frontend, and Python RL stack is defined here. Changes to game data structures must start in `game.proto`, then regenerate bindings.
+- **Core:** `Suit` (SOU=1, PIN=2, MAN=3, JIHAI=4, FLOWER=5), `Tile {id, suit, value, is_red}`,
+  `ActionType` (DRAW … REFUSE_HAITEI), `GamePhase` (INIT, DEAL, PLAYER_TURN, WAIT_DISCARDS,
+  ROUND_END, terminal MATCH_END), `Meld`, `PlayerAction`.
+- **State:** `GameState` (incl. dice, wangpai size, live `wangpai_tiles_left`), `PlayerState`
+  (incl. `last_discard_from_drawn`, the public tsumogiri flag).
+- **Results:** `ScoreEntry`, `PlayerPayout`, `RoundResult`, and the compact `RoundOutcome` used
+  by RL (its `breakdown` carries the winner's score entries).
+- **Match modes and tables:** `MatchMode`, `ChongciConfig`, `PlayerStanding`, `MatchEndResult`,
+  `Difficulty`, `SeatConfig`, `PrivateTableState`.
+- **RL bridge:** `EnvConfig` (`match_mode`, `chongci_config`, `event_history_window`,
+  `oracle_observation`, `lookahead_version`), `SeatObservation`, `EnvReset*`, `EnvStep*`,
+  `BranchEvaluation*`, `RouteProbe*`, `Trajectory*`, the env pool (`EnvPoolNewRequest`,
+  `SlotCommand`, `EnvPoolStep*`, `SlotState`), and `SearchPoolNewRequest` (clones, seed, rollout
+  cap, determinizations, diagnostic options, optional `root_seat`).
 
-## Key Files
+## Rules
 
-- **game.proto** — Core schema defining all game types:
-  - `Suit` enum: SOU=1, PIN=2, MAN=3, JIHAI=4, FLOWER=5
-  - `Tile`: id, suit, value, is_red
-  - `ActionType` enum: DRAW, DISCARD, CHII, PON, KAN, TSUMO, RON, PASS, FLOWER_REVEAL, READY, ACCEPT_HAITEI, REFUSE_HAITEI
-  - `GamePhase` enum: INIT, DEAL, PLAYER_TURN, WAIT_DISCARDS, ROUND_END, MATCH_END (terminal)
-  - Match-mode types: `MatchMode`, `ChongciConfig`, `PlayerStanding`, `MatchEndResult`
-  - Private-table types: `Difficulty`, `SeatConfig`, `PrivateTableState`
-  - `GameState`, `PlayerState`: full match state
-  - `GameState` round-debug fields include `dice_sum`, individual `dice1`/`dice2`, `wangpai_stacks`, and live `wangpai_tiles_left`
-  - `PlayerState.last_discard_from_drawn` (field 19): public tsumogiri marker — true when this player's most recent discard was their just-drawn tile. Persists until their next discard (must outlive `active_discard`, which is cleared on the no-interrupt turn advance before broadcast). Reset at round start.
-  - `Meld`, `PlayerAction`: action/meld data
-  - `ScoreEntry`, `PlayerPayout`, `RoundResult`, `RoundOutcome`: scoring, payouts, and compact RL round-result metadata (`RoundOutcome.breakdown` carries the winner's `ScoreEntry` list)
-  - RL bridge messages:
-    - `EnvConfig`, `SeatObservation`
-      - `EnvConfig.match_mode` / `chongci_config` let training choose classic single-hand or Chongci multi-hand simulator mode
-      - `EnvConfig.lookahead_version` (8): 0 dormant; 1 = 13 discard/call look-ahead channels after the 39 public ones (`internal/rl/lookahead.go`)
-    - `EnvResetRequest` / `EnvResetResponse`
-    - `EnvStepRequest` / `EnvStepResponse`
-    - `BranchEvaluationRequest` / `BranchEvaluationResponse` / `BranchEvaluationResult` for exact same-state candidate-action rollouts through the Go RL bridge; `stop_at_round_end` provides practical hand-EV labels inside multi-hand Chongci contexts
-    - `RouteShanten`, `DiscardRoute`, `RouteProbeRequest`, `RouteProbe`: route-study probe — a seat's shanten per route (99 = unavailable) and after each legal discard, read-only (`FHEnvRouteProbe`)
-    - `TrajectoryRequest`, `TrajectorySample`, `TrajectoryDataset`
-      - `EnvResetResponse.round_outcome` / `EnvStepResponse.round_outcome` carry terminal round metadata when a round ends
-      - `TrajectorySample.rewards` carries per-step rewards; `terminal_rewards` and `terminal_outcome` carry final round targets for offline warm-start consumers
-    - `EnvPoolNewRequest`, `SlotCommand`, `EnvPoolStepRequest`, `SlotState`, `EnvPoolStepResponse`: batched multi-env FFI stepping (flat plane/scalar/action-mask buffers across commanded slots)
-    - `SearchPoolNewRequest` (clones/seed/max_rollout_decisions/determinizations, the diagnostic options `oracle_planes` (6), `true_state` (7, refused with oracle_planes) and `determinization_ids` (8) whose defaults keep the July behaviour, and proto3-`optional` `root_seat` — present ⇒ pin the search root explicitly for duplicate-seat eval, absent ⇒ Go falls back to `currentActionSeat()`; `optional` so seat 0 ≠ absent): test-time search pool creation — determinized clones of a live env's current decision point (undrawn wall + opponent hands re-dealt per clone, acting seat's observation held bit-identical). Stepping reuses `EnvPoolStepRequest`/`EnvPoolStepResponse` with search-specific semantics (reset_seed is a per-slot error; round_outcome set but non-terminal means the observation is the root seat's next genuine decision after a round boundary (the value-bootstrap row); truncated still carries the cap-state observation) — see `internal/rl/searchpool.go` and `cmd/rlbridge`'s `FHSearchPool*` exports
-- **game.pb.go** — Auto-generated Go bindings (do not edit manually)
+- Field changes start here; regenerate all three bindings before touching code.
+- Tile id `0` is a real tile. Any optional tile id or seat must be proto3 `optional` so unset
+  decodes as null (seat 0 ≠ absent).
+- Enum names (`ACTION_CHII`/`PON`/`KAN`) stay as generated; use chii/pon/kan in prose.
+- Paipu JSON embeds raw enum ints; renumbering one requires bumping
+  `engine.ProtoEnumsRevision`.
 
-## Regeneration Commands
+## Regeneration
 
-Go bindings:
 ```bash
+# Go
 protoc --plugin=protoc-gen-go=$(go env GOPATH)/bin/protoc-gen-go --go_out=. --go_opt=paths=source_relative proto/game.proto
-```
-
-TypeScript/JS bindings (from project root):
-```bash
+# TypeScript (--null-semantics is required)
 web/node_modules/.bin/pbjs -t static-module -w es6 --null-semantics -o web/src/proto/game.js proto/game.proto
 web/node_modules/.bin/pbts -o web/src/proto/game.d.ts web/src/proto/game.js
-```
-
-Python bindings:
-```bash
-mkdir -p ai/src/fh_mahjong_ai/generated
+# Python
 protoc --python_out=ai/src/fh_mahjong_ai/generated proto/game.proto
 ```
-The Python runtime is pinned at `protobuf>=5.0` and runs the 6.x line,
-so the generated `game_pb2.py` must target a **major-6** runtime. A standalone
-`protoc` from the 35.x line emits 7.x gencode (incompatible). Generate with a
-major-6 toolchain instead: the standalone protoc **33.5** release (header `Protobuf Python Version: 6.33.5`),
-`protoc-33.5/bin/protoc --python_out=ai/src/fh_mahjong_ai/generated --proto_path=. proto/game.proto`.
-`grpcio-tools` up to 1.80 bundles protoc 31.1 and emits 6.31.1 gencode — compatible, but it churns the header.
 
-## Architecture Notes
-
-- Proto enum names (CHII, PON, KAN) are kept as-is in generated code. Use chii/pon/kan only in comments and docs.
-- `--null-semantics` is required for JS bindings so `optional` proto3 fields decode as `null` when unset (important for `drawn_tile_id` which can be `0`).
-- Imported by every Go package under `internal/` and `cmd/`, by `web/src/proto/`, and by `ai/src/fh_mahjong_ai/generated/`.
+The Python runtime is the protobuf 6.x line, so `game_pb2.py` must be major-6 gencode. A
+standalone protoc 35.x emits 7.x gencode (incompatible); use protoc **33.5**
+(`protoc-33.5/bin/protoc --python_out=ai/src/fh_mahjong_ai/generated --proto_path=. proto/game.proto`).
+`grpcio-tools` ≤ 1.80 (protoc 31.1) also works but churns the version header.

@@ -1,104 +1,37 @@
-# RL Learning Roadmap And Mahjong AI Development Plan
+# RL Study Roadmap
 
-This roadmap is a self-contained study-and-build path for the Fenghua Mahjong AI work. Use the linked article or documentation material in each stage, then do the repo-specific exercise before moving on.
+A reading-and-exercise path from RL basics to Mahjong-specific agents, tied to this codebase. Read
+the linked material for each stage, then do the exercise before moving on. The path favors
+maintained docs and written tutorials over video lectures.
 
-The required learning path intentionally avoids video lectures. Classic papers and books still appear where they are the right source, but the default path favors maintained docs, written tutorials, and recent implementation references.
+The agent this repo actually ships is described in [`../ai-player.md`](../ai-player.md); the
+results of trying these ideas are in [`../ai-findings.md`](../ai-findings.md).
 
-> Stages 0-8 are the study path. Current state is in
-> [Where The Project Actually Is](#where-the-project-actually-is) and the running record in
-> [`worklog/rl-experiment/`](../../worklog/rl-experiment/chongci-rl-experiment-progress.md).
+## Build order
 
-The Mortal-style build order:
+The Mortal-style sequence the codebase followed:
 
 1. simulator correctness
 2. heuristic trajectories
 3. behavior cloning
 4. duplicate evaluation
-5. operation-level Q/value learning
-6. mixed checkpoint self-play
+5. operation-level Q/value learning (offline)
+6. online self-play (PPO)
 7. live AI integration
-8. Suphx-style oracle/global-reward auxiliaries after the core loop is stable
+8. oracle guiding, privileged critics, and auxiliary heads once the core loop is stable
 
-Mortal-style means the model should learn Q/value estimates for each legal operation from the current visible Mahjong state: discard from the hand, pass/win after a discard, chii, pon, kan, haitei decisions, and any future mode-specific actions. Training samples are individual decision transitions, not one sample per hand or match. The reward is still delayed: for Chongci, the main target is final match net score; for classic Fenghua, the main target is terminal hand payout.
+Operation-level means every legal operation at every decision — discard, pass, win, chii, pon,
+kan, haitei accept/refuse — is a training transition, not one sample per hand. Rewards are still
+delayed: hand payout for classic Fenghua, match net score for Chongci.
 
-## Code-First Loop
+## Code-first loop
 
-Use this loop when you want the code to drive the learning:
-
-1. Generate a small deterministic trajectory dataset with `fh_mahjong_ai.scripts.generate_data`.
-2. Train behavior cloning with `fh_mahjong_ai.scripts.train_bc`.
-3. Evaluate exact/top-3/action-family agreement with `fh_mahjong_ai.scripts.evaluate`.
-4. Train the first conservative value-learning pass with `fh_mahjong_ai.scripts.train_iql`.
-5. Generate mixed self-play trajectories with frozen checkpoint opponents.
-6. Promote a checkpoint only after duplicate-seat evaluation improves against the heuristic baseline and frozen checkpoint pool.
-
-This loop still runs end to end and is the bootstrap path. Discrete IQL — Q, value, and policy heads from operation-level transitions with behavior-cloning regularization — is the offline baseline. Champions come from on-policy PPO self-play; see below.
-
-## Mortal-Style Development Target
-
-Goal: make the agent improve from its own operation-level experience, similar in spirit to Mortal's Q-value decision engine.
-
-The target training unit is:
-
-```text
-visible observation at decision t
-legal action mask
-chosen operation action_id
-next visible observation
-terminal / truncated flag
-final hand or match reward target
-```
-
-The model should learn:
-
-```text
-Q(observation_t, action_t) = expected future score from choosing this operation
-V(observation_t) = expected future score from this decision state
-policy(observation_t) = action distribution used for exploration and serving
-```
-
-Policy:
-
-- Keep the flat 204-action catalog because the Go bridge already validates it.
-- Use dueling Q/value heads and action masking for every decision.
-- Bootstrap offline (BC), then improve with online self-play PPO.
-- Use a frozen checkpoint pool so one new model does not only learn to exploit its own clone.
-- Evaluate with fixed-seed duplicate Chongci matches and report mean net reward, positive-reward rate, large-loss rate, and per-seat breakdown.
-
-Later policy:
-
-- Split the flat action space into decision-family heads if the flat head becomes a bottleneck.
-- Add Suphx-style oracle/global reward prediction as auxiliary training, not as the first serving path.
-
-## Where The Project Actually Is
-
-As of 2026-09-26. Update this section on any promotion or campaign change.
-
-**Trainer.** On-policy PPO self-play, `fh-mj-train-b2b`. Dense per-hand Chongci score-delta
-reward (score/1000), `gamma=0.99`, `lr=2e-5`, entropy 0, 2 PPO epochs, 320 matches/iter,
-symmetric all-four self-play from a warm start.
-
-**Champion.** `chongci_b2b_anchor075_restart_iter075`
-(`ai/checkpoints/anchors/b2b-anchor075-restart-iter075.pt`). Line, each step confirmed on a
-fresh unspent window at 1500 paired seeds per side:
-`deep4 iter_275 -> B2b iter_075 (+0.0408) -> restart-iter075 (+0.0254)`. Production still
-serves deep4 iter_275 (`ai/checkpoints/deploy/`); the B2b line is not yet promoted to serving.
-
-**Promotion.** Pre-registered gate only: screenings on a shared window, a kill rule fixed
-before launch, one selection, one confirmation on a window no prior lap has spent. No
-optional stopping, no substitution after seeing results. Screening CIs (≈±0.07) cannot
-resolve +0.03-level effects, so confirmation is the step that finds a winner.
-
-**Campaign closed 2026-08-06: local recipe saturation** — a statement about this recipe,
-not an architecture or RL ceiling. Four confirmations against restart-iter075 failed to
-clear it (restart r2 null, deep16-ReZero null, gru-width unconfirmed, data-scale-960 null).
-Training reopens only for new information, a genuinely different objective, or
-evidence-backed auxiliary changes. Two laps under that rule also failed: placement-reshape
-(objective change, Stage 1 NULL 2026-08-27) and mortal-scale-scratch (BC→PPO from scratch,
-recipe gate failed 2026-09-17; the large-scale arm never ran). No lap is authorized.
-
-Full record:
-[`worklog/rl-experiment/chongci-rl-experiment-progress.md`](../../worklog/rl-experiment/chongci-rl-experiment-progress.md).
+1. Generate a small deterministic dataset: `fh-mj-generate-data`.
+2. Behavior-clone it: `fh-mj-train-bc`.
+3. Evaluate exact/top-3/action-family agreement: `fh-mj-evaluate`.
+4. Run an offline value learner: `fh-mj-train-iql` (the historical baseline).
+5. Run online self-play: `fh-mj-train-b2b`.
+6. Gate with duplicate-seat evaluation and `fh-mj-compare` ([`../ai-evaluation.md`](../ai-evaluation.md)).
 
 ## Stage 0: Working Vocabulary
 
@@ -218,7 +151,6 @@ Learn:
 Mahjong exercise:
 
 - Inspect `PolicyValueNet` and verify that the default encoder preserves tile-position semantics.
-- Keep the v1 model as a no-pooling residual CNN over `39 x 42 x 1` tile planes plus scalar features.
 
 ## Stage 5: Mortal-Style Offline Q/Value Learning
 
@@ -250,12 +182,6 @@ Mahjong exercise:
 - Compare IQL checkpoints against behavior cloning and heuristic baselines on the same duplicate-seat seeds.
 - Keep advantage-weighted behavior cloning and one-step conservative offline Q as ablations.
 - Do not promote a checkpoint based on lower training loss alone; promote only by duplicate-seat match reward and large-loss control.
-
-**A risk or auxiliary head is not usable until it is calibrated.** Require AUC above random,
-monotonic risk bands, and acceptable severity error before wiring it into serving or a
-promotion gate; coefficient sweeps do not substitute. Every Chongci large-loss head tried
-here ranked at chance (AUC 0.4998, 0.5096, 0.4990). Details:
-[`worklog/rl-experiment/20260825-chongci-iql-era-experiment-ledger.md`](../../worklog/rl-experiment/20260825-chongci-iql-era-experiment-ledger.md).
 
 ## Stage 6: Rewards And Credit Assignment
 
@@ -330,30 +256,6 @@ Mahjong exercise:
 
 - Keep v1 as a flat 204-action policy for stability.
 - Later split the policy into a hierarchy: decision family first, tile/meld choice second.
-
-## Build Status
-
-| Step | State |
-|---|---|
-| Simulator correctness, heuristic trajectories, BC, duplicate evaluation | Built |
-| Visible look-ahead features (58-scalar schema) | Built |
-| Operation-level offline Q/value learning (discrete IQL) | Built; superseded by PPO self-play |
-| Mixed checkpoint self-play (`fh-mj-selfplay-loop`) | Built; superseded by symmetric PPO self-play |
-| Online PPO self-play, oracle/privileged critic, event history (B2b) | Built; the current trainer |
-| Live serving (`fh-mj-serve-policy`, Go validates every action) | Built; deployed on Zeabur |
-
-## Design Defaults
-
-- Objective: expected score from each operation.
-- Chongci training objective: dense per-hand score delta. Final match net score is the
-  evaluation metric, deliberately kept independent of the training reward.
-- Model: no-pooling residual CNN — 96 channels, 4 residual blocks, plus an event GRU — not
-  a transformer.
-- Bootstrap: behavior cloning.
-- RL: on-policy PPO self-play, symmetric all-four, from a warm start.
-- Evaluation: duplicate fixed-seed arena with pre-registered gates on fresh unspent
-  windows, not raw win rate.
-- Serving: Python inference service, not Go-native model inference.
 
 ## Acceptance Criteria
 

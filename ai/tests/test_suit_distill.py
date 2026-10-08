@@ -1,4 +1,4 @@
-"""Suit distillation (PPOConfig.suit_distill_coef): spec worklog/specs/20261002-suit-distill-lap.md."""
+"""Suit distillation (PPOConfig.suit_distill_coef); result in docs/ai-findings.md."""
 
 import os
 from dataclasses import replace

@@ -1,6 +1,6 @@
 """fh-mj-search-diagnostic: does belief-weighted search beat the suit-averaged policy's choice?
 
-worklog/specs/20261005-search-teacher-diagnostic.md. Writes records.jsonl (one contested state per line) and
+Result in docs/ai-findings.md. Writes records.jsonl (one contested state per line) and
 summary.json (12 rules, primary go/no-go)."""
 from __future__ import annotations
 

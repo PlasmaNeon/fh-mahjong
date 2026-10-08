@@ -2077,7 +2077,7 @@ func (x *BranchEvaluationResponse) GetResults() []*BranchEvaluationResult {
 	return nil
 }
 
-// Route study (worklog/specs/20261002-route-study-design.md): a seat's shanten
+// Route study (docs/ai-findings.md, Policy behavior): a seat's shanten
 // per hand route, read from the live env without changing it. 99 = route
 // unavailable (the seat has an open meld).
 type RouteShanten struct {

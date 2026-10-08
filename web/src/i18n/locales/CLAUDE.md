@@ -1,21 +1,20 @@
 # web/src/i18n/locales/
 
-> The two translation resources. English is the schema; Simplified Chinese must satisfy it.
+> Translation resources. English defines the keys; every other resource must satisfy them.
 
-## Key Files
+- **en.ts** — `en`, the canonical key set; it generates `TranslationKey`. New UI strings start
+  here.
+- **zh-CN.ts** — `zhCN: Record<TranslationKey, string>`. A key added to `en.ts` breaks `npx tsc`
+  until it exists here.
+- **review.ts** — the five-language `review.*` namespace (`ReviewKey`, `reviewResources`), each
+  language complete.
+- **reviewPatterns.ts** — localized names for all 41 scoring pattern ids in the five reviewer
+  languages; unknown ids keep their recorded label.
 
-- **en.ts** — Exports `en`, the **canonical translation-key definition**. Its keys generate the `TranslationKey` type that everything else is checked against, so adding a UI string starts here.
-- **zh-CN.ts** — Exports `zhCN` typed as `Record<TranslationKey, string>`. Because of that annotation, **a key added to `en.ts` breaks the build until `zh-CN.ts` supplies it** — `npx tsc` is the guard, not review.
+## Rules
 
-## Architecture Notes
-
-- Keys are flat dotted strings (`'nav.profile'`, `'brand.name'`), not nested objects.
-- Interpolation uses named `{variable}` placeholders. **Keep placeholder names identical in both files** — the type only checks that a key exists and is a string, not that its placeholders match.
-- Both files have the same line count; a difference is a useful smell that one drifted.
-- Consumers use `useI18n()` from `../I18nContext.tsx` rather than importing these directly.
-
-Direct play adds `brand.direct` and localized invitation-entry labels/errors under `lobby.*`.
-
-`review.ts` adds the five-language typed reviewer namespace without duplicating the full app resources. `ReviewKey` is the dotted key union and `reviewResources` maps each supported language to a complete resource. All locales must retain named interpolation placeholders; `studyUtils.test.ts` checks this.
-
-`reviewPatterns.ts` localizes all 41 registered Fenghua scoring pattern ids in five reviewer languages. Unknown or legacy missing ids retain their recorded display label; persisted ids are never renamed.
+- Keys are flat dotted strings (`'nav.profile'`).
+- The type checks only that a key exists; placeholder names must also match across languages
+  (`studyUtils.test.ts` checks the reviewer namespace).
+- `en.ts` and `zh-CN.ts` have the same line count; a difference means one drifted.
+- Consume through `useI18n()`, not by importing these files.

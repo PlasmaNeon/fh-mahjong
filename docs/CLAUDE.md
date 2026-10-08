@@ -1,26 +1,31 @@
-# Docs Directory
+# docs/
 
-## Scope
+> Reference documentation: how the system, the rules, and the AI work.
 
-- Long-form **reference** documentation lives under `docs/` — what the system is and what the
-  literature says. Records of **how the work happened** (plans, specs, runbooks, experiment
-  logs) live in `/worklog/` instead; see `worklog/CLAUDE.md`.
-- `docs/rules/` is the canonical Fenghua rules reference.
-- `docs/refactoring-notes.md` records where shared logic lives and the look-alike code that must stay separate.
-- `docs/rl-papers/` stores RL paper read reports, follow-up reading, and implementation takeaways for the Mahjong AI roadmap.
-- `docs/rl-papers/roadmap-and-development-plan.md` is the study path and development plan tying the reports to repo work. Its stages are the learning sequence; **"Where The Project Actually Is"** is the only section tracking current state.
-- `docs/rl-papers/rl-research-directions-2026-07.md` is a literature sweep on alternatives to pure self-play, with the outcome of each direction.
-- `docs/rl-papers/implementation-takeaways.md` records repo-specific RL design defaults (BC → on-policy PPO self-play) and the rules learned from closed experiments.
+## Files
 
-**Boundary:** `docs/rl-papers/` holds knowledge about the field (papers, study path,
-derived defaults). Our own experiment records — the Chongci progress notebook, risk-target
-design note, and lap records — live in `worklog/rl-experiment/`.
+| File | Content |
+|---|---|
+| `architecture.md` | System map, engine, rules plugin, server, bots and serving, frontend, deployment |
+| `ai-player.md` | The RL agent: observation, action catalog, model, training recipe, decision rule, serving, current champions |
+| `ai-evaluation.md` | Metrics, gate tools, statistics, lap registration, spent seed windows, training-box operation |
+| `ai-findings.md` | Champion lineage, every lever tried and its result, rules learned, measured policy behavior |
+| `replay-review.md` | Replay viewer and AI review: pipeline, definitions, configuration |
+| `refactoring-notes.md` | Where shared logic lives, and look-alike code that must stay separate |
+| `rules/official-rules.md` | Raw Fenghua rules source (canonical human-readable reference) |
+| `rules/rules.md` | Synthesized rules and their Go implementation |
+| `rl-papers/` | Paper read reports, surveyed directions, and the RL study roadmap |
 
-## Update Rules
+## Update rules
 
-- When adding a new research note, create a dedicated Markdown file instead of appending unrelated notes into an existing report.
-- Keep the original paper or project website near the top of each note.
-- Keep implementation notes grounded in this repo's architecture: Go simulator in `internal/engine/` and `internal/rl/`, Python training stack in `ai/`.
-- When documenting Python commands for the `ai/` package, use uv commands such as `uv sync --project ai --extra dev` and `uv run --project ai ...`; avoid non-uv package or environment commands.
-- When a Chongci checkpoint is promoted or rejected, update all three of: `ai/checkpoints/best-checkpoints.json`; the progress note in `worklog/rl-experiment/` (run directory, seed windows, MLflow run ids, promotion/rejection rationale); and the "Where The Project Actually Is" section of `docs/rl-papers/roadmap-and-development-plan.md`.
-- For paired-trace notes, distinguish strict first-divergence counterfactuals from later aligned disagreements. Later disagreements can support risk calibration and data mining, but they are not promotion-gate proof by themselves.
+- State the current answer. Replace wrong text; do not narrate what changed — that belongs in
+  the commit message.
+- Reference docs here keep stable undated names; other docs link to them.
+- Keep design and findings in sync with the code: a promotion or rejection updates
+  `ai/checkpoints/best-checkpoints.json`, the current-state table in `ai-player.md`, and the
+  relevant table in `ai-findings.md`. A new evaluation window goes into `ai-evaluation.md`.
+- Process records (plans, runbooks, lap logs) live in the local, gitignored `worklog/`; distill
+  durable conclusions into these docs.
+- A new paper report gets its own file under `rl-papers/` with the source link near the top.
+- Document Python commands with uv: `uv sync --project ai --extra dev`,
+  `uv run --project ai ...`.

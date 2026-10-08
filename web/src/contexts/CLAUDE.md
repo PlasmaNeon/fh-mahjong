@@ -1,29 +1,15 @@
 # web/src/contexts/
 
-> React context providers for WebSocket connection and game state synchronization.
+> Global providers, nested `AuthProvider → SocketProvider → GameProvider`.
 
-## Overview
+- **AuthContext.tsx** — loads `GET /api/v1/auth/session`, keeps the user and CSRF token in memory,
+  and exposes `apiFetch` (credentials + CSRF on mutations). Distinguishes `401` from an offline
+  bootstrap; logout revokes only the current session.
+- **SocketContext.tsx** — `useSocket()`; opens `/api/v1/ws` with no query credentials (the browser
+  sends the cookie), reconnects, and sends/receives binary protobuf. `disconnect(code?, reason?)`
+  clears socket state synchronously; close code `4000` is the explicit leave-match signal.
+- **GameContext.tsx** — `useGameState()`; decodes each frame with `game.GameState.decode()`,
+  tracks `mySeatId`, and exposes `clearGameState()` so an intentional exit is not redirected back
+  by a stale `matchId`.
 
-Provides global state management via React Context API. Authentication bootstraps first, followed by the cookie-authenticated WebSocket and decoded game state.
-
-## Key Files
-
-- **AuthContext.tsx** — Loads `GET /api/v1/auth/session`, keeps the user and CSRF token in memory, adds credentials/CSRF to API mutations, separates `401` from offline bootstrap failures, and revokes only the current session on successful logout
-- **SocketContext.tsx** — WebSocket connection provider:
-  - `useSocket()` hook — Returns the active WebSocket instance
-  - Manages connection lifecycle (connect, reconnect, cleanup)
-  - Sends/receives binary Protobuf messages
-  - Opens `/api/v1/ws` without query credentials; the browser supplies the HttpOnly session cookie
-  - `disconnect(code?, reason?)` clears client socket state synchronously and supports the explicit-match-leave close code
-
-- **GameContext.tsx** — Game state provider:
-  - `useGameState()` hook — Returns the current decoded `GameState`
-  - Listens to WebSocket `onmessage`, decodes Protobuf with `game.GameState.decode()`
-  - Tracks `mySeatId` (which seat this client controls)
-  - Exposes `clearGameState()` so intentional table exits cannot be redirected back by a stale `matchId`
-
-## Architecture Notes
-
-- Provider nesting order: `AuthProvider` → `SocketProvider` → `GameProvider`.
-- State updates are immediate — no debouncing or batching. Every server broadcast triggers a re-render.
-- The `GameState` object matches the Protobuf schema exactly (via `protobufjs` codegen).
+Updates are not debounced: every broadcast re-renders.

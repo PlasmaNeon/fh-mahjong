@@ -1,4 +1,4 @@
-"""Search-teacher diagnostic (worklog/specs/20261005-search-teacher-diagnostic.md).
+"""Search-teacher diagnostic (result in docs/ai-findings.md).
 
 At contested discard decisions of self-play, compares the suit-averaged policy's choice with 12 search rules
 against true-state ground truth: each top-3 candidate played to the end of the hand on the real wall.

@@ -4,7 +4,7 @@ For every recorded seat's decision the recorder reads the seat's route shanten
 from the Go bridge (`CtypesGoBridge.route_probe`), classifies discard forks and
 chii/pon offers, and at each hand's end emits one hand record. Aggregates merge
 by summing, so chunked benchmark runs combine exactly.
-Spec: worklog/specs/20261002-route-study-design.md.
+Findings: docs/ai-findings.md (Policy behavior).
 """
 from __future__ import annotations
 

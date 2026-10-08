@@ -1,28 +1,26 @@
 # cmd/rlbridge/
 
-> c-shared Go entry point for the Python RL bridge.
+> c-shared library that lets Python drive the Go simulator through `ctypes`.
 
-## Overview
+Build: `go build -buildmode=c-shared -o build/libfh_mahjong_bridge.dylib ./cmd/rlbridge` (`.so`
+on Linux). Requests and responses are serialized protobuf bytes from `proto/game.proto`.
 
-This package wraps the `rl` environment in a narrow protobuf-based C ABI so Python can drive the authoritative Go simulator through `ctypes`. It is intended to be built with `-buildmode=c-shared`.
+## Exports (main.go)
 
-## Key Files
+| Export | Wraps |
+|---|---|
+| `FHEnvNew`, `FHEnvReset`, `FHEnvStep`, `FHEnvClose` | one `rl.Env` |
+| `FHEnvEvaluateBranches` | same-state candidate-action rollouts |
+| `FHEnvRouteProbe` | read-only route shanten for one seat |
+| `FHEnvPoolNew`, `FHEnvPoolStep`, `FHEnvPoolClose` | `rl.EnvPool`; `New` returns handle 0 for an event window > 512 or `lookahead_version` > 1 |
+| `FHSearchPoolNew`, `FHSearchPoolStep`, `FHSearchPoolRoot`, `FHSearchPoolClose` | `rl.SearchPool` built from a live env handle; `root_seat` is passed only when set; `Root` returns every clone's root observation |
+| `FHGenerateHeuristicTrajectory` | heuristic dataset export |
+| `FHFree` | frees every returned payload and error string |
 
-- **main.go** — Exports the bridge surface:
-  - `FHEnvNew`
-  - `FHEnvReset`
-  - `FHEnvStep`
-  - `FHEnvEvaluateBranches`
-  - `FHEnvRouteProbe` — route-study probe for one seat (`RouteProbeRequest` → `RouteProbe`), read-only
-  - `FHEnvClose`
-  - `FHEnvPoolNew` / `FHEnvPoolStep` / `FHEnvPoolClose` — batched env-pool exports (`FHEnvPoolNew` returns handle 0 for `event_history_window > 512` or `lookahead_version > 1`) (own handle registry, same FHBytesResult conventions): one FFI round-trip steps/resets many envs and returns all pending observations as flat buffers inside `EnvPoolStepResponse`.
-  - `FHSearchPoolNew` / `FHSearchPoolStep` / `FHSearchPoolRoot` / `FHSearchPoolClose` — test-time search exports (`FHSearchPoolNew` passes the diagnostic options; `FHSearchPoolRoot` returns every clone's root observation) (own handle registry, same conventions as the env-pool trio). `FHSearchPoolNew` takes a live env handle plus a `SearchPoolNewRequest` (clones/seed/max_rollout_decisions/determinizations, and the proto3-`optional` `root_seat` — passed through to `rl.NewSearchPool`'s variadic root only when present, so an absent field falls back to `currentActionSeat()`) and wraps `rl.NewSearchPool`; `FHSearchPoolStep` reuses `EnvPoolStepRequest`/`EnvPoolStepResponse` and wraps `(*rl.SearchPool).Step`.
-  - `FHGenerateHeuristicTrajectory`
-  - `FHFree`
+## Notes
 
-## Architecture Notes
-
-- Requests and responses are serialized protobuf bytes defined in `proto/game.proto`.
-- Environment handles are managed in-process by a global map keyed by `uint64`.
-- The handle map is mutex-protected, but callers must still serialize `Reset`/`Step`/`Close` per handle because individual `*rl.Env` instances are not internally synchronized.
-- `FHFree` must be called by foreign callers for both returned payload buffers and returned error strings.
+- Each handle family has its own mutex-protected registry keyed by `uint64`, but a single
+  `rl.Env` is not synchronized: serialize `Reset`/`Step`/`Close` per handle.
+- Foreign callers must call `FHFree` on every returned buffer and error string.
+- Rebuilding the library changes its sha256 even with identical sources (Go stamps the VCS
+  revision); evaluation reports pin that sha, and `fh-mj-compare` refuses mismatched builds.

@@ -135,8 +135,8 @@ type searchClone struct {
 // AND the identical sampled future, so candidates are compared on paired worlds
 // (variance-reducing) and the live env's future is never consulted.
 // SearchPoolOptions extends NewSearchPool for the search-teacher diagnostic
-// (worklog/specs/20261005-search-teacher-diagnostic.md). The zero value is the
-// July behaviour.
+// (fh-mj-search-diagnostic; result in docs/ai-findings.md). The zero value is
+// the July behaviour.
 type SearchPoolOptions struct {
 	// OraclePlanes makes every clone row carry the opponents' hands, which in a
 	// re-dealt clone are samples, never the true hands.

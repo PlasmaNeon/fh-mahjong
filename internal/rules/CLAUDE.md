@@ -1,50 +1,49 @@
 # internal/rules/
 
-> Fenghua (奉化) ruleset plugin — full hand evaluation, scoring, and payout logic.
+> The Fenghua (奉化) ruleset plugin: wall, legality, interrupt priority, hand evaluation, scoring,
+> payouts. Implements `engine.RuleEngine`.
 
-## Overview
+The rules themselves: [`docs/rules/official-rules.md`](../../docs/rules/official-rules.md) and
+[`docs/rules/rules.md`](../../docs/rules/rules.md).
 
-This package implements `FenghuaRuleset`, the Fenghua Mahjong ruleset plugin that satisfies the `engine.RuleEngine` interface. It contains all region-specific logic: tile deck composition, DFS/DP backtracking hand evaluation for 35+ scoring patterns, wild tile handling, payout calculation, and action/interrupt validation. This is the most complex package in the codebase.
+## Key files
 
-## Key Files
+- **patterns.go** — the 41 stable pattern ids (`Pattern*`, e.g. `PatternPureOneSuit =
+  "pure_one_suit"`) and the id → display-name registry. `NewScoreEntry(id, points)` is the only
+  way to build a `ScoreEntry`. `rewardPatternIds` marks bonuses (flowers, kong completions) that
+  do not count toward the 4-point ron minimum.
+- **fh.go** — `FenghuaRuleset`:
+  - `GetInitialWall()` — 144 tiles: 4 × (1–9m, 1–9p, 1–9s, 1–7z) + 8 unique flowers.
+  - `EvaluateHand()` → (score, breakdown, canWin): a staged pipeline (base and wild bonuses →
+    best structural route → honor/suit extremes → flowers → dragons/winds → kong flags → ron
+    minimum). Entry order is user-visible. Routes: Independence (base 50 + bonuses), Seven Pairs
+    (150 straight / 50 wild + bomb bonuses), Standard (4 melds + pair); the best route wins.
+    Ron-only gates live here: the 4-point minimum and Wild Loner (大吊车有搭), which may only win
+    by tsumo.
+  - Live tsumo scoring infers the winning tile from `DrawnTileId` when called with a 14-tile hand
+    and no `winTile`, so wait bonuses still apply.
+  - `CalculatePayouts()` — tsumo: each loser pays S×2; ron: discarder S×2, others S×1.
+  - `GetValidActions()` — discard, kan, tsumo for the active player. Kan and tsumo require
+    `DrawnTileId != nil`, so neither is offered right after a chii/pon.
+  - `GetValidInterrupts()` — ron, kan, pon, chii for the other seats.
+  - `ResolveInterruptPriority()` — ron (4) > kan (3) > pon (2) > chii (1); ties by ascending seat.
+  - `tryRunsCovering` is the single run search behind win shapes and Common Win; a wild fills any
+    run position (8m9m+W is 7-8-9).
+- **shanten/** — route-by-route shanten and discard analysis.
 
-- **patterns.go** — Stable scoring-pattern identifiers and the single id → display-name registry:
-  - `Pattern*` constants (e.g. `PatternPureOneSuit = "pure_one_suit"`) are carried in `pb.ScoreEntry.PatternId`; never rename an existing id (replays and clients persist them)
-  - `NewScoreEntry(id, points)` is the only way score entries should be built — it stamps both the id and the display name
-  - `rewardPatternIds` classifies reward bonuses (flowers, kong completions) excluded from the 4-point Ron minimum; logic keys off ids, never display strings
-- **fh.go** — `FenghuaRuleset` struct implementing all `RuleEngine` methods:
-  - `GetInitialWall()` — 144 tiles: 4×(1-9m, 1-9p, 1-9s) + 4×(1-7z) + 8 unique flower tiles (1=Spring, 2=Summer, 3=Autumn, 4=Winter, 5=Plum, 6=Orchid, 7=Chrysanthemum, 8=Bamboo)
-  - `EvaluateHand()` — Returns (score, []ScoreEntry breakdown, canWin). A staged pipeline over a `handEvaluation` context (base/wild bonuses → best structural route → honor/suit extremes → flowers → dragons/winds → kong flags → Ron minimum); entry order is user-visible, so stages append in fixed order. Ron-only legality gates live here alongside scoring: the 4-point Ron minimum, and the 大吊车有搭 (Wild Loner) tsumo-only rule — a hand of four open melds with a lone wild tile in hand calls every tile (`isWildLoner()`), so it returns `canWin=false` for a Ron and may only win by self-draw. Evaluates three mutually exclusive routes:
-    1. **Independence** (大大胡): 14 disconnected tiles, base 50 + stackable bonuses
-    2. **Seven Pairs** (七对): 7 pairs, straight (150) or wild (50) + bomb bonuses
-    3. **Standard**: 4 melds + pair, checks Common Win, All Pung, Loner, suit patterns, honor patterns, kong bonuses, dragon/wind pungs, flower bonuses, wait patterns
-  - Live tsumo scoring can infer the winning tile from `state.Players[playerSeat].DrawnTileId` when callers pass a 14-tile hand with `winTile=nil`, so wait-pattern bonuses still apply in round results
-  - `CalculatePayouts()` — Tsumo: 3 losers pay S×2; Ron: discarder pays S×2, others pay S×1
-  - `GetValidActions()` — Discard, Kan, Tsumo for active player. Kan (concealed 4-of-a-kind or added kan upgrading an open Pon) and Tsumo are gated on `player.DrawnTileId != nil`: they're only offered on the player's own turn after a wall/dead-wall draw, never immediately after a Pon/Chii steal (the engine clears `DrawnTileId` on a steal). This prevents the illegal kan-after-pon. Non-wild flower handling is owned by `engine.Game`; revealable flowers are auto-revealed before valid actions reach the client, while wild flowers remain in the closed hand
-  - `GetValidInterrupts()` — Ron, Kan, Pon, Chii for other players
-  - `ResolveInterruptPriority()` — Ron(4) > Kan(3) > Pon(2) > Chii(1), with same-priority ties resolved by ascending seat for deterministic RL replay
-  - Four Flowers (四花, 150) requires a COMPLETE group of one kind — seasons 春夏秋冬 (values 1-4) or plants 梅兰菊竹 (values 5-8) — via `hasCompleteFlowerGroup()`; four flowers spanning both groups do not qualify
-  - Own Flower (花, +2) matches a flower to the winner's seat wind through `flowerSeatWind()` = `((value-1) % 4) + 1`; BOTH groups map onto the seats (春/梅 East, 夏/兰 South, 秋/菊 West, 冬/竹 North), so never compare a raw flower value against `SeatWind`
-  - Helper functions: `isAllPung`, `isAllChow`, `isPureOneSuit`, `isMixedOneSuit`, `isIndependence`, `isSevenPairs`, `hasAllSevenHonors`, `isMissingASuit`, `hasCompleteFlowerGroup`, `tilesToTehai34`, `checkChowOnlyMelds`, etc.
-  - `tryRunsCovering` is the one run (chii) search behind both `checkMeldsFast` (win shape) and `checkChowOnlyMelds` (Common Win): a wild fills any run position, so 8m9m+W is 7-8-9 exactly as 1m2m+W is 1-2-3. Scoring is invariant under suit permutations, rank reversal (1↔9) and dragon permutations — `internal/rl/observation_symmetry_test.go` checks it on rollout wins
+## Invariants
 
-- **fh_test.go** — Extensive test suite covering all 35+ patterns:
-  - CommonWin, Independence, SevenPairs, Loner, AllPung, MixedOneSuit, PureOneSuit
-  - DragonPung, WindPung, OwnFlower (both flower groups mapped onto seats), KongBonuses, WaitPatterns, PairCall
-  - Wild tile injection (0/1/2/3 wilds), Tame Wild, a wild filling the bottom of a run (`WildFillsAnyRunPosition`)
-  - FlowerBonus (4 flowers, 8 flowers), Four Flowers complete-group requirement
-  - InterruptPriority resolution and deterministic same-priority tie-breaking
-
-- **shanten/** — Shared progress-analysis subpackage:
-  - Route-by-route shanten breakdown (`standard`, `seven pairs`, `independence`)
-  - Useful-tile / discard-option analysis reused by the shanten API and heuristic bot
-
-## Architecture Notes
-
-- Implements `engine.RuleEngine` — imported by `internal/engine/` via interface, never directly.
-- Scoring uses a route-based approach: Independence, Seven Pairs, and Standard are evaluated independently; the highest-scoring route wins.
-- Normal winning routes require `len(fullHand) + 3*len(openMelds) == 14`; every open meld, including a four-tile kan, represents one three-tile component because the supplementary draw restores the concealed-hand count. Eight Flowers remains the explicit incomplete-hand exception.
-- Wild tiles (搭) are tracked via hash maps. The `tilesToTehai34` helper converts tile lists to a 34-element frequency array for DP evaluation.
-- The live game sometimes evaluates tsumo hands as 14-tile concealed hands with no explicit `winTile`; wait-pattern scoring therefore depends on `DrawnTileId` being carried in `PlayerState`.
-- Ron requires ≥4 points total; Tsumo has no minimum.
-- All pattern names include Chinese (e.g., "Common Win (朋胡)") for bilingual display.
+- Imported by the engine only through `RuleEngine`.
+- Normal win shapes need `len(fullHand) + 3·len(openMelds) == 14`; a kan counts as one three-tile
+  meld because its replacement draw restores the concealed count. Eight Flowers is the one
+  incomplete-hand exception.
+- Wilds are jokers only in the concealed hand; in calls, melds, and discards they are face value.
+- Four Flowers (四花) needs a complete group (春夏秋冬 or 梅兰菊竹). Own Flower maps both groups
+  onto seats with `flowerSeatWind() = ((value-1) % 4) + 1`; never compare a raw flower value with
+  `SeatWind`.
+- Scoring is invariant under suit permutations, rank reversal, and dragon permutations
+  (checked on rollout wins in `internal/rl/observation_symmetry_test.go`).
+- `tileToIndex` returns 0 for flowers and its callers index unguarded; do not replace it with
+  `tiles.Index34`, which returns −1.
+- Every hand-evaluation change gets a case in `fh_test.go`.
+- Pattern names are bilingual (e.g. "Common Win (朋胡)"); logic keys off ids only.

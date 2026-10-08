@@ -10,7 +10,7 @@ import (
 
 // RouteProbe reports a seat's shanten on each hand route and, for every legal
 // discard, the route shanten after it — the route study's view of a decision
-// (worklog/specs/20261002-route-study-design.md). It only reads the live state.
+// (fh-mj-benchmark --route-study). It only reads the live state.
 func (e *Env) RouteProbe(request *pb.RouteProbeRequest) (*pb.RouteProbe, error) {
 	if e.game == nil || e.game.State == nil {
 		return nil, fmt.Errorf("environment must be reset before probing routes")

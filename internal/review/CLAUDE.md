@@ -1,292 +1,77 @@
 # internal/review/
 
-> Reconstructs reviewable decision points from a recorded paipu and
-> critiques them against a served champion policy: paipu → decisions →
-> `Report`.
+> Replays a paipu into decision points and critiques them with a served policy:
+> paipu → decisions → `Report` (policy) → study (per-action evaluation and risk).
 
-## Overview
+Feature overview and metric definitions: [`docs/replay-review.md`](../../docs/replay-review.md).
 
-Given a completed `engine.Paipu`, `ExtractDecisions(paipu, eventWindow)`
-re-drives every round through a fresh `engine.Game`, feeding back exactly the
-actions the paipu recorded, and returns the catalog-indexed action
-(`internal/rl`'s 204-action space) chosen at every point a seat had more than
-one legal option. Every `Decision` also carries the 39ch visible
-`pb.SeatObservation` the champion policy would have seen at that decision
-(`rl.EncodeObservationWithEvents`, never the oracle variant), encoded against
-a Chongci-context-dressed clone of the live replay state — see `chongci_context.go`
-and Design Notes below. `eventWindow` (0 for a champion with no event
-history) is forwarded verbatim to `EncodeObservationWithEvents` alongside the
-live `r.game.PublicEvents()` log at that decision; with `eventWindow == 0`
-this is byte-identical to `rl.EncodeObservation` (see
-`internal/rl/serving_parity_test.go`), so callers serving a champion without
-event history pass 0.
+## Key files
 
-Any divergence between the paipu and what the engine reproduces — a bad wall
-seed, a corrupted tile id, a rules-engine change that alters legality — aborts
-replay with an error rather than silently emitting a wrong review. There is
-no fallback or best-effort mode: `ExtractDecisions` either returns exact
-decisions for the whole paipu or an error.
+- **replay.go** — `ExtractDecisions(paipu, eventWindow)`: re-drives every round through a fresh
+  `engine.Game`, feeding the recorded actions, and returns each point where a seat had more than
+  one legal option, with its catalog-indexed choices and the public observation
+  (`rl.EncodeObservationWithEvents`, never oracle planes). Any divergence aborts; there is no
+  partial result. Depends on `engine`, `rl` (legality and encoding), `rules` (to build a game), and
+  `tiles`.
+- **chongci_context.go** — `isChongciPaipu`, `reviewState`: restores match context for encoding
+  (see below).
+- **policy_client.go** — `PolicyClient` and `HTTPPolicyClient`: batches observations to
+  `/evaluate` in chunks of 256, preserving order. Every chunk must report the same checkpoint
+  (a mid-review swap is an error). With `eventWindow > 0` each observation carries
+  `event_history`/`event_count`/`event_window`/`contract_version`; at window 0 those keys are
+  omitted entirely. Optional bearer token. `CurrentCheckpointSha256()` reads `/healthz` (5 s
+  timeout); an error and an unreported sha both mean "unknown".
+- **report.go** — `Report` and `BuildReport(paipu, client, eventWindow)`: per-decision legal
+  action probabilities (filtered, sorted, renormalized) and per-seat summaries with the five
+  largest gaps. JSON field names are a contract with `web/src/features/replay/`. Extraction
+  failures wrap `ErrUnreviewable` (→ HTTP 422).
+- **study.go** — `BuildStudy` (schema 2): evaluates every legal action on paired unseen worlds
+  under the reviewed checkpoint through the round's terminal payout. Defaults: 32 worlds, 128
+  risk worlds, seed 20261004, 512 rollout decisions; reconstruction bounded to 4096 decisions.
+  Results are mean payout and standard error in Fenghua points. Completed chunks checkpoint and
+  are identity-checked on resume.
+- **risk.go** — public-information risk: uniform unseen allocations (respecting auto-revealed
+  flowers) scored with the authoritative rules; per-opponent and joint ron frequency, contributor
+  patterns, pre-draw tsumo opportunity (excluding ordinary flowers; draw source labelled). Zero
+  hits do not prove safety.
+- **import.go** — validates native Fenghua v1/v2 uploads before any model work (operations,
+  source seats, tile ids, envelope size). A standard wild's id must match its face; flower wilds
+  are accepted by face.
+- **reviewtest/** — the shared `/evaluate` stub for tests.
 
-`BuildReport` (report.go) takes those decisions, batches their observations
-through a `PolicyClient` (policy_client.go's `HTTPPolicyClient` POSTs
-`{baseURL}/evaluate` in chunks of 256), and assembles a `Report`: per-decision
-legal-action probability distributions plus per-seat rollups. Like
-`ExtractDecisions`, it never returns a partial report — any extraction or
-evaluation failure aborts with an error and a nil `*Report`.
+Decision anchors: a decision's `positionIndex` is the last applied action before the choice;
+responses to one discard share a position but have separate decision ids
+(`positions_test.go`).
 
-## Key Files
+## Design rules
 
-- **replay.go** — `Decision`, `ExtractDecisions`, and the whole replay
-  driver. Depends only on `internal/engine` (state machine), `internal/rl`
-  (`LegalActions`/`EncodeAction`/`DecodeActionID`, the exported catalog
-  wrappers), `internal/rules` (`FenghuaRuleset`, to
-  construct a fresh `engine.Game`), and `internal/tiles` (tile/action
-  cloning, face-key comparison). It must not fork rules or state-transition
-  logic — every mutation goes through `engine.Game.ProcessPlayerAction` /
-  `ResolveInterrupts`, never a re-implementation.
-- **chongci_context.go** — `isChongciPaipu` and `reviewState`, the encode-time
-  context normalization described below.
-- **policy_client.go** — `PolicyClient` interface, `PolicyResult`,
-  `CheckpointInfo`, and `HTTPPolicyClient` (`NewHTTPPolicyClient(baseURL,
-  eventWindow)` — no auth token, equivalent to
-  `NewHTTPPolicyClientWithToken(baseURL, eventWindow, "")` — or
-  `NewHTTPPolicyClientWithToken(baseURL, eventWindow, token)` for an
-  authenticated policy server). Mirrors `internal/bot/remote.HTTPPolicy`'s `/act` request
-  encoding (`seat`, `planes`, `scalars`, `action_mask` as ints) but batches
-  many observations per `/evaluate` request instead of one, chunking at
-  `evaluateChunkSize` (256) and preserving order across chunks. Every chunk
-  must report the same `checkpoint_path`/`checkpoint_step` — a mismatch (a
-  checkpoint hot-swapped mid-review) is a hard error, never a
-  mixed-champion report. Any non-200 response, `"error"` field, or
-  per-chunk result-count mismatch aborts the whole `Evaluate` call.
-  With `eventWindow > 0`, every observation in the request also gains
-  `event_history`/`event_count`/`event_window`/`contract_version`
-  (`rl.EventContractV1`) — the compact fields the Python `/evaluate`
-  endpoint requires per-observation once the served model's
-  `event_window > 0` (see `ai/src/fh_mahjong_ai/scripts/serve_policy.py`'s
-  `observation_from_json`). These fields use pointer types
-  (`*int`/`*uint32`) with `json:",omitempty"` so a nil pointer (the
-  `eventWindow == 0` case) drops the key entirely, keeping the wire format
-  identical to the event-free contract — as opposed to plain zero-valued ints,
-  which `omitempty` would also drop even when `eventWindow > 0` and the
-  count legitimately is 0. `event_history` itself uses the same
-  `omitempty`-on-empty-slice trick so it is present only when
-  `event_count > 0`.
-  - **Bearer-token auth**: when the client was built
-    with a non-empty `token` (via `NewHTTPPolicyClientWithToken`),
-    `evaluateChunk` sets an `Authorization: Bearer <token>` header on every
-    `/evaluate` POST — `serve_policy.py`'s `/evaluate` 403s any request
-    without a matching header once `--evaluate-token`/`FH_MJ_EVALUATE_TOKEN`
-    is configured server-side. An empty token attaches no header at all
-    (never a header with an empty bearer value).
-    `internal/api/review.go`'s `handlePostReview` sources this token from
-    the `POLICY_SERVER_TOKEN` env var.
-  - **`CurrentCheckpointSha256()`**: GETs
-    `{baseURL}/healthz` (same bearer-token convention as `/evaluate`; a
-    short 5s timeout independent of the 120s `/evaluate` client timeout)
-    and returns the `checkpoint_sha256` the policy server is CURRENTLY
-    serving. `("", err)` when healthz is unreachable, non-2xx, or its body
-    isn't a genuine `"ok": true` envelope — callers treat this identically
-    to `("", nil)` (healthz reachable but the server does not report the field): both mean "sha unknown". `handlePostReview`
-    uses this to key its cache lookup on the checkpoint actually serving
-    right now instead of trusting the newest cached row regardless of
-    promotion/reload/rollback since the last review.
-- **report.go** — `Report`/`ReportDecision`/`ActionProb`/`SeatSummary`/
-  `GapRef` (the frontend JSON contract consumed by
-  `web/src/features/replay/` — field names/types must stay verbatim) and `BuildReport(paipu, client,
-  eventWindow)` (`eventWindow` is forwarded to `ExtractDecisions`; the
-  caller is responsible for constructing `client` with the same window —
-  see `internal/api/review.go`). `ErrUnreviewable`
-  wraps `ExtractDecisions` failures so `internal/api/review.go` maps them to
-  422 instead of a generic 500. Per decision, `Probs` is filtered
-  down to the observation's legal (`ActionMask == 1`) indices, sorted
-  descending, and renormalized over that legal subset (a no-op guard — the
-  policy server is expected to already zero illegal-action mass). Per-seat
-  `TopGaps` are the 5 largest `Actions[0].Prob - ChosenProb` gaps, referencing
-  global indices into `Report.Decisions`.
-- **replay_test.go** — round-trip tests against heuristic-bot-generated
-  paipu (classic single round, chongci multi-round) plus a corrupted-paipu
-  divergence test, plus the observation context tests
-  (`TestObservationsChongciContextClassic`,
-  `TestObservationsChongciRealScores`). `generateHeuristicPaipu`/
-  `driveGameWithHeuristics` mirror `cmd/rlpaipu/main.go`'s drive loop; the
-  chongci ready-ack flow calls `rl.ReadyAllPlayersForNextRound` with the
-  fixtures' `baseSeed*1000+handNum` seed rule.
-  `TestExtractDecisionsEventWindowZeroMatchesLegacy` /
-  `TestExtractDecisionsEventWindowPlumbed` cover the replay-side
-  event-window contract: `eventWindow == 0` produces empty `EventHistory`/zero
-  `EventHistoryWindow` on every decision (regression bar); `eventWindow ==
-  8` threads through to every decision's observation (bounded history,
-  correct window field, and at least one non-empty history — proving
-  `game.PublicEvents()` is really reaching the encoder, not silently
-  dropped).
-- **replay_v2_test.go** — the paipu v2 decision-trace cross-check tests.
-  `generateHeuristicPaipuV2`/`driveGameWithHeuristicsTraced` are
-  `generateHeuristicPaipu`'s trace-recording twin: they snapshot a
-  `engine.PaipuDecision` (legal ids + chosen catalog id, PRE-action) for
-  every action fed to the engine except READY, mirroring
-  `internal/api/room_decisions.go`'s `snapshotDecision`/`recordDecision`
-  (this package cannot import `internal/api` — cycle). Coverage: a
-  well-formed v2 paipu replays clean; a tampered `ChosenID` and a corrupted
-  `LegalIDs` each abort loudly; a fabricated extra row is caught at round
-  end; a trace-stripped v2 paipu produces decisions identical to the v1
-  paipu of the same seed (zero behavior change for v1);
-  `TestReplayV2CrossCheckAlignsReorderedWindows` pins the seeds whose
-  interrupt windows are recorded in a different order than they are
-  reconstructed (see Design Notes).
-- **report_test.go** — `TestBuildReportAgainstStubServer` runs a full
-  heuristic-bot paipu through `BuildReport` against an `httptest.Server`
-  stub that returns a uniform distribution over legal actions, verifying the
-  report's shape (4 seats, sorted+renormalized legal actions, chosen-prob
-  matches the known uniform value). `TestBuildReportServerErrorReturnsNoPartialReport`
-  checks a server error aborts with no partial report.
-  `TestBuildReportEventWindowZeroPayloadUnchanged` /
-  `TestBuildReportEventWindowEightEnrichesPayload` cover the
-  client-side event-window contract: with `eventWindow == 0`, no observation in the
-  batched `/evaluate` request carries any of the four compact
-  event-history JSON keys (regression bar); with `eventWindow == 8`, every
-  observation carries `contract_version == 1`, `event_window == 8`, and
-  `event_count <= 8`, with `event_history` present (and length-matching)
-  iff `event_count > 0`.
-  `TestHTTPClientChunksBatches` calls `HTTPPolicyClient.Evaluate` directly
-  with 600 synthetic observations against a stub that echoes a
-  request-order-derived value, asserting exactly `ceil(600/256)=3` requests
-  and that result order is preserved end to end across chunk boundaries.
+- **One fresh classic game per round.** Each round carries its own seed, dealer, deals, and wilds,
+  and the paipu does not record the match's `ChongciConfig`, so each round replays alone.
+- **Dealer roll.** A naturally rolled dealer consumes one extra RNG draw; a forced one
+  (`SetNextDealer`) does not. The first round and every classic round roll naturally; later
+  Chongci rounds force the dealer. `verifyRoundSetup` catches a mismatch through the deal.
+- **Fail loud.** Setup, system draws, action legality, tile fidelity, and the v2 trace are all
+  verified; any mismatch aborts. If the engine and paipu disagree about an automatic action, fix
+  the cursor handling here, never the engine.
+- **Passes.** The v1 format records only the winning interrupt response, so other pending seats
+  are fed an implicit pass (`inferred`). With a v2 trace, a seat's recorded choice is used
+  (`recorded`); a losing bidder's recorded pon is never reported as a pass.
+- **v2 trace alignment.** Rows and reconstruction enumerate points differently (traced declined
+  interrupts, untraced timeouts, and response order within a window). `crossCheckDecision` takes
+  the row at the cursor if it is this seat's, else scans up to 2 rows ahead for this seat's row
+  whose chosen id is legal here. Unmatched rows at round end are an error. Do not simplify this to
+  a strict cursor: it false-fails on 10–18% of real games.
+- **Exact tiles.** `rl.LegalActions` collapses same-face copies; `exactTileAction` substitutes the
+  recorded physical ids so replayed rivers and melds match tile for tile.
+- **Chongci context.** Encoding always goes through `reviewState`, which clones the state and
+  overwrites only `MatchMode`, `HandNum`, `ChongciConfig`, and seat scores. Chongci paipu use each
+  round's recorded starting scores (`HandNum` = round index + 1); classic paipu are presented as the
+  final hand of an all-tied Chongci match (nominal score 25000). `MaxHands` is approximated as the
+  number of rounds played. v2 metadata, when present, is used instead.
+- No privileged critic value is used for action evaluation.
 
-## Design Notes
+## Tests
 
-- **Per-round fresh classic game, not one long chongci match.** Each round
-  in a paipu carries its own `WallSeed`/`Dealer`/`Deals`/`WildTiles`; nothing
-  about a round's replay depends on the original match's `ChongciConfig`
-  (which the paipu format does not record), so `replayRound` always
-  constructs `engine.NewGame(..., engine.MatchOptions{})` (classic) and
-  replays exactly one hand in it. This is what makes chongci paipu
-  replayable at all without knowing the original config.
-- **Natural vs. forced dealer roll.** `dealTiles()` only consumes an extra
-  `mt.GenU32()` call for a *naturally* rolled dealer; calling
-  `Game.SetNextDealer` before `Start()` skips that draw and desyncs the wall
-  shuffle from a naturally-dealt hand. The first round of any paipu was
-  always naturally rolled (nothing has run `finalizeRoundEnd` yet); every
-  later chongci round had its dealer forced via `SetNextDealer` inside the
-  previous round's `finalizeRoundEnd` (renchan or winner-seat succession), so
-  replay must force it too. Classic rolls naturally on every hand, including
-  capped classic matches with nonzero scores; explicit `MatchMode` metadata
-  takes precedence over the legacy score-based mode inference. `replayRound`
-  only calls `SetNextDealer` for later Chongci hands. The two-hand classic
-  study regression verifies seeded deals, trace reconstruction and settlement.
-  Choosing the wrong dealer-roll path shifts the wall shuffle before action
-  zero; `verifyRoundSetup` catches the resulting deal mismatch.
-- **Round-start verification via a throwaway recorder.** `replayRound`
-  attaches its own `engine.PaipuRecorder` before `Start()` purely to read
-  back `CurrentRound().Deals`/`.WildTiles` — the exact snapshot `dealTiles()`
-  captured before any flower-reveal or first-draw mutation touched
-  `ClosedHand`. This avoids re-deriving the shuffle/deal logic in this
-  package.
-- **Decision-anchor semantics.** A turn decision (discard, tsumo, self-kan,
-  flower-adjacent choices, haitei accept/refuse) anchors `ActionIndex` to the
-  paipu action index it consumed. A declined-interrupt ("pass") decision has
-  no paipu record of its own — the format only ever records the *winning*
-  interrupt response, never a losing or absent one — so it anchors to the
-  index of the discard that opened the interrupt window instead
-  (`roundReplayer.lastDiscard`).
-- **One decision per seat per interrupt window, not per pending seat.** When
-  multiple seats can respond to a discard but only one call wins priority,
-  the paipu records only the winner's action; a losing bidder's real
-  historical choice is unrecoverable from the format. Replay therefore always
-  feeds every non-matching pending seat an implicit pass — this is a genuine
-  format limitation, not a driver bug.
-- **Divergence-abort policy.** Every verification step (round setup, draw/
-  flower system records, recorded-action legality, tile-fidelity) returns an
-  error immediately on mismatch; `ExtractDecisions` never partially succeeds.
-  If the engine turns out to auto-perform something the paipu also records
-  (or vice versa), the fix belongs in this package's cursor handling, never
-  in the engine.
-- **Paipu v2 decision-trace cross-check (fail-loud).** When a round carries
-  a v2 `Decisions` trace, every reconstructed decision point also verifies
-  the matching trace row: (a) the row's `ChosenID` must be legal in the
-  reconstructed legal set, and (b) its `LegalIDs` must equal the
-  reconstructed legal-id set exactly. Rows flagged `LegalIDsError` are
-  checked only as far as they were captured (`ChosenID == -1` = encode
-  failed, nothing to verify; nil `LegalIDs` = enumeration failed, skip (b)).
-  Any mismatch aborts with `paipu v2 decision cross-check failed: round %d
-  decision %d seat %d: ...` — never warn-and-continue. A v1 paipu
-  (`Decisions == nil`) skips all of this, byte-for-byte unchanged.
-- **Trace-vs-reconstruction alignment (do not simplify to a plain cursor).**
-  The trace and the reconstruction do not enumerate decision points the same
-  way: the trace holds declined interrupts the Actions stream never records;
-  the reconstruction holds points the trace never recorded (a timed-out
-  interrupt window is not a decision); and *inside one interrupt window the
-  two orders differ* — the room layer records rows in response order
-  (seat-ascending for bots) while `stepWaitDiscards` always replays the
-  winning call first and only then the other seats' passes. A strict
-  "next row must belong to this seat" cursor therefore false-fails on
-  ~10-18% of real games (10/55 and 12/120 in two heuristic sweeps).
-  `crossCheckDecision` instead matches: the row at the cursor wins if it is
-  this seat's, otherwise up to `maxTraceLookahead` (2 — an interrupt window
-  holds at most 3 same-window rows total, and the cursor always sits on the
-  window's oldest unmatched row, so at most 2 further rows can still belong
-  to it) following rows are scanned for this seat's
-  row *whose chosen id is legal here*. That legality gate is what stops an
-  untraced timeout point from stealing the same seat's later row. Points
-  with no match consume nothing; rows unmatched at round end are an error.
-- **Exact-tile fidelity.** `internal/rl.LegalActions` collapses same-face
-  duplicate tiles to one representative id (e.g. the lowest physical id for
-  discards). `exactTileAction` clones the matched legal action and
-  substitutes the paipu's recorded physical tile id(s) (verifying the seat
-  still holds them), so replayed discard piles and melds match the paipu
-  tile-for-tile even when the seat held two copies of the same face.
-- **Legality comes from `internal/rl`.** `rl.LegalActions`/`rl.EncodeAction`
-  wrap the private `legalActionMap`/`encodeAction`, so this package resolves
-  recorded actions through the same legality map the RL bridge uses; never
-  re-derive it here.
-- **Encode-time Chongci-context normalization.** `replayRound` always
-  constructs a fresh *classic*-mode `engine.Game` per round (see above), so
-  `r.game.State` at decision time always has `MatchMode == CLASSIC` and every
-  player's live `Score == 0` — nothing like the Chongci match context
-  (`MatchMode`, `HandNum`/`ChongciConfig` progress, per-seat scores) the
-  champion policy was trained on (`internal/rl/observation.go`'s
-  `setMatchContextScalars`, scalars 42-57). `recordDecision` never encodes
-  straight off `r.game.State`; it always calls
-  `reviewState(r.game.State, r.paipu, r.roundIdx)` first, which
-  `proto.Clone`s the state and overwrites *only* match-context fields
-  (`MatchMode`, `HandNum`, `ChongciConfig`, `Players[*].Score`) — it must
-  never touch hand/discard/meld/wall state, since the mask and the
-  hand-shape planes/scalars must stay faithful to what actually happened.
-  - **Classic paipu → "final hand of an all-tied Chongci match."** A classic
-    paipu (`isChongciPaipu` returns false: every round's recorded
-    `StartingScores` are all-zero) has no real Chongci context to recover,
-    so `reviewState` presents it as the *final* hand of a Chongci match with
-    every seat's score equal to a nominal `defaultChongciStartingScore`
-    (25000): `HandNum == MaxHands` (progress scalar 43 = 1, remaining scalar
-    44 = 0) and equal scores (rank scalar 45 = 1.0, gap scalars = 0). This is
-    a product decision (not recoverable from the paipu), so the champion — trained exclusively on Chongci context —
-    is never fed a nonsensical all-zero-score classic context it has never
-    seen.
-  - **Chongci paipu → real per-round context.** A chongci paipu
-    (`isChongciPaipu` true) carries real starting scores per round
-    (`PaipuRound.StartingScores`), so `reviewState` sets each seat's `Score`
-    to `paipu.Rounds[roundIdx].StartingScores[seat]`, `HandNum` to
-    `roundIdx+1` (paipu round indices are 0-based; `engine.Game.HandNum` is
-    1-based — "East 1" starts at `HandNum: 1`, see `game.go` `NewGame`), and
-    `ChongciConfig.StartingScore` from round 0's recorded starting score.
-  - **`MaxHands` approximation.** The paipu format never records the
-    original match's `ChongciConfig.MaxHands` cap, so both branches
-    approximate it as `len(paipu.Rounds)` — the number of hands the match
-    actually played. This is exact for a match that ran to its natural
-    `MaxHands` limit and only an approximation (a lower bound) for one that
-    ended early (e.g. a bust-out). Revisit if a future paipu format version
-    starts recording the original `ChongciConfig`.
-
-## Full replay study (schema 2)
-
-`BuildStudy` adds genuine per-action round-return evaluations and public-information risk/draw estimates to the existing policy report. `positionIndex` points to the last applied canonical action before a choice; `id` distinguishes responses sharing an event. V2 losing bids use their recorded trace action. Inferred/unknown choices and forced actions are excluded from agreement. Schema 1 cache rows are not served as schema 2.
-
-- `import.go` validates native Fenghua v1/v2 uploads before model work. Missing operation tiles/source seats, invalid IDs and oversized envelopes fail closed. Legacy prevailing wind 0 is supported. A standard wild tile's id must match its face; flower wilds are built by face (the other three flowers of the indicator's group), so they are accepted with id 0 or their own flower id (136–143).
-- `study.go` compares **all** legal candidates in paired public unseen worlds under the reviewed checkpoint through terminal round payout. Default: 32 worlds, 128 risk worlds, seed 20261004, 512 rollout decisions; full reconstruction is bounded to 4096 decisions. Mean payout and standard error are Fenghua points, not Mortal Q or win probability. Completed chunks are checkpointed and identity-checked on resume.
-- `risk.go` samples uniform unseen allocations conditioned on auto-revealed flowers using the authoritative scorer. Joint opponent frequency is measured in the same worlds; contributor patterns/examples are hypothetical. Zero hits do not prove safety. Draw opportunity uses pre-draw public counts, excludes ordinary flowers, and labels normal/haitei/wangpai draws.
-- `chongci_context.go` uses explicit v2 match/config metadata when available, retaining the historical context fallback for v1. No privileged critic value is used for action evaluation.
-- `study_test.go`, `positions_test.go` cover candidate evaluation, durable resume, checkpoint changes, pre-choice anchors and recorded bid provenance. The opt-in real checkpoint smoke uses `FH_REVIEW_SMOKE_URL`; ordinary CI uses the shared deterministic stub.
-
-Advanced reconstruction checks cancellation between actions and verifies recorded terminal winner, win type and per-seat payout against the authoritative engine. Recorded prevailing wind is applied before round setup.
-
-Scorer-backed regressions verify copy-weighted legal-tsumo opportunities (without counting the winning draw twice), hidden-allocation invariance, and equality of branch/root policy context. Draw estimates are rebuilt on resume without repeating complete candidate evaluations.
+Round-trip tests against heuristic paipu (classic and Chongci), corrupted-paipu and tampered-trace
+aborts, event-window plumbing, reordered interrupt windows, report shape against a stub server,
+study evaluation and resume, and anchors. The real-checkpoint smoke uses `FH_REVIEW_SMOKE_URL`.

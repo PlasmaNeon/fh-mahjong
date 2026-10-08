@@ -1,32 +1,32 @@
 # internal/storage/
 
-> GORM database models for PostgreSQL persistence.
+> GORM models and migrations for PostgreSQL.
 
-## Overview
+## Key files
 
-Defines the database schema for user accounts and match history using GORM (Go ORM). These models are used by the `internal/api/` package for user registration, authentication, and match record keeping.
+- **models.go** — the models:
+  - `User` — normalized email and case-insensitive `UsernameKey` are unique login identities;
+    `Username` keeps the display form. Ids are random in [10000, 99999] (`BeforeCreate`).
+  - `UserSession` — revocable 30-day session: the SHA-256 of the opaque cookie, its CSRF token,
+    and expiry. Raw credentials never reach the database.
+  - `Match` — status, ruleset, binary replay, and paipu JSON.
+  - `MatchPlayer` — seat, final score, placement, rating delta, seat-composition labels. No
+    foreign key to users: bot rows use user id 0 and old guest matches may reference deleted
+    accounts.
+  - `PaipuRecord` — per-hand paipu rows.
+  - `MatchReview` — one cached review report per `(MatchID, CheckpointID)`; `SchemaVersion`
+    keeps old reports from being served as current.
+  - `ReplayImport` — immutable account-owned paipu uploads, unique per owner and content hash.
+  - `ReplayStudyJob` — study job state: frozen input, checkpoint sha, event window, config,
+    lease and worker identity, progress, durable report chunks.
+- **migrate.go** — `AutoMigrate`, including the username cutover (sanitize, keep the oldest of a
+  collision, suffix `-2`/`-3`, then the unique index).
+- **match_history.go** — idempotently recovers missing `MatchPlayer` rows from valid completed
+  legacy paipu; malformed records are counted and skipped.
 
-## Key Files
+## Notes
 
-- **models.go** — the GORM models (`User`, `UserSession`, `Match`, `MatchPlayer`, `PaipuRecord`, `MatchReview`) plus `NormalizeUsername`/`generateUserID`; **migrate.go** — `AutoMigrate` and the legacy-username backfill:
-  - `User` — Player account: normalized email and case-insensitive `UsernameKey` are unique login identities; `Username` preserves the visible friendly form. Existing duplicates are deterministically suffixed during migration. IDs remain random sparse values in [10000, 99999]
-  - `UserSession` — Revocable 30-day browser session. Stores only the SHA-256 hash of the opaque cookie plus its CSRF token and expiry; raw session credentials never enter the database
-  - `Match` — Single game record: match ID, status, ruleset name, binary replay URL/blob, and structured paipu JSON
-  - `MatchPlayer` — Join table linking users to matches: seat position, final score, placement, rating delta, and seat-composition labels. There is deliberately no users foreign key because bot rows use user ID 0 and historical guest matches can reference accounts that no longer exist
-  - `MatchReview` — Caches one champion's post-game review report (`internal/review.Report`, JSON-encoded) for a match: `MatchID` (size:255 — also covers per-round `matchID-handNum` `PaipuRecord` keys and dev fixtures, not just canonical UUIDs), `CheckpointID` (size:512, the serving policy checkpoint path), `ReportJSON` (raw JSON text), `CreatedAt`. Unique index `idx_match_reviews_match_ckpt` on `(MatchID, CheckpointID)` — one row per match+champion pair, so re-reviewing with the same champion overwrites in place while a new champion adds a new row instead of clobbering the old report. `internal/api/review.go` reads/writes this table: cache policy is "newest row wins" (`ORDER BY created_at DESC`) unless the caller passes `?force=1` to `POST /api/v1/matches/:matchId/review`, which rebuilds against the current champion.
-  - `generateUserID()` — Package-private function that returns a cryptographically-random user ID in [10000, 99999]
-  - `User.BeforeCreate(tx)` — GORM hook that assigns a random sparse ID when one isn't already set
-  - `AutoMigrate(db)` — Creates/updates tables from struct definitions
-  - `match_history.go` — Idempotently recovers missing `MatchPlayer` ownership/result rows from valid completed legacy paipu. Existing indexed matches are never replaced; malformed records are counted and skipped without blocking startup
-
-## Architecture Notes
-
-- Used by `internal/api/auth.go` for user CRUD and `internal/api/room.go` / `internal/api/paipu.go` for match replay persistence and retrieval.
-- `AutoMigrate` owns the username cutover: sanitize friendly names, preserve the oldest collision, append `-2`/`-3`, backfill `username_key`, then create its unique index.
-- `AutoMigrate` also owns the completed-match history cutover. It parses only the minimum paipu player/final-score fields, preserves competition ranking for ties, and logs recovered/skipped counts.
-- PostgreSQL connection is established in `cmd/server/main.go` and passed through.
-- `User.Rating` (default 1500) and `MatchPlayer.RatingDelta` are stored but nothing updates them; there is no rating system yet.
-
-## Replay study storage
-
-`ReplayImport` stores immutable account-owned JSON in a separate namespace, with a unique owner/content-hash index. `ReplayStudyJob` stores frozen input, checkpoint SHA, event window/config, unique owner/build key, lease/execution identity, state/progress, error and durable report chunks. Both are included in `AutoMigrate`; neither is a live match, training record or history entry. `MatchReview.SchemaVersion` prevents the old after-action anchors from being served as current reports.
+- The database connection is opened in `cmd/server/main.go` (`DATABASE_URL`, else the
+  docker-compose database on `localhost:5433`).
+- `User.Rating` and `MatchPlayer.RatingDelta` exist, but nothing updates them.
+- Imports and study jobs are never live matches, history entries, or training records.

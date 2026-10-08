@@ -1,35 +1,27 @@
 # web/src/features/
 
-> Feature folders — each owns its routes, page components, and co-located helpers.
+> One folder per app domain; each owns its route pages, helpers, and tests.
 
-## Overview
-
-Route page components are organized into feature folders corresponding to app domains. Each feature folder owns all source files for that domain: the React page component(s) rendered by React Router, plus co-located helpers, sub-components, and tests. `App.tsx` imports from these folders.
-
-Menu pages use the shared light Direct play shell from `web/src/theme/`, with blue controls and real Play/Replays/Tools navigation. They compose typed primitives from `../../theme`; the live board keeps its independently scoped table skin and shared geometry.
-
-User-facing feature copy uses the shared `useI18n()` context. English and Simplified Chinese follow the device's first supported language preference, while language controls in the club shell and tool/review pages update that same global context.
-
-## Feature Folders
-
-Each folder has its own `CLAUDE.md` with per-file detail — open the one you are working in.
-
-| Folder | Routes | What it owns |
+| Folder | Routes | Owns |
 |---|---|---|
-| [`auth/`](auth/CLAUDE.md) | `/login`, `/account` | Sign-in/register ticket, account editing, credentialed-fetch and CSRF helpers |
-| [`lobby/`](lobby/CLAUDE.md) | `/`, `/play`, `/room/new` | Direct play entry, Quick Match / Private Table, validated invitation entry, room creation |
-| [`game/`](game/CLAUDE.md) | `/room/:roomId`, `/match/:matchId` | Live match controller, waiting room, and the pure interaction helpers (chii choice, discard mode, rejoin) |
-| [`replay/`](replay/CLAUDE.md) | `/replay`, `/replay/:matchId` | Paipu library, replay engine, and the post-game review overlay |
-| [`calc/`](calc/CLAUDE.md) | `/tools/calc` | Fenghua scoring debugger |
-| [`shanten/`](shanten/CLAUDE.md) | `/tools/shanten` | Shanten distance calculator |
-| [`dev/`](dev/CLAUDE.md) | `/tools/table-sample`, `/tools/round-result` | Dev-only previews of real components against mock data |
+| [`auth/`](auth/CLAUDE.md) | `/login`, `/account` | Sign-in/register dialog, account editing, credentialed-fetch helpers |
+| [`lobby/`](lobby/CLAUDE.md) | `/`, `/play`, `/room/new` | Quick Match, Private Table entry, invitation links, room creation |
+| [`game/`](game/CLAUDE.md) | `/room/:roomId`, `/match/:matchId` | Waiting room and live match controller |
+| [`replay/`](replay/CLAUDE.md) | `/replay`, `/replay/:matchId`, `/replay/import/:importId` | Paipu library, replay engine, AI review and study |
+| [`calc/`](calc/CLAUDE.md) | `/tools/calc` | Scoring calculator |
+| [`shanten/`](shanten/CLAUDE.md) | `/tools/shanten` | Shanten calculator |
+| [`dev/`](dev/CLAUDE.md) | `/tools/table-sample`, `/tools/round-result` | Real components against mock data |
 
-## Architecture Notes
+## Conventions
 
-- All files in a feature folder use `'../../'` to reference `src`-level directories (`proto`, `table`, `contexts`, `hooks`, `theme`, `utils`, `config`). Intra-feature imports use `'./'`.
-- `Game.tsx` and `Replay.tsx` do not own seat/discard layout markup — shared table layout belongs in `../../table/`. Both adapt their own state into the same presenter.
-- Optional login entry points preserve the current route in `backgroundLocation`; required account, room-create, invitation, and expired-session continuations use direct non-dismissible `/login?returnTo=...` navigation.
-- Live round-result payout adapters use explicit `Ready` / `Waiting` labels. Replay adapters leave readiness absent, and the shared overlay must not synthesize a status when none was provided.
-- The live gameplay board is intentionally not a canvas; the fixed-stage DOM approach preserves Framer Motion, SVG tiles, and clickable DOM interactions while eliminating viewport-unit drift.
-- Tool pages (`calc/`, `shanten/`) are self-contained rules debuggers and share no state with gameplay pages.
-- See `../../table/CLAUDE.md` for the shared tabletop presenter, `../../theme/CLAUDE.md` for the design system, and `worklog/specs/2026-05-15-shanten-calc-ledger-redesign.md` for the calc/shanten UI spec.
+- Import `src`-level modules with `'../../'`; intra-feature imports use `'./'`.
+- `Game.tsx` and `Replay.tsx` own no seat or discard markup; table layout lives in `../table/`.
+- Menu pages compose primitives from `../theme`; copy goes through `useI18n()`.
+- Optional login keeps the current route as `backgroundLocation`; required continuations (account,
+  room creation, invitations, expired sessions) navigate to `/login?returnTo=...` without a
+  dismiss option.
+- Live round results show explicit `Ready` / `Waiting`; replay passes no readiness and the shared
+  overlay must not invent one.
+- The board is DOM on a fixed stage, not a canvas, so Framer Motion, SVG tiles, and clickable
+  tiles keep working.
+- `calc/` and `shanten/` are self-contained rules debuggers and share no state with gameplay.
