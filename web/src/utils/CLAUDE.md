@@ -17,7 +17,10 @@ Pages must not re-implement anything here — extend these modules instead.
   - Flower name mapping: values 1-8 → Spring, Summer, Autumn, Winter, Plum, Orchid, Chrysanthemum, Bamboo
 
 - **tileModel.ts** — shared tile value-model (`TileValue`/`TileDraft`), `TILE_LIBRARY`, `suitOrder`, format/parse/count helpers, and `makeWildTilePredicate` (the wild-tile 搭 test).
-- **winds.ts** — `WIND_KANJI` (traditional 東南西北), `WIND_I18N_KEYS`, `windI18nKey`.
+- **winds.ts** — `WIND_KANJI` (traditional 東南西北), `WIND_I18N_KEYS`, `windI18nKey`. Keep it
+  separate from `features/replay/reviewUtils.ts`'s `JIHAI_EN`/`JIHAI_ZH`: those name all seven
+  honor tiles with simplified 东, while table décor uses traditional 東 (`winds.test.ts` asserts
+  the split).
 - **apiJson.ts** — `readJsonBody` and `errorMessage` for the API's `{error}` response shape.
 
 ## Architecture Notes
