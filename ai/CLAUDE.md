@@ -179,6 +179,10 @@ Quick map of what is where:
   `metadata["model_config"]` (or the older `metadata["b2b"]` block) and raises without it.
   `kernel_width` and `trunk_rezero` are shape-inferred, and metadata that disagrees is rejected.
 - A new `ModelConfig` field must be added by hand to `model_config_args.model_config_params()`.
+- `model.build_plane_scalar_encoders` is the one plane/scalar trunk for every net. It returns its
+  modules loose (a NamedTuple) for callers to assign under their historical attribute names;
+  never wrap them in a container `Module` — those names are the `state_dict` keys of every
+  committed checkpoint (`test_model.py` pins this).
 - BC trains with `events=None`; an event-enabled net's BC validation runs on zero events
   (`validation_events: "zeroed"`) and is not comparable to an event-fed evaluation.
 - `fh-mj-train-bc --patience N` stops on validation `mean_cross_entropy` and copies the best epoch
@@ -193,6 +197,10 @@ Quick map of what is where:
 - BC/AWBC load only current-observation arrays; IQL/offline-Q need next-state arrays and may need
   transition limits.
 - `--learning-seat-rule seed-mod-4` keeps one seat per episode before serialization.
+- Shared helpers: `evaluate.parse_seed_windows` (seed-window expansion),
+  `storage.write_json_report`, `storage.write_single_shard_dataset` (one shard + manifest; its
+  provenance block is keyed `"counterfactual"` by default, which divergence-dataset readers
+  depend on — keep the key).
 
 ### Promotion discipline
 Full protocol and the spent-window registry: [`docs/ai-evaluation.md`](../docs/ai-evaluation.md).

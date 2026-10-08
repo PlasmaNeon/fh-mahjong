@@ -45,8 +45,9 @@ fh-mahjong/
 `worklog/` (plans, runbooks, experiment logs) is local and gitignored. Durable conclusions go
 into `docs/`.
 
-Shared helpers (Go `tiles`, web `tileModel.ts`, and the rest) are listed in
-[`docs/refactoring-notes.md`](docs/refactoring-notes.md) — extend them, never re-implement them.
+Shared helpers (Go `tiles`, web `utils/tileModel.ts`, and the rest) are listed in the owning
+package's `CLAUDE.md` — extend them, never re-implement them. Look-alike code that must stay
+separate is noted there too.
 
 ## Key files
 
@@ -152,6 +153,14 @@ Write hands as `1m2m3m 4p5p6p 7s8s9s 1z1z1z 2z`, never the old `C1C2C3 D4D5D6 �
    CI does not run Python; for `ai/` changes run `uv run --project ai pytest ai/tests`.
 5. **Keep docs current.** A change in a directory updates that directory's `CLAUDE.md`; a
    design-level change updates the matching file in `docs/`.
+6. **Refactor safely.**
+   - Split a file in two commits — a pure rename, then the extraction — so `git log --follow`
+     pairs both halves; prove the move is pure by reassembling the bodies and diffing.
+   - Gate engine-touching Go changes on a seeded-paipu differential: `cmd/rlpaipu` over fixed
+     seeds must stay byte-identical.
+   - Gate model or serving changes on `fh-mj-serving-parity --in-process` against the committed
+     champion.
+   - Do word-boundary renames in Python, not BSD `sed` (no `\b`; it silently matches nothing).
 
 ## Per-directory docs: CLAUDE.md and AGENTS.md
 

@@ -17,4 +17,7 @@
 - The type checks only that a key exists; placeholder names must also match across languages
   (`studyUtils.test.ts` checks the reviewer namespace).
 - `en.ts` and `zh-CN.ts` have the same line count; a difference means one drifted.
+- The calc and shanten tools share only nine `tools.*` keys. `apply` (应用/确认), `tilePalette`
+  (牌库/选牌), and `language` (English/EN) read the same in English but differ in Chinese, so they
+  stay per-tool (`I18nContext.test.ts` asserts the split).
 - Consume through `useI18n()`, not by importing these files.

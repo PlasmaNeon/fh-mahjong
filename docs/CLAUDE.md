@@ -11,7 +11,6 @@
 | `ai-evaluation.md` | Metrics, gate tools, statistics, lap registration, spent seed windows, training-box operation |
 | `ai-findings.md` | Champion lineage, every lever tried and its result, rules learned, measured policy behavior |
 | `replay-review.md` | Replay viewer and AI review: pipeline, definitions, configuration |
-| `refactoring-notes.md` | Where shared logic lives, and look-alike code that must stay separate |
 | `rules/official-rules.md` | Raw Fenghua rules source (canonical human-readable reference) |
 | `rules/rules.md` | Synthesized rules and their Go implementation |
 | `rl-papers/` | Paper read reports, surveyed directions, and the RL study roadmap |

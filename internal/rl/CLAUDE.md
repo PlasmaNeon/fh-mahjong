@@ -11,7 +11,7 @@ Observation and action layouts are documented in [`docs/ai-player.md`](../../doc
   `TestActionCatalogPinned`), legal masks, `EncodeAction` / `DecodeActionID` / `LegalActions`.
   Serving clients and `internal/review` resolve actions through the same legality map. Same-face
   copies collapse to one representative tile id. `FLOWER_REVEAL` is a system action, not in the
-  catalog.
+  catalog. `SortedLegalIDs` is the one paipu v2 legal-id snapshot.
 - **observation.go** — `39 × 42 × 1` planes + 58 scalars, never hidden opponent tiles.
   - `EncodeObservation` (event-free) and `EncodeObservationWithEvents(state, seat, decisionIndex,
     events, window)` (serving, review) wrap one internal encoder.
@@ -39,14 +39,17 @@ Observation and action layouts are documented in [`docs/ai-player.md`](../../doc
   per slot) on at most `GOMAXPROCS` goroutines. Returns flat little-endian buffers plus per-slot
   `SlotState`; event rows carry an explicit count because packed `0x0` is a valid event. Never
   self-resets — the caller owns seeds. `StepMarshaled` reuses buffers; its bytes are valid until
-  the next call.
+  the next call. `runSlotCommands` is the command validation, fan-out, and slot ordering shared
+  with `SearchPool`.
 - **searchpool.go** — `SearchPool`: K determinized clones of one live decision
   (`CloneForBranch` + `RedealUnseen`), stepped with the `EnvPool` messages. `SearchPoolOptions`
   adds oracle planes, a true-state mode (no redeal; ground truth), and world ids for the search
   diagnostic.
 - **route_probe.go** — read-only route shanten per legal discard, for the route study.
-- **selfplay.go** — `ReadyAllPlayersForNextRound` (the round-end ready loop, with the hand-seed
-  rule as a parameter), `IsFinalReadyBeforeNextRound`, `FinalScores`.
+- **selfplay.go** — `ReadyAllPlayersForNextRound` (the round-end ready loop),
+  `IsFinalReadyBeforeNextRound`, `FinalScores`. The hand-seed rule is a parameter on purpose:
+  the env uses splitmix `deriveHandSeed`, review fixtures use `baseSeed*1000+handNum`. Unifying
+  them would change every recorded paipu.
 
 ## Invariants
 
@@ -72,4 +75,6 @@ Observation and action layouts are documented in [`docs/ai-player.md`](../../doc
   which break ties by face order). It licenses suit averaging in `ai/`.
 - `env_fuzz_test.go` asserts no tile id ever appears twice in a hand (the dead-wall double-draw
   regression).
+- The test helpers' first-legal-action fallbacks differ on purpose: `env_test.go` returns −1 when
+  nothing is legal; the pool and bench copies return 0 because they feed a step request.
 - Use the shared `tiles` package for face keys, indices, and clones.
