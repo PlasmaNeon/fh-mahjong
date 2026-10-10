@@ -147,7 +147,7 @@ Quick map of what is where:
 | Bridge and environment | `bridge.py`, `env.py`, `envpool.py`, `searchpool.py` |
 | Model | `model.py` |
 | Training | `ppo.py`, `ach.py`, `oracle.py`, `train_b2b.py`, `train_state.py`, `offline_trainers.py`, `batched_selfplay.py`, `batched_b2b.py`, `parallel_rollouts.py`, `selfplay_loop.py` |
-| Data and storage | `data.py`, `buffer.py`, `streaming_buffer.py`, `storage.py`, `checkpoint_manifest.py` |
+| Data and storage | `data.py`, `buffer.py`, `streaming_buffer.py`, `storage.py`, `counterfactual_data.py`, `checkpoint_manifest.py` |
 | Policies, search, serving | `policies.py`, `search.py`, `serving.py` |
 | Evaluation and diagnostics | `evaluate.py`, `hand_stats.py`, `route_study.py`, `placement_bonus*.py`, `reward_calibration.py`, `global_ev*.py`, `paired_trace*.py`, `branch_c*.py`, `near_state_counterfactuals.py`, `risk_filter.py` |
 | Infrastructure | `mlflow_tracking.py`, `memprobe.py`, `fdlimit.py`, `generated/proto/` |
@@ -162,6 +162,8 @@ Quick map of what is where:
 - Multi-worker collection needs a raised fd limit; the training/bench/profile CLIs call
   `fdlimit.raise_file_descriptor_limit`.
 - CI does not run the Python suite: `uv run --project ai pytest ai/tests` before merging.
+  Build the Go bridge first on a fresh checkout (see `README.md`); collector parity tests
+  require `build/libfh_mahjong_bridge.dylib` on macOS or `.so` on Linux.
 
 ### Go is the authority
 - `fh-mj-serve-policy` is an inference boundary only; Go decodes and validates every returned

@@ -7,7 +7,9 @@ RL policies, registers routes, and serves on `:8080` (or `PORT`).
 
 ## Key files
 
-- **main.go** — bootstrap, database, policy wiring, drain on SIGINT/SIGTERM.
+- **main.go** — bootstrap, database, queue watchers, HTTP startup, drain on SIGINT/SIGTERM.
+- **policy_wiring.go** — `configurePolicies`, policy factories, event-window parsing, health
+  checks, and warmup; returns cleanup for the optional managed policy child.
 - **policy_autostart.go** — starts `uv run --project ai fh-mj-serve-policy` as a child process
   when the RL endpoint is the localhost default (`RL_AGENT_AUTOSTART=0` disables;
   `RL_AGENT_SERVE_CMD` overrides the command).

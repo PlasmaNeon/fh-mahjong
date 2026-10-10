@@ -5,8 +5,9 @@
 | Folder | Routes | Owns |
 |---|---|---|
 | [`auth/`](auth/CLAUDE.md) | `/login`, `/account` | Sign-in/register dialog, account editing, credentialed-fetch helpers |
-| [`lobby/`](lobby/CLAUDE.md) | `/`, `/play`, `/room/new` | Quick Match, Private Table entry, invitation links, room creation |
-| [`game/`](game/CLAUDE.md) | `/room/:roomId`, `/match/:matchId` | Waiting room and live match controller |
+| [`lobby/`](lobby/CLAUDE.md) | `/`, `/play` | Entry and Quick Match |
+| [`room/`](room/CLAUDE.md) | `/room/new`, `/room/:roomId` | Room creation, invitations, waiting room, and rejoin navigation |
+| [`game/`](game/CLAUDE.md) | `/match/:matchId` | Live match controller and action helpers |
 | [`replay/`](replay/CLAUDE.md) | `/replay`, `/replay/:matchId`, `/replay/import/:importId` | Paipu library, replay engine, AI review and study |
 | [`calc/`](calc/CLAUDE.md) | `/tools/calc` | Scoring calculator |
 | [`shanten/`](shanten/CLAUDE.md) | `/tools/shanten` | Shanten calculator |

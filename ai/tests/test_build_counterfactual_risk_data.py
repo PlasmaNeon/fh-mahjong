@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from fh_mahjong_ai.scripts.build_counterfactual_risk_data import (
+from fh_mahjong_ai.counterfactual_data import (
     build_counterfactual_risk_arrays,
     write_counterfactual_shard,
 )

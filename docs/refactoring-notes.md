@@ -46,6 +46,7 @@ Do not merge:
 | `utils/tileModel.ts` | `TileValue`/`TileDraft`, `TILE_LIBRARY`, `suitOrder`, `formatTile`/`formatHand`, `parseHand`/`parseSingleTile`, tile counting, `makeWildTilePredicate` |
 | `utils/winds.ts` | `WIND_KANJI`, `WIND_I18N_KEYS`, `windI18nKey` |
 | `utils/apiJson.ts` | `readJsonBody`, `errorMessage` |
+| `features/room/` | Room creation, waiting room, invitation validation, room session and intentional-leave markers |
 | `table/tileId.ts` | `tileIdsEqual` |
 | `table/stage/computeStageLayout.ts` → `stageStyles()` | the fixed-stage `shellStyle`/`stageStyle` |
 | `theme/components/LedgerTile.tsx` | `LedgerTile`, `LedgerTileRow`, `LedgerPaletteGrid` |
@@ -76,6 +77,7 @@ exhausted palette tiles; calc's palette stays clickable. Passing `usedCounts` to
 
 | Shared home | Owns |
 |---|---|
+| `counterfactual_data` | Paired-trace divergence selection, action-risk arrays, counterfactual shard writing; CLI imports point inward to this library |
 | `evaluate.parse_seed_windows` | seed-window expansion |
 | `storage.write_json_report` | report JSON encoding |
 | `storage.write_single_shard_dataset` | one-shard npz + manifest |
@@ -105,18 +107,39 @@ Rules:
   champion.
 - Do word-boundary renames in Python: BSD `sed` has no `\b` and silently matches nothing.
 
+## Ownership audit
+
+| Area | Placement decision |
+|---|---|
+| Go `engine`, `rules`, `rl`, `review` | Keep separate: state transitions, rule evaluation, training environments, and replay reconstruction have different responsibilities. |
+| Go `bot` and `bot/remote` | Keep separate: `rl` depends on `bot`, while the remote policy depends on `rl` encoders. Merging creates a cycle. |
+| Go `api` and `storage` | Keep transport/auth/lifecycle in `api`; models and database migration in `storage`. File size alone does not justify new packages. |
+| `cmd/server` | Process/database lifecycle in `main.go`; policy configuration in `policy_wiring.go`; subprocess management in `policy_autostart.go`. |
+| Web `lobby`, `room`, `game` | Entry/matchmaking, private-table lifecycle, and live-match actions respectively. Room helpers serve both lobby and live play. |
+| Web `table`, `theme`, `features/dev` | Shared board renderer, application design primitives, and fixtures/prototypes. Preview-only geometry stays in `dev` until adopted by production. |
+| Web `calc` and `shanten` | Separate tools over `utils/tileModel.ts`; their formatting, validation, and disabled-state contracts differ. |
+| Python `counterfactual_data` and `scripts` | Shared array/shard construction belongs in the library; CLI argument parsing delegates to it. Historical script imports remain compatible. |
+| Python buffers and collectors | Object/array replay, streaming replay, process collection, and batched FFI collection represent different execution contracts; do not merge based on names. |
+| Generated protobuf and build assets | Preserve generator-owned locations and stable public asset URLs; moving them requires build and server-route migration. |
+
+This is a source/import-based structural audit, not proof that all similarly named functions
+are duplicates or that every unused export has been found. Graph tools were unavailable.
+
 ## Open backlog
 
 - Go: api handler/room boilerplate (private-table handler prelude, sentinel-error → status
   mapping, `BroadcastState`/`SendStateToClient` state prep — the broadcast half must keep
   per-seat redaction); a tile-notation parser for test hands; splitting `api/room.go`,
-  `api/server.go`, and `cmd/server/main.go` (→ `policy_wiring.go`).
+  `api/server.go`. Server policy wiring already lives in `cmd/server/policy_wiring.go`.
 - Web: the three ad-hoc en/zh label mechanisms in `features/replay/`, the four hand-rolled
   segmented controls that duplicate `Toggle`, the `東` compass mark in three places, repeated
   tile-box size blocks; `public/Regular_shortnames/` → `public/tiles/` (needs the matching mount
-  in `internal/api/server.go`); regrouping `features/game/{PrivateRoom,SeatCard,roomNavigation}`
-  into `features/room/`; deleting the unreferenced `hooks/useMahjongWasm.ts`.
+  in `internal/api/server.go`). Room lifecycle code already lives in `features/room/`; the
+  unreferenced browser WASM hook is removed.
 - ai: shared argparse blocks for env/PPO flags, MLflow arg/run setup, the checkpoint→net loader,
   diagnostics statistics helpers, the `evaluate_duplicate_seats` near-copy, the four spawn
   rollout pools, the serving-test HTTP harness, and `tensorize` (serving path — gate with
   `fh-mj-serving-parity`).
+- Python library layering: `selfplay_loop.py` still imports generation and IQL orchestration
+  from `scripts/`. Moving those needs their CLI, checkpoint, and monkeypatch contracts migrated
+  together; counterfactual data construction no longer has that dependency.

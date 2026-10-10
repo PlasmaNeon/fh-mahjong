@@ -5,6 +5,9 @@
 - **[`ai/CLAUDE.md`](../../CLAUDE.md)** — commands (every `fh-mj-*` CLI), architecture, and the cross-cutting gotchas. Read this first.
 - **[`ai/MODULES.md`](../../MODULES.md)** — per-module reference for every file in this directory and `scripts/`.
 
+Reusable counterfactual dataset construction lives in `counterfactual_data.py`; its CLI
+under `scripts/` owns argument parsing. Library callers import the library module directly.
+
 ## Where to write changes
 
 | You changed | Update |

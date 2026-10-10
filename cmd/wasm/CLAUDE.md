@@ -5,8 +5,8 @@
 ## Overview
 
 Compiles `rules.FenghuaRuleset` to WebAssembly (`GOOS=js GOARCH=wasm`). **The frontend does not
-load it**: `web/src/hooks/useMahjongWasm.ts` has no importers, and the client takes legal actions
-from the server's `PlayerState.valid_actions`.
+load it**: the unused browser hook is removed, and the client takes legal actions from the
+server's `PlayerState.valid_actions`.
 
 ## Key Files
 

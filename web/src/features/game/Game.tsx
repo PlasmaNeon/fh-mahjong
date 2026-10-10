@@ -5,9 +5,9 @@ import { MATCH_LEAVE_CLOSE_CODE, MATCH_LEAVE_REASON, useSocket } from '../../con
 import { useGameState } from '../../contexts/GameContext';
 import { game } from '../../proto/game';
 import { useGameStageLayout } from '../../table/stage/useGameStageLayout';
-import { loadPrivateRoomSession } from './privateRoomSession';
+import { loadPrivateRoomSession } from '../room/privateRoomSession';
 import { useAuth } from '../../contexts/AuthContext';
-import { saveLeftMatchMarker, loadLeftMatchMarker } from './rejoinMatch';
+import { saveLeftMatchMarker, loadLeftMatchMarker } from '../room/rejoinMatch';
 import ExitMatchButton from './ExitMatchButton';
 import GameSettingsButton from './GameSettingsButton';
 import { preloadAllTileSvgs } from '../../utils/tileDisplay';

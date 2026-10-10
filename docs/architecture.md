@@ -102,6 +102,9 @@ Payout liabilities (包) are not implemented.
 
 ## Server (`internal/api`, `cmd/server`)
 
+`cmd/server/main.go` owns process bootstrap; `policy_wiring.go` configures remote policies,
+health checks, and warmup, returning managed-policy cleanup to the process lifecycle.
+
 **Request flow.** Client → WebSocket → `Room.ActionQueue` → `engine.Game.ProcessPlayerAction` →
 `BroadcastState`. Each `Room` runs one goroutine, so game state needs no lock. The `Hub` maps
 users to rooms.
@@ -181,7 +184,8 @@ background jobs. Reports are cached per (match, checkpoint sha).
 ## Frontend (`web/`)
 
 - React 19 + Vite. Route pages live in `web/src/features/*` (`auth`, `lobby`, `game`,
-  `replay`, `calc`, `shanten`, `dev`).
+  `room`, `replay`, `calc`, `shanten`, `dev`). Room creation, invitations, waiting-room UI, and
+  rejoin storage belong to `features/room`; `features/game` owns live match interaction.
 - Providers nest `AuthProvider → SocketProvider → GameProvider`. The socket receives binary
   `GameState` frames; `GameContext` decodes them with protobufjs.
 - Live play and replay both render through one presenter, `web/src/table/TableBoard.tsx`, on a

@@ -1,13 +1,12 @@
 # web/src/features/game/
 
-> Live match and private-room waiting room. Routes: `/room/:roomId` (PrivateRoom), `/match/:matchId` (Game).
+> Live match controller and interaction helpers. Route: `/match/:matchId` (Game).
+> Private-table creation, waiting-room UI, and rejoin navigation live in `../room/`.
 
 ## Key Files
 
 ### Components
 - **Game.tsx** — Live match controller. Owns socket/action submission flow, interrupt state, auto-flower-reveal handling, and live round-result action buttons. Adapts backend player state into the shared `TableBoard` / `TableRoundResultOverlay` view models from `../../table/TableBoard.tsx`, and keeps fixed 1600x900 stage scaling via `useGameStageLayout()`. Intentional exits clear local game state and close the WebSocket with application code `4000`, letting the server release the seat immediately while ordinary refreshes retain reconnect grace.
-- **PrivateRoom.tsx** — Private-room waiting screen (route `/room/:roomId`; `App.tsx` wraps it as `PrivateRoomRoute`) with persistent Share Table, disclosed rules, and one sticky host Start Match action.
-- **SeatCard.tsx** — Single seat plaque. Empty seats expose one default Add AI action; AI type is an advanced disclosure.
 - **MatchEndOverlay.tsx** — Chongci final standings, Back to Club primary, Watch Replay secondary.
 - **ExitMatchButton.tsx** / **GameSettingsButton.tsx** — Leave-match and in-match settings controls.
 
@@ -17,9 +16,6 @@
 - **handTileClick.ts** — `resolveHandTileClick` / `HandTileClickResult`: what a tap on a hand tile means in the current mode.
 - **discardMode.ts** — `DiscardMode` plus `parse`/`load`/`save`: the persisted tap-to-discard preference.
 - **clearLift.ts** — `shouldClearLift`: when a lifted (selected) tile should drop back.
-- **rejoinMatch.ts** — `LeftMatchMarker` serialize/parse/save/load/clear for rejoining after refresh or reconnect.
-- **roomNavigation.ts** — `roomActiveRedirectMatchId`: whether a room response should redirect into an active match.
-- **privateRoomSession.ts** — Persists **only** the non-sensitive current `tableId` for login/rejoin navigation.
 
 ## Architecture Notes
 

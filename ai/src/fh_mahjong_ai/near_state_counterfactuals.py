@@ -9,7 +9,7 @@ import numpy as np
 
 from .evaluate import reward_summary
 from .paired_trace import counterfactual_label_from_pair
-from .scripts.build_counterfactual_risk_data import selected_divergences
+from .counterfactual_data import selected_divergences
 
 
 COMPARABLE_SCALARS = (
