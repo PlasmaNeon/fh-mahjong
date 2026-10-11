@@ -11,7 +11,7 @@ import (
 // rlTestResolver maps DIFFICULTY_RL to a stand-in policy and defers everything
 // else to bot.NewPolicy, mirroring how cmd/server installs the real remote
 // resolver when AI_BOT_POLICY_URL is set.
-func rlTestResolver(d pb.Difficulty, _ string, _ uint32) (bot.Policy, error) {
+func rlTestResolver(d pb.Difficulty, _, _ string, _ uint32) (bot.Policy, error) {
 	if d == pb.Difficulty_DIFFICULTY_RL {
 		return bot.NewHeuristicPolicy(), nil
 	}
@@ -21,10 +21,10 @@ func rlTestResolver(d pb.Difficulty, _ string, _ uint32) (bot.Policy, error) {
 func TestResolveSeatPolicy_DefaultRejectsRL(t *testing.T) {
 	m := NewMatchmaker(NewInMemoryQueue(), nil, NewHub())
 
-	if _, err := m.resolveSeatPolicy(pb.Difficulty_DIFFICULTY_HEURISTIC, "room-1", 0); err != nil {
+	if _, err := m.resolveSeatPolicy(pb.Difficulty_DIFFICULTY_HEURISTIC, "", "room-1", 0); err != nil {
 		t.Fatalf("heuristic should resolve without a custom resolver: %v", err)
 	}
-	if _, err := m.resolveSeatPolicy(pb.Difficulty_DIFFICULTY_RL, "room-1", 0); err == nil {
+	if _, err := m.resolveSeatPolicy(pb.Difficulty_DIFFICULTY_RL, "rl", "room-1", 0); err == nil {
 		t.Fatal("expected error resolving DIFFICULTY_RL with no resolver installed")
 	}
 }
@@ -33,7 +33,7 @@ func TestResolveSeatPolicy_WithResolver(t *testing.T) {
 	m := NewMatchmaker(NewInMemoryQueue(), nil, NewHub())
 	m.SeatPolicyResolver = rlTestResolver
 
-	policy, err := m.resolveSeatPolicy(pb.Difficulty_DIFFICULTY_RL, "room-1", 0)
+	policy, err := m.resolveSeatPolicy(pb.Difficulty_DIFFICULTY_RL, "rl", "room-1", 0)
 	if err != nil {
 		t.Fatalf("expected RL to resolve with resolver installed: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestPrivateTableSeat_RLRejectedWhenUnavailable(t *testing.T) {
 func TestPrivateTableSeat_RLAcceptedWhenAvailable(t *testing.T) {
 	server := newPrivateTableTestServer()
 	server.Matchmaker.SeatPolicyResolver = rlTestResolver
-	server.Matchmaker.RLAgentAvailable = func() bool { return true }
+	server.Matchmaker.RLAgents = func() []RLAgentInfo { return []RLAgentInfo{{ID: "rl", Label: "AI", Available: true}} }
 
 	hostToken := privateTableAuthToken(t, 101, "alice")
 	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/rl-on/join", hostToken, map[string]any{})
@@ -89,7 +89,7 @@ func TestPrivateTableSeat_RLRejectedWhenUnhealthy(t *testing.T) {
 	// the host can't pick an agent that isn't actually reachable.
 	server := newPrivateTableTestServer()
 	server.Matchmaker.SeatPolicyResolver = rlTestResolver
-	server.Matchmaker.RLAgentAvailable = func() bool { return false }
+	server.Matchmaker.RLAgents = func() []RLAgentInfo { return []RLAgentInfo{{ID: "rl", Label: "AI", Available: false}} }
 
 	hostToken := privateTableAuthToken(t, 101, "alice")
 	doPrivateTableRequest(t, server, http.MethodPost, "/api/v1/rooms/rl-down/join", hostToken, map[string]any{})
@@ -118,7 +118,7 @@ func TestHandleConfig_DefaultUnavailable(t *testing.T) {
 
 func TestHandleConfig_Available(t *testing.T) {
 	server := newPrivateTableTestServer()
-	server.Matchmaker.RLAgentAvailable = func() bool { return true }
+	server.Matchmaker.RLAgents = func() []RLAgentInfo { return []RLAgentInfo{{ID: "rl", Label: "AI", Available: true}} }
 
 	recorder, body := doPrivateTableRequest(t, server, http.MethodGet, "/api/v1/config", "", nil)
 	if recorder.Code != http.StatusOK {

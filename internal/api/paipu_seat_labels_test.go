@@ -64,25 +64,26 @@ func TestStartPrivateTable_RecordsSeatComposition(t *testing.T) {
 	hub := NewHub()
 	hub.BindRoom = make(chan RoomBind, 1)
 	m := NewMatchmaker(NewInMemoryQueue(), nil, hub)
-	m.SeatPolicyResolver = func(d pb.Difficulty, _ string, _ uint32) (bot.Policy, error) {
+	m.SeatPolicyResolver = func(d pb.Difficulty, _, _ string, _ uint32) (bot.Policy, error) {
 		if d == pb.Difficulty_DIFFICULTY_RL {
 			return stubPolicy{}, nil
 		}
 		return bot.NewPolicy(d)
 	}
-	m.RLPolicyIdentity = func() string { return "champ.pt@step9" }
+	m.RLPolicyIdentity = func(string) string { return "champ.pt@step9" }
+	m.RLAgents = func() []RLAgentInfo { return []RLAgentInfo{{ID: "rl", Label: "AI", Available: true}} }
 
 	if _, err := m.CreatePrivateTable("t1", 101, "alice"); err != nil {
 		t.Fatalf("join: %v", err)
 	}
 	if _, err := m.MutatePrivateTable("t1", func(pt *PrivateTable) error {
-		if err := pt.setSeat(1, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+		if err := pt.setSeat(1, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, ""); err != nil {
 			return err
 		}
-		if err := pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_RL); err != nil {
+		if err := pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_RL, ""); err != nil {
 			return err
 		}
-		return pt.setSeat(3, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC)
+		return pt.setSeat(3, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, "")
 	}); err != nil {
 		t.Fatalf("configure seats: %v", err)
 	}
@@ -118,19 +119,19 @@ func TestStartPrivateTable_DefaultsToChongciMatch(t *testing.T) {
 	hub := NewHub()
 	hub.BindRoom = make(chan RoomBind, 1)
 	m := NewMatchmaker(NewInMemoryQueue(), nil, hub)
-	m.SeatPolicyResolver = func(d pb.Difficulty, _ string, _ uint32) (bot.Policy, error) { return bot.NewPolicy(d) }
+	m.SeatPolicyResolver = func(d pb.Difficulty, _, _ string, _ uint32) (bot.Policy, error) { return bot.NewPolicy(d) }
 
 	if _, err := m.CreatePrivateTable("t-chongci", 101, "alice"); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if _, err := m.MutatePrivateTable("t-chongci", func(pt *PrivateTable) error {
-		if err := pt.setSeat(1, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+		if err := pt.setSeat(1, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, ""); err != nil {
 			return err
 		}
-		if err := pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+		if err := pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, ""); err != nil {
 			return err
 		}
-		return pt.setSeat(3, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC)
+		return pt.setSeat(3, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, "")
 	}); err != nil {
 		t.Fatalf("configure seats: %v", err)
 	}
@@ -154,7 +155,7 @@ func TestStartPrivateTable_ClassicIsSingleHand(t *testing.T) {
 	hub := NewHub()
 	hub.BindRoom = make(chan RoomBind, 1)
 	m := NewMatchmaker(NewInMemoryQueue(), nil, hub)
-	m.SeatPolicyResolver = func(d pb.Difficulty, _ string, _ uint32) (bot.Policy, error) { return bot.NewPolicy(d) }
+	m.SeatPolicyResolver = func(d pb.Difficulty, _, _ string, _ uint32) (bot.Policy, error) { return bot.NewPolicy(d) }
 
 	if _, err := m.CreatePrivateTable("t-classic", 101, "alice"); err != nil {
 		t.Fatalf("create: %v", err)
@@ -163,13 +164,13 @@ func TestStartPrivateTable_ClassicIsSingleHand(t *testing.T) {
 		if err := pt.setMatchMode("classic", nil); err != nil {
 			return err
 		}
-		if err := pt.setSeat(1, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+		if err := pt.setSeat(1, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, ""); err != nil {
 			return err
 		}
-		if err := pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+		if err := pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, ""); err != nil {
 			return err
 		}
-		return pt.setSeat(3, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC)
+		return pt.setSeat(3, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, "")
 	}); err != nil {
 		t.Fatalf("configure: %v", err)
 	}

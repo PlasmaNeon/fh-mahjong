@@ -25,7 +25,7 @@ func (p countingCloseablePolicy) Close() {
 	atomic.AddInt32(p.closed, 1)
 }
 
-// TestValidateSeatDifficulty_DoesNotConstructPolicy pins the adversarial
+// TestValidateSeat_DoesNotConstructPolicy pins the adversarial
 // round-4 Finding 1(a) fix: seat-difficulty VALIDATION (used by
 // handlePrivateTableSeat before a seat is actually assigned) must not invoke
 // the SeatPolicyResolver at all. Previously, validation called
@@ -35,11 +35,11 @@ func (p countingCloseablePolicy) Close() {
 // a host repeating the seat request would leak one goroutine per call. This
 // resolver counts constructor calls; assigning an RL seat (available) must
 // leave the counter at 0.
-func TestValidateSeatDifficulty_DoesNotConstructPolicy(t *testing.T) {
+func TestValidateSeat_DoesNotConstructPolicy(t *testing.T) {
 	var constructorCalls int32
 	server := newPrivateTableTestServer()
-	server.Matchmaker.RLAgentAvailable = func() bool { return true }
-	server.Matchmaker.SeatPolicyResolver = func(d pb.Difficulty, _ string, _ uint32) (bot.Policy, error) {
+	server.Matchmaker.RLAgents = func() []RLAgentInfo { return []RLAgentInfo{{ID: "rl", Label: "AI", Available: true}} }
+	server.Matchmaker.SeatPolicyResolver = func(d pb.Difficulty, _, _ string, _ uint32) (bot.Policy, error) {
 		atomic.AddInt32(&constructorCalls, 1)
 		if d == pb.Difficulty_DIFFICULTY_RL {
 			return bot.NewHeuristicPolicy(), nil
@@ -75,7 +75,7 @@ func TestStartPrivateTable_ClosesEarlierSeatPoliciesOnLaterSeatFailure(t *testin
 	hub.BindRoom = make(chan RoomBind, 1)
 	m := NewMatchmaker(NewInMemoryQueue(), nil, hub)
 
-	m.SeatPolicyResolver = func(d pb.Difficulty, _ string, seat uint32) (bot.Policy, error) {
+	m.SeatPolicyResolver = func(d pb.Difficulty, _, _ string, seat uint32) (bot.Policy, error) {
 		if seat == 2 {
 			return nil, errors.New("boom: seat 2 resolution failed")
 		}
@@ -86,13 +86,13 @@ func TestStartPrivateTable_ClosesEarlierSeatPoliciesOnLaterSeatFailure(t *testin
 		t.Fatalf("create: %v", err)
 	}
 	if _, err := m.MutatePrivateTable("t-leak", func(pt *PrivateTable) error {
-		if err := pt.setSeat(1, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+		if err := pt.setSeat(1, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, ""); err != nil {
 			return err
 		}
-		if err := pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+		if err := pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, ""); err != nil {
 			return err
 		}
-		return pt.setSeat(3, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC)
+		return pt.setSeat(3, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, "")
 	}); err != nil {
 		t.Fatalf("configure seats: %v", err)
 	}

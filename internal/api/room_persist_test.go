@@ -526,7 +526,7 @@ func TestStartPrivateTable_RefusedWhileDraining(t *testing.T) {
 	}
 	if _, err := m.MutatePrivateTable("t-drain", func(pt *PrivateTable) error {
 		for _, seat := range []uint32{1, 2, 3} {
-			if err := pt.setSeat(seat, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+			if err := pt.setSeat(seat, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, ""); err != nil {
 				return err
 			}
 		}
@@ -708,7 +708,7 @@ func TestStartPrivateTable_DrainGateLeavesNoOrphanRow(t *testing.T) {
 	}
 	if _, err := m.MutatePrivateTable("t-race", func(pt *PrivateTable) error {
 		for _, seat := range []uint32{1, 2, 3} {
-			if err := pt.setSeat(seat, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC); err != nil {
+			if err := pt.setSeat(seat, "bot", pb.Difficulty_DIFFICULTY_HEURISTIC, ""); err != nil {
 				return err
 			}
 		}

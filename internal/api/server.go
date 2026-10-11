@@ -223,10 +223,14 @@ func (s *Server) setupRoutes() {
 }
 
 // handleConfig exposes server-wide capability flags the frontend needs before
-// rendering. rlAgentAvailable controls whether the private room offers the
-// trained RL agent as a seat option.
+// rendering: the RL agents a private-room host can seat (menu order, first =
+// default, live availability) and, for older clients, whether any of them is
+// available.
 func (s *Server) handleConfig(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"rlAgentAvailable": s.Matchmaker.rlAgentAvailable()})
+	c.JSON(http.StatusOK, gin.H{
+		"rlAgentAvailable": s.Matchmaker.rlAgentAvailable(),
+		"rlAgents":         s.Matchmaker.rlAgents(),
+	})
 }
 
 // StorePaipu saves paipu JSON to the in-memory store and DB (if available).
