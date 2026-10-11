@@ -42,7 +42,12 @@ never fall back to it and return the file or 404.
   `chongci-fh`; idempotent join, `409 match_forming` on a late leave) and the private-table
   lifecycle (create → join/seat → mode → start → active). Private tables default to Chongci
   (2000 / bust 0 / 50 hands); classic private tables run as a one-hand match so they reach
-  `MATCH_END` and list in history. An RL seat triggers endpoint warmup before start. An active
+  `MATCH_END` and list in history. A bot seat is `{kind: bot, difficulty, rlAgent}`;
+  `ValidateSeat` checks an RL seat's agent exists and is available and stores the resolved id
+  (empty = the default agent). `GET /config` returns `rlAgents` (`[{id, label, available}]`,
+  menu order) and `rlAgentAvailable` (any agent available). The matchmaker hooks are
+  `RLAgents`, `SeatPolicyResolver(d, agentID, roomID, seat)`, `RLPolicyIdentity(agentID)` and
+  `WarmRLEndpoints(ctx, agentIDs)`. An active
   table maps `tableId → matchId + participants`, so participants rejoin and outsiders get 409.
   WebSocket `lobby_update` envelopes carry the full `PrivateTableState` JSON under `room`.
 - **paipu.go**, **replay_history.go** — paipu read path (`loadPaipuJSON`: in-memory store →
@@ -73,8 +78,9 @@ never fall back to it and return the file or 404.
 - **Seats.** Close code `4000` releases a human seat immediately; an ordinary disconnect keeps it
   for the grace period. When the last human leaves, the room shuts down instead of playing on
   bot-only. Rooms send `UnbindRoom` on shutdown so the Hub never rejoins a dead room.
-- **RL warmup gate.** `StartPrivateTable` warms every configured policy endpoint (25 s budget)
-  with the table lock released, then re-validates the seat config. Warmup failure → 503 (table
+- **RL warmup gate.** `StartPrivateTable` warms the agents the table seats (25 s budget; a seat
+  without an agent id plays the default agent) with the table lock released, then re-validates
+  the seat config. Warmup failure → 503 (table
   stays configuring); a config change meanwhile → 409. The 503 body never names the endpoint.
 - **Review cache.** `POST /matches/:id/review` resolves the served checkpoint sha from `/healthz`
   and reads the `(match, sha)` row; a miss builds and stores under that sha; an unknown sha falls

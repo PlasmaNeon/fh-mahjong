@@ -28,8 +28,8 @@ A separate package because `rl` imports `bot`, while remote policies need `rl`'s
   one request and its result; failures are never cached; 10 s budget; optional bearer token; every
   attempt logs a `policy warmup:` line.
 - **rl_endpoint.go** — `EffectiveRLEndpointURL[FromEnv]`: `RL_AGENT_POLICY_URL`, else
-  `AI_BOT_POLICY_URL`, else the localhost default. Shared by `configurePolicies` in
-  `cmd/server/policy_wiring.go` and the review API.
+  `AI_BOT_POLICY_URL`, else the localhost default — the legacy single agent when `RL_AGENTS` is
+  unset. Shared by `configurePolicies` in `cmd/server/policy_wiring.go` and the review API.
 - **service_identity.go** — `SameServiceEndpoint(a, b)`.
 - **checkpoint_identity.go** — `checkpointIdentity(path, step)`.
 

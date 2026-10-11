@@ -18,7 +18,7 @@ services:
   # `docker compose up` still brings up only db.
   #
   # The deployed champion ships in ai/checkpoints/deploy/:
-  #   RL_CHECKPOINT_FILE=deploy/selfplay-deep4-student-iter275-39ch.pt \
+  #   RL_CHECKPOINT_FILE=deploy/ai-v4-5d51e8e4.pt \
   #   docker compose --profile full up
   # To serve another checkpoint, set RL_CHECKPOINT_DIR to its host directory.
   policy:

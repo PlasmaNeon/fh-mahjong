@@ -70,8 +70,9 @@ Rules:
 - Write the outcome next to the registration, including fails.
 
 On promotion, update `ai/checkpoints/best-checkpoints.json` and the current-state table in
-[`ai-player.md`](ai-player.md). To ship to production, replace the file in
-`ai/checkpoints/deploy/` and `ai/Dockerfile.deploy`'s `--checkpoint` in the same PR.
+[`ai-player.md`](ai-player.md). To ship to production, change `ai/checkpoints/deploy/`, the
+manifest's `deployed_ai_agents`, `ai/Dockerfile.deploy`'s default `FH_MJ_CHECKPOINT` and the
+backend's `RL_AGENTS` in the same rollout, gated by `fh-mj-serving-parity` per checkpoint.
 
 ## Seed windows (as of 2026-10-13)
 

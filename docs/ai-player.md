@@ -218,15 +218,13 @@ Room ─► remote.HTTPPolicy ─► POST /act {seat, planes, scalars, action_ma
   in-process or against a live endpoint (whose `/healthz` sha must match the checkpoint).
 - Rollout to production goes shadow (candidate mirrors live decisions) → canary → switch.
 
-## Current state (2026-10-08)
+## Current state (2026-10-11)
 
 | Role | Checkpoint | Where |
 |---|---|---|
-| Production | deep4 `iter275` student, 39 channels, no events, greedy | `ai/checkpoints/deploy/`, Zeabur `policy` |
+| Production | AI v4 `5d51e8e4` (default), v3 `f9662491`, v2 `ea6d4d41`, v1 `3fdfe246`; greedy, suit-averaged, event window 128; the host picks one per seat | `ai/checkpoints/deploy/`, one Zeabur policy service each |
 | Gate-qualified research champion | `anchor075` (`restart-iter075`, sha `ce9d867f…`) | `ai/checkpoints/anchors/` |
-| Strongest registered policy | continuation-lap `iter_450` (`5d51e8e4…`), suit-averaged | training box |
+| Strongest registered policy | 450-iteration continuation `iter_450` (`5d51e8e4…`), suit-averaged = AI v4 | training box, `ai/checkpoints/deploy/` |
 
-At a strong table `f9662491` is about +0.15 placement better than production, and `iter_450` beats
-`f9662491` by a further +0.026.
-Shipping it needs the B2c rollout (event-window serving, already built) plus suit-averaged
-serving.
+At a strong table, AI v1–v3 each score about +0.15 placement against 3× the retired production
+`iter275`; AI v4 beats v3 by +0.026 ± 0.018 (paired, at a table of 3× v3).
