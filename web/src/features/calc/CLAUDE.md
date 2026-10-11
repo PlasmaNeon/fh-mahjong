@@ -10,7 +10,8 @@
 ## Notes
 
 - `calcHelpers.ts` adapts `utils/tileModel.ts`; never re-implement `TILE_LIBRARY`, parsing, or
-  suit ordering (`suitOrder` is the app's single ordering).
+  suit ordering (`suitOrder` is the app's single ordering). Its `WIND_OPTIONS` is an English-only
+  form-option list, not a duplicate of `utils/winds.ts`.
 - Calls `POST /api/v1/tools/calc` (POST-only).
 - Uses `theme/base.css` utility classes directly for its dense layout instead of typed primitives
   — a deliberate exception shared with `shanten/`.

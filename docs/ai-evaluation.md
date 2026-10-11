@@ -88,11 +88,12 @@ Spent evaluation windows (never reuse):
 | 2,500,000–2,504,999 | suit-symmetry probe |
 | 2,700,000, 2,710,000, 2,720,000, 2,730,000, 2,900,000, 3,100,000 (+5,000 each) | suit-augment laps, face/ensemble probes, distillation lap |
 | 3,200,000–3,209,999, 3,260,000–3,279,999 | control confirmation, look-ahead lap |
-| 4,150,000–4,159,999 | reserved: 450-iteration continuation lap |
+| 4,150,000–4,159,999 | 450-iteration continuation lap |
+| 4,200,000–4,203,999, 4,210,000–4,212,499 | strong-table benchmark: `iter_450` vs 3× f9662491 |
 
 Reserved but unspent: 1,300,000–1,301,499 (placement-reshape, never run); 3,300,000+ (a
 throughput session). Training ranges in use go up to 4,143,999. Pick the next window above
-4,160,000 and record it here when registering.
+4,212,500 and record it here when registering.
 
 ## Training box
 

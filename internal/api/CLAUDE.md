@@ -94,7 +94,8 @@ never fall back to it and return the file or 404.
 
 ## Tests
 
-`room_remote_test.go` has a skipped-by-default live test: set
+Use `newTestDB` / `newTestServer` (`testdb_test.go`, in-memory SQLite + `AutoMigrate`) and the
+`internal/review/reviewtest` policy stub rather than new fixtures. `room_remote_test.go` has a skipped-by-default live test: set
 `FH_MAHJONG_REMOTE_POLICY_TEST_URL=http://127.0.0.1:8765/act` with a policy server running.
 `replay_study_test.go` has an opt-in browser harness (`FH_REVIEW_BROWSER=1`, SQLite at
 `/tmp/fh-review-browser.sqlite`, a real policy server); CI skips it.

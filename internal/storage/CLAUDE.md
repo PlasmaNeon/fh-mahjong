@@ -22,7 +22,8 @@
 - **migrate.go** — `AutoMigrate`, including the username cutover (sanitize, keep the oldest of a
   collision, suffix `-2`/`-3`, then the unique index).
 - **match_history.go** — idempotently recovers missing `MatchPlayer` rows from valid completed
-  legacy paipu; malformed records are counted and skipped.
+  legacy paipu; malformed records are counted and skipped. `PlacementsFromScores` is the one
+  competition-ranking helper (ties share a placement).
 
 ## Notes
 

@@ -21,6 +21,8 @@ A separate package because `rl` imports `bot`, while remote policies need `rl`'s
     the background at startup; a mismatch logs loudly and still fails closed per decision.
 - **health.go** — `HealthChecker`: cached `/healthz` probe that gates the RL seat option;
   `Identity()` returns the public-safe `"<basename>@step<N>"` label (never a path or URL).
+  `fetchHealthzBody` and `siblingRoute` (`/act` → `/healthz`, `/warmup`) are the shared
+  round-trip and route mapping.
 - **warmup.go** — `WarmupManager`: drives `POST /warmup` so no match pays a cold forward pass.
   Warm once per endpoint per TTL (default 15 m; 0 = once per process); concurrent callers share
   one request and its result; failures are never cached; 10 s budget; optional bearer token; every
@@ -37,3 +39,7 @@ A separate package because `rl` imports `bot`, while remote policies need `rl`'s
   another).
 - During live checks, read `HTTPPolicy.Stats()` to confirm the model is serving rather than
   silently falling back.
+- Do not merge these helpers with their `internal/review` look-alikes:
+  `review.HTTPPolicyClient.CurrentCheckpointSha256` returns a different shape from a different
+  payload, and `actionMaskJSON` vs `review.actionMaskToInts` is six lines — sharing either would
+  add a package dependency for nothing.
