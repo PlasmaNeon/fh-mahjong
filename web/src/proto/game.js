@@ -9531,6 +9531,7 @@ export const game = $root.game = (() => {
          * @property {number|undefined} [userId] SeatConfig userId
          * @property {string|undefined} [username] SeatConfig username
          * @property {game.Difficulty|undefined} [difficulty] SeatConfig difficulty
+         * @property {string|undefined} [rlAgent] SeatConfig rlAgent
          */
 
         /**
@@ -9581,6 +9582,14 @@ export const game = $root.game = (() => {
         SeatConfig.prototype.difficulty = 0;
 
         /**
+         * SeatConfig rlAgent.
+         * @member {string} rlAgent
+         * @memberof game.SeatConfig
+         * @instance
+         */
+        SeatConfig.prototype.rlAgent = "";
+
+        /**
          * Creates a new SeatConfig instance using the specified properties.
          * @function create
          * @memberof game.SeatConfig
@@ -9612,6 +9621,8 @@ export const game = $root.game = (() => {
                 writer.uint32(/* id 3, wireType 2 =*/26).string(message.username);
             if (message.difficulty != null && Object.hasOwnProperty.call(message, "difficulty"))
                 writer.uint32(/* id 4, wireType 0 =*/32).int32(message.difficulty);
+            if (message.rlAgent != null && Object.hasOwnProperty.call(message, "rlAgent"))
+                writer.uint32(/* id 5, wireType 2 =*/42).string(message.rlAgent);
             return writer;
         };
 
@@ -9662,6 +9673,10 @@ export const game = $root.game = (() => {
                     }
                 case 4: {
                         message.difficulty = reader.int32();
+                        break;
+                    }
+                case 5: {
+                        message.rlAgent = reader.string();
                         break;
                     }
                 default:
@@ -9717,6 +9732,9 @@ export const game = $root.game = (() => {
                 case 2:
                     break;
                 }
+            if (message.rlAgent != null && message.hasOwnProperty("rlAgent"))
+                if (!$util.isString(message.rlAgent))
+                    return "rlAgent: string expected";
             return null;
         };
 
@@ -9758,6 +9776,8 @@ export const game = $root.game = (() => {
                 message.difficulty = 2;
                 break;
             }
+            if (object.rlAgent != null)
+                message.rlAgent = String(object.rlAgent);
             return message;
         };
 
@@ -9779,6 +9799,7 @@ export const game = $root.game = (() => {
                 object.userId = 0;
                 object.username = "";
                 object.difficulty = options.enums === String ? "DIFFICULTY_UNSPECIFIED" : 0;
+                object.rlAgent = "";
             }
             if (message.kind != null && message.hasOwnProperty("kind"))
                 object.kind = message.kind;
@@ -9788,6 +9809,8 @@ export const game = $root.game = (() => {
                 object.username = message.username;
             if (message.difficulty != null && message.hasOwnProperty("difficulty"))
                 object.difficulty = options.enums === String ? $root.game.Difficulty[message.difficulty] === undefined ? message.difficulty : $root.game.Difficulty[message.difficulty] : message.difficulty;
+            if (message.rlAgent != null && message.hasOwnProperty("rlAgent"))
+                object.rlAgent = message.rlAgent;
             return object;
         };
 

@@ -2556,7 +2556,10 @@ type SeatConfig struct {
 	UserId   uint32 `protobuf:"varint,2,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
 	Username string `protobuf:"bytes,3,opt,name=username,proto3" json:"username,omitempty"`
 	// Populated only when kind == "bot".
-	Difficulty    Difficulty `protobuf:"varint,4,opt,name=difficulty,proto3,enum=game.Difficulty" json:"difficulty,omitempty"`
+	Difficulty Difficulty `protobuf:"varint,4,opt,name=difficulty,proto3,enum=game.Difficulty" json:"difficulty,omitempty"`
+	// Populated only when difficulty == DIFFICULTY_RL: the RL agent id from the
+	// server's agent registry (GET /api/v1/config "rlAgents"). Empty = default agent.
+	RlAgent       string `protobuf:"bytes,5,opt,name=rl_agent,json=rlAgent,proto3" json:"rl_agent,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2617,6 +2620,13 @@ func (x *SeatConfig) GetDifficulty() Difficulty {
 		return x.Difficulty
 	}
 	return Difficulty_DIFFICULTY_UNSPECIFIED
+}
+
+func (x *SeatConfig) GetRlAgent() string {
+	if x != nil {
+		return x.RlAgent
+	}
+	return ""
 }
 
 type PrivateTableState struct {
@@ -3703,7 +3713,7 @@ const file_proto_game_proto_rawDesc = "" +
 	"\x10terminal_outcome\x18\n" +
 	" \x01(\v2\x12.game.RoundOutcomeR\x0fterminalOutcome\"E\n" +
 	"\x11TrajectoryDataset\x120\n" +
-	"\asamples\x18\x01 \x03(\v2\x16.game.TrajectorySampleR\asamples\"\x87\x01\n" +
+	"\asamples\x18\x01 \x03(\v2\x16.game.TrajectorySampleR\asamples\"\xa2\x01\n" +
 	"\n" +
 	"SeatConfig\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x17\n" +
@@ -3711,7 +3721,8 @@ const file_proto_game_proto_rawDesc = "" +
 	"\busername\x18\x03 \x01(\tR\busername\x120\n" +
 	"\n" +
 	"difficulty\x18\x04 \x01(\x0e2\x10.game.DifficultyR\n" +
-	"difficulty\"\x95\x02\n" +
+	"difficulty\x12\x19\n" +
+	"\brl_agent\x18\x05 \x01(\tR\arlAgent\"\x95\x02\n" +
 	"\x11PrivateTableState\x12\x19\n" +
 	"\btable_id\x18\x01 \x01(\tR\atableId\x12 \n" +
 	"\fhost_user_id\x18\x02 \x01(\rR\n" +

@@ -424,6 +424,9 @@ message SeatConfig {
 
   // Populated only when kind == "bot".
   Difficulty difficulty = 4;
+  // Populated only when difficulty == DIFFICULTY_RL: the RL agent id from the
+  // server's agent registry (GET /api/v1/config "rlAgents"). Empty = default agent.
+  string rl_agent = 5;
 }
 
 message PrivateTableState {
