@@ -73,7 +73,7 @@ On promotion, update `ai/checkpoints/best-checkpoints.json` and the current-stat
 [`ai-player.md`](ai-player.md). To ship to production, replace the file in
 `ai/checkpoints/deploy/` and `ai/Dockerfile.deploy`'s `--checkpoint` in the same PR.
 
-## Seed windows (as of 2026-10-08)
+## Seed windows (as of 2026-10-11)
 
 Screening: `--start-seed 910000`, 120 seeds, reusable, never cited for promotion.
 
@@ -90,10 +90,11 @@ Spent evaluation windows (never reuse):
 | 3,200,000–3,209,999, 3,260,000–3,279,999 | control confirmation, look-ahead lap |
 | 4,150,000–4,159,999 | 450-iteration continuation lap |
 | 4,200,000–4,203,999, 4,210,000–4,212,499 | strong-table benchmark: `iter_450` vs 3× f9662491 |
+| 4,450,000–4,459,999 | second 450-iteration continuation lap (from `iter_450`) |
 
 Reserved but unspent: 1,300,000–1,301,499 (placement-reshape, never run); 3,300,000+ (a
-throughput session). Training ranges in use go up to 4,143,999. Pick the next window above
-4,212,500 and record it here when registering.
+throughput session). Training ranges in use go up to 4,443,999 (4,300,000–4,443,999: second continuation lap). Pick
+the next window above 4,460,000 and record it here when registering.
 
 ## Training box
 
