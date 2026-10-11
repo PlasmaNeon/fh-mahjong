@@ -199,6 +199,12 @@ func (p *HTTPPolicy) ChooseActionCtxProv(decisionCtx *bot.DecisionContext) (*pb.
 	return p.fallback.ChooseAction(state, seat), fallbackProv
 }
 
+// Endpoint is the /act URL this policy calls.
+func (p *HTTPPolicy) Endpoint() string { return p.endpoint }
+
+// EventWindow is the event-history window this policy sends (0 = event-free).
+func (p *HTTPPolicy) EventWindow() uint32 { return p.eventWindow }
+
 func (p *HTTPPolicy) Stats() HTTPPolicyStats {
 	if p == nil {
 		return HTTPPolicyStats{FallbackReasons: map[string]uint64{}}

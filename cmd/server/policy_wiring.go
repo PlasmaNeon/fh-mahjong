@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,7 +13,6 @@ import (
 	"github.com/plasma/fh-mahjong/internal/bot"
 	"github.com/plasma/fh-mahjong/internal/bot/remote"
 	"github.com/plasma/fh-mahjong/internal/rl"
-	pb "github.com/plasma/fh-mahjong/proto"
 )
 
 // defaultRLPolicyURL is the local serve_policy.py endpoint used for the
@@ -118,64 +116,64 @@ func configurePolicies(matchmaker *api.Matchmaker) func() {
 		validatePolicyContractAsync("RL shadow policy", shadowHTTPPolicy)
 	}
 
-	// Startup healthz validation only needs to cover the URL/window config,
-	// not any particular seat's instance, so a single dedicated probe built
-	// the same way as every per-seat instance is enough — one goroutine at
-	// boot, not one per seat.
-	validatePolicyContractAsync("RL primary policy", newRLPrimaryPolicy(rlPolicyURL, rlHTTPClient, rlEventWindow))
-
-	// Let private-room hosts assign a trained RL agent per seat. The remote
-	// HTTP policy already falls back to heuristic per-decision, so a transient
-	// outage mid-match degrades gracefully rather than stalling.
-	matchmaker.SeatPolicyResolver = newSeatPolicyResolver(rlPolicyURL, rlHTTPClient, rlEventWindow, shadowPolicy)
-	// Surface the RL option only while the model server is actually
-	// reachable AND (when the primary policy speaks the event-history
-	// contract) actually serving the contract this Go server expects — a
-	// window mismatch would otherwise silently fall back on every /act
-	// forever while still showing as "available". The one-shot
-	// validatePolicyContractAsync probe above catches this at boot, but only
-	// once, often before a locally-managed policy server is even up; this
-	// recurring check re-validates on every RLAgentAvailable poll.
-	rlHealth := remote.NewHealthChecker(rlPolicyURL, remote.WithExpectedEventWindow(rlEventWindow))
-	matchmaker.RLAgentAvailable = rlHealth.Healthy
-	// Label RL seats in the paipu with the served checkpoint identity
-	// (basename@step from /healthz — paipu are public, so never a URL or
-	// filesystem path). When the policy server reports nothing, fall back to
-	// the operator-configured RL_AGENT_CHECKPOINT_ID; empty means unknown.
-	rlCheckpointLabel := strings.TrimSpace(os.Getenv("RL_AGENT_CHECKPOINT_ID"))
-	matchmaker.RLPolicyIdentity = func() string {
-		if id := rlHealth.Identity(); id != "" {
-			return id
-		}
-		return rlCheckpointLabel
+	// Private-room RL agents. RL_AGENTS (JSON, menu order, first = default)
+	// configures several, each a separate policy service; unset keeps the
+	// single legacy agent at the endpoint resolved above. A malformed registry
+	// is fatal: silently running with fewer agents would hide a misconfigured
+	// model from every host. Each RL seat plays its agent through a fresh
+	// remote HTTP policy that falls back to the heuristic per-decision, so a
+	// transient outage mid-match degrades gracefully rather than stalling.
+	agentCfgs, err := parseRLAgents(os.Getenv("RL_AGENTS"))
+	if err != nil {
+		log.Fatalf("invalid RL agent registry: %v", err)
 	}
-	log.Printf("Private-room RL agent endpoint: %s (offered when reachable)", rlPolicyURL)
+	usingRegistry := agentCfgs != nil
+	if !usingRegistry {
+		agentCfgs = []rlAgentConfig{legacyRLAgent(rlPolicyURL, rlEventWindow)}
+	} else if rlOverride != "" || strings.TrimSpace(os.Getenv("RL_AGENT_EVENT_WINDOW")) != "" {
+		log.Printf("RL_AGENTS is set: ignoring RL_AGENT_POLICY_URL / RL_AGENT_EVENT_WINDOW for private-room agents")
+	}
+	// Each agent gets one health checker: it gates the agent's availability
+	// (reachable AND serving the event-window contract this server expects —
+	// a mismatch would otherwise fall back on every /act while still showing
+	// as available) and reports the served checkpoint identity for the paipu.
+	// RL_AGENT_CHECKPOINT_ID labels the legacy agent when /healthz reports
+	// nothing.
+	agents := newRLAgentSet(agentCfgs, rlHTTPClient, shadowPolicy, os.Getenv("RL_AGENT_CHECKPOINT_ID"))
+	for _, cfg := range agentCfgs {
+		// One startup contract probe per agent (one goroutine at boot, not one per seat).
+		validatePolicyContractAsync("RL agent "+cfg.ID, newRLPrimaryPolicy(cfg.URL, rlHTTPClient, cfg.EventWindow))
+		log.Printf("Private-room RL agent %s (%q): %s window=%d (offered when reachable)", cfg.ID, cfg.Label, cfg.URL, cfg.EventWindow)
+	}
+	matchmaker.SeatPolicyResolver = agents.Resolver()
+	matchmaker.RLAgents = agents.Infos
+	matchmaker.RLPolicyIdentity = agents.Identity
 
-	// Cold-start gate: warm every configured policy endpoint (primary, plus the
-	// shadow candidate when configured) with a real forward pass BEFORE the
-	// first RL private room is admitted, so no in-match /act ever pays the
-	// cold-start cost and silently falls back to the heuristic. Warmup is
-	// endpoint-scoped and refreshed after the configured TTL (see
-	// internal/bot/remote/warmup.go), with its own 10s budget rather than the
+	// Cold-start gate: warm every agent a table seats (plus the shadow
+	// candidate when it mirrors a seated default agent) with a real forward
+	// pass BEFORE the RL private room is admitted, so no in-match /act ever
+	// pays the cold-start cost and silently falls back to the heuristic.
+	// Warmup is endpoint-scoped and refreshed after the configured TTL (see
+	// internal/bot/remote/warmup.go), with its own budget rather than the
 	// 750ms /act budget a cold forward pass would blow.
 	//
 	// RL_AGENT_SHADOW_POLICY_TOKEN carries the candidate service's evaluate
 	// token: serve_policy.py token-gates /warmup with its FH_MJ_EVALUATE_TOKEN
 	// whenever one is configured, so the backend must be given the SAME value
 	// here (empty = the service runs tokenless and /warmup is open, which is
-	// the primary production service's posture).
+	// the production agents' posture).
 	shadowPolicyToken := strings.TrimSpace(os.Getenv("RL_AGENT_SHADOW_POLICY_TOKEN"))
 	warmupManager := remote.NewWarmupManager(nil).
 		WithWarmupTTL(warmupTTL()).
 		WithWarmupLogger(log.Printf)
-	matchmaker.WarmRLEndpoints = newRLWarmupHook(warmupManager, rlPolicyURL, shadowPolicyURL, shadowPolicyToken)
+	matchmaker.WarmRLEndpoints = agents.WarmHook(warmupManager, shadowPolicyURL, shadowPolicyToken)
 
 	// When using the local default endpoint, bring the policy server up as a
 	// managed child process so the RL agent connects automatically on boot.
 	// Skipped when an external endpoint is configured (AI_BOT_POLICY_URL or
 	// RL_AGENT_POLICY_URL) — e.g. the docker-compose `policy` service.
 	var policyCleanup func()
-	if rlIsLocalDefault {
+	if rlIsLocalDefault && !usingRegistry {
 		policyCleanup = maybeStartPolicyServer(rlPolicyURL)
 	}
 	return policyCleanup
@@ -189,7 +187,7 @@ func configurePolicies(matchmaker *api.Matchmaker) func() {
 // reads to attribute paipu per seat; a shared instance would let one seat's
 // fallback/reload counters bleed into every other room's dataset, corrupting
 // the pure-RL filter and checkpoint labeling across the server's whole
-// lifetime. newSeatPolicyResolver calls this once per RL seat resolution; the
+// lifetime. rlAgentSet.Resolver calls this once per RL seat resolution; the
 // startup contract probe calls it once more for a throwaway validation-only
 // instance.
 func newRLPrimaryPolicy(rlPolicyURL string, httpClient *http.Client, eventWindow uint32) *remote.HTTPPolicy {
@@ -215,53 +213,6 @@ func newShadowHTTPPolicy(shadowPolicyURL string, httpClient *http.Client, eventW
 		remote.WithEventWindow(eventWindow),
 		remote.WithFallback(nil),
 	)
-}
-
-// newSeatPolicyResolver builds the api.Matchmaker.SeatPolicyResolver closure:
-// DIFFICULTY_RL seats get a freshly-constructed RL primary (see
-// newRLPrimaryPolicy's doc comment for why it must not be shared across
-// seats), optionally wrapped in a bot.NewShadowPolicyWithLabel when
-// shadowPolicy is configured; every other difficulty falls through to
-// bot.NewPolicy. The label is built from the roomID/seat the resolver is
-// called with (adversarial round 3, Finding 2) so shadow-mode log lines from
-// concurrent private tables are distinguishable. configurePolicies installs
-// this resolver; the no-shadow branch's per-call freshness is directly testable.
-func newSeatPolicyResolver(rlPolicyURL string, rlHTTPClient *http.Client, rlEventWindow uint32, shadowPolicy bot.ContextPolicy) func(pb.Difficulty, string, uint32) (bot.Policy, error) {
-	return func(d pb.Difficulty, roomID string, seat uint32) (bot.Policy, error) {
-		if d == pb.Difficulty_DIFFICULTY_RL {
-			primary := newRLPrimaryPolicy(rlPolicyURL, rlHTTPClient, rlEventWindow)
-			if shadowPolicy != nil {
-				label := fmt.Sprintf("room=%s seat=%d", roomID, seat)
-				return bot.NewShadowPolicyWithLabel(primary, shadowPolicy, 64, label), nil
-			}
-			return primary, nil
-		}
-		return bot.NewPolicy(d)
-	}
-}
-
-// newRLWarmupHook builds the api.Matchmaker.WarmRLEndpoints closure: warm the
-// primary endpoint first (it serves every real decision), then the shadow
-// candidate when one is configured. BOTH must be warm before an RL room is
-// admitted — a cold shadow candidate would time out on its first mirrored
-// decision and pollute the shadow-error gate the rollout runbook reads. The
-// primary is warmed tokenless (production serve_policy.py runs without an
-// evaluate token, which leaves /warmup open); the shadow candidate sends
-// shadowToken when non-empty. configurePolicies installs this hook; warmup
-// ordering and token forwarding are directly testable.
-func newRLWarmupHook(manager *remote.WarmupManager, rlPolicyURL, shadowPolicyURL, shadowToken string) func(context.Context) error {
-	return func(ctx context.Context) error {
-		if err := manager.Warm(ctx, rlPolicyURL, ""); err != nil {
-			return fmt.Errorf("primary policy endpoint: %w", err)
-		}
-		if shadowPolicyURL == "" {
-			return nil
-		}
-		if err := manager.Warm(ctx, shadowPolicyURL, shadowToken); err != nil {
-			return fmt.Errorf("shadow policy endpoint: %w", err)
-		}
-		return nil
-	}
 }
 
 // defaultWarmupTTL is how long a successful warmup is trusted before the

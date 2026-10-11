@@ -270,7 +270,7 @@ func TestNewShadowHTTPPolicy_FallbackDisabled(t *testing.T) {
 	}
 }
 
-// TestNewSeatPolicyResolver_RLSeatsGetDistinctPrimaryInstances pins the
+// TestRLAgentSetResolver_RLSeatsGetDistinctPrimaryInstances pins the
 // regression fix: in a no-shadow config, two DIFFICULTY_RL resolutions from
 // the SAME resolver must return two DISTINCT *remote.HTTPPolicy instances,
 // never a shared one. Room.reconcileRLPolicyIDs (internal/api/room.go) reads
@@ -279,14 +279,14 @@ func TestNewShadowHTTPPolicy_FallbackDisabled(t *testing.T) {
 // instance (as commit 2c45bed regressed to), one seat's fallback/reload
 // counters would bleed into every other room's dataset, corrupting the
 // pure-RL filter and checkpoint labeling server-lifetime-wide.
-func TestNewSeatPolicyResolver_RLSeatsGetDistinctPrimaryInstances(t *testing.T) {
-	resolver := newSeatPolicyResolver("http://127.0.0.1:1/act", &http.Client{}, 0, nil)
+func TestRLAgentSetResolver_RLSeatsGetDistinctPrimaryInstances(t *testing.T) {
+	resolver := newRLAgentSet([]rlAgentConfig{legacyRLAgent("http://127.0.0.1:1/act", 0)}, &http.Client{}, nil, "").Resolver()
 
-	first, err := resolver(pb.Difficulty_DIFFICULTY_RL, "room-1", 0)
+	first, err := resolver(pb.Difficulty_DIFFICULTY_RL, "rl", "room-1", 0)
 	if err != nil {
 		t.Fatalf("resolver first call: %v", err)
 	}
-	second, err := resolver(pb.Difficulty_DIFFICULTY_RL, "room-2", 1)
+	second, err := resolver(pb.Difficulty_DIFFICULTY_RL, "rl", "room-2", 1)
 	if err != nil {
 		t.Fatalf("resolver second call: %v", err)
 	}
@@ -317,21 +317,21 @@ func TestNewSeatPolicyResolver_RLSeatsGetDistinctPrimaryInstances(t *testing.T) 
 	}
 }
 
-// TestNewSeatPolicyResolver_ShadowPolicyIsLabeledWithRoomAndSeat pins the
+// TestRLAgentSetResolver_ShadowPolicyIsLabeledWithRoomAndSeat pins the
 // adversarial round 3, Finding 2 fix: when a shadow candidate is configured,
 // the resolver must wrap the primary in a bot.NewShadowPolicyWithLabel whose
 // label identifies the room and seat this resolution was called for, so
 // concurrent private tables' shadow-mode log lines are distinguishable.
-func TestNewSeatPolicyResolver_ShadowPolicyIsLabeledWithRoomAndSeat(t *testing.T) {
+func TestRLAgentSetResolver_ShadowPolicyIsLabeledWithRoomAndSeat(t *testing.T) {
 	var buf bytes.Buffer
 	prevOutput := log.Writer()
 	log.SetOutput(&buf)
 	defer log.SetOutput(prevOutput)
 
 	shadowCandidate := newShadowHTTPPolicy("http://127.0.0.1:1/act", &http.Client{}, 0)
-	resolver := newSeatPolicyResolver("http://127.0.0.1:1/act", &http.Client{}, 0, shadowCandidate)
+	resolver := newRLAgentSet([]rlAgentConfig{legacyRLAgent("http://127.0.0.1:1/act", 0)}, &http.Client{}, shadowCandidate, "").Resolver()
 
-	policy, err := resolver(pb.Difficulty_DIFFICULTY_RL, "table-42", 3)
+	policy, err := resolver(pb.Difficulty_DIFFICULTY_RL, "rl", "table-42", 3)
 	if err != nil {
 		t.Fatalf("resolver call: %v", err)
 	}
