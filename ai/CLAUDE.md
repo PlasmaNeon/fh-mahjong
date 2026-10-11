@@ -199,6 +199,9 @@ Quick map of what is where:
 - BC/AWBC load only current-observation arrays; IQL/offline-Q need next-state arrays and may need
   transition limits.
 - `--learning-seat-rule seed-mod-4` keeps one seat per episode before serialization.
+- `counterfactual_data.py` owns shared divergence selection and action-risk dataset creation;
+  library callers import it directly, while `scripts/build_counterfactual_risk_data.py` owns
+  CLI argument parsing and preserves the historical helper imports.
 - Shared helpers: `evaluate.parse_seed_windows` (seed-window expansion),
   `storage.write_json_report`, `storage.write_single_shard_dataset` (one shard + manifest; its
   provenance block is keyed `"counterfactual"` by default, which divergence-dataset readers

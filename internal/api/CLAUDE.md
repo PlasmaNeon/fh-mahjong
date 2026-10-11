@@ -82,6 +82,8 @@ never fall back to it and return the file or 404.
   limited to two at once. Status codes: 503 no `POLICY_SERVER_URL`, 404 no paipu, 422
   unreviewable paipu, 502 policy-server failure (including a 403 because `POLICY_SERVER_TOKEN`
   does not match the server's `FH_MJ_EVALUATE_TOKEN`).
+- Server policy factories and their event-window configuration live in
+  `cmd/server/policy_wiring.go`; the API consumes them through Matchmaker hooks.
 - **Review event window.** `REVIEW_EVENT_WINDOW` wins; otherwise `RL_AGENT_EVENT_WINDOW` is
   inherited only when `POLICY_SERVER_URL` names the same service as the RL endpoint. An invalid
   value means 0, never a clamp. The encoder and the client must use the same window.

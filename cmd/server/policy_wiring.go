@@ -155,7 +155,7 @@ func configurePolicies(matchmaker *api.Matchmaker) func() {
 	// shadow candidate when configured) with a real forward pass BEFORE the
 	// first RL private room is admitted, so no in-match /act ever pays the
 	// cold-start cost and silently falls back to the heuristic. Warmup is
-	// endpoint-scoped and warm-once per process (see
+	// endpoint-scoped and refreshed after the configured TTL (see
 	// internal/bot/remote/warmup.go), with its own 10s budget rather than the
 	// 750ms /act budget a cold forward pass would blow.
 	//
@@ -206,8 +206,8 @@ func newRLPrimaryPolicy(rlPolicyURL string, httpClient *http.Client, eventWindow
 // candidate that is completely down would still return a (heuristic) action
 // on every decision, ChooseActionCtx would never see nil, and the runbook's
 // zero-shadow-error gate would pass even though nothing candidate-side is
-// actually being evaluated. Split out from main() so this wiring is directly
-// testable.
+// actually being evaluated. configurePolicies uses this factory so the fallback
+// wiring is directly testable.
 func newShadowHTTPPolicy(shadowPolicyURL string, httpClient *http.Client, eventWindow uint32) *remote.HTTPPolicy {
 	return remote.NewHTTPPolicy(
 		shadowPolicyURL,
@@ -224,9 +224,8 @@ func newShadowHTTPPolicy(shadowPolicyURL string, httpClient *http.Client, eventW
 // shadowPolicy is configured; every other difficulty falls through to
 // bot.NewPolicy. The label is built from the roomID/seat the resolver is
 // called with (adversarial round 3, Finding 2) so shadow-mode log lines from
-// concurrent private tables are distinguishable. Split out from main() so
-// the no-shadow branch's per-call freshness is directly testable (main's
-// SeatPolicyResolver is otherwise just an inline closure).
+// concurrent private tables are distinguishable. configurePolicies installs
+// this resolver; the no-shadow branch's per-call freshness is directly testable.
 func newSeatPolicyResolver(rlPolicyURL string, rlHTTPClient *http.Client, rlEventWindow uint32, shadowPolicy bot.ContextPolicy) func(pb.Difficulty, string, uint32) (bot.Policy, error) {
 	return func(d pb.Difficulty, roomID string, seat uint32) (bot.Policy, error) {
 		if d == pb.Difficulty_DIFFICULTY_RL {
@@ -248,8 +247,8 @@ func newSeatPolicyResolver(rlPolicyURL string, rlHTTPClient *http.Client, rlEven
 // decision and pollute the shadow-error gate the rollout runbook reads. The
 // primary is warmed tokenless (production serve_policy.py runs without an
 // evaluate token, which leaves /warmup open); the shadow candidate sends
-// shadowToken when non-empty. Split out from main() so it is directly
-// testable.
+// shadowToken when non-empty. configurePolicies installs this hook; warmup
+// ordering and token forwarding are directly testable.
 func newRLWarmupHook(manager *remote.WarmupManager, rlPolicyURL, shadowPolicyURL, shadowToken string) func(context.Context) error {
 	return func(ctx context.Context) error {
 		if err := manager.Warm(ctx, rlPolicyURL, ""); err != nil {
@@ -341,7 +340,7 @@ func parseEventWindowEnv(envVar string, defaultWindow uint32) uint32 {
 // unset" look like two different services, when rlEndpointURL's own fallback
 // actually resolves the RL side onto AI_BOT_POLICY_URL itself — a single
 // shared service whose window must be inherited, not zeroed. Resolving the
-// fallback exactly once (in main(), via rlEndpointURL) and feeding the result
+// fallback exactly once (in configurePolicies, via rlEndpointURL) and feeding the result
 // in here keeps that logic from existing in two places.
 //
 // When AI_BOT_EVENT_WINDOW is unset: if aiBotPolicyURL and effectiveRLURL

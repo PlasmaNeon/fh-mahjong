@@ -13,6 +13,14 @@ from fh_mahjong_ai.counterfactual_data import (
 )
 
 
+__all__ = [
+    "build_counterfactual_risk_arrays",
+    "selected_divergences",
+    "write_counterfactual_shard",
+    "main",
+]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build direct counterfactual action-risk shards")
     parser.add_argument("--report", type=Path, required=True)

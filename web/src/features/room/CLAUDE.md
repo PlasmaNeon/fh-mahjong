@@ -6,7 +6,9 @@
 - **PrivateRoom.tsx** — waiting room, seats, invitations, host settings and Start Match.
   `App.tsx` keys the component by room ID so room-local state resets between links.
 - **SeatCard.tsx** — seat plaque with Add AI and advanced AI-type selection.
-- **invitationLink.ts** — same-origin invitation validation; used by the lobby entry.
+- **invitationLink.ts** — accepts same-origin HTTP(S) room links or `/room/:id` paths; used
+  by the lobby entry. Rejects foreign origins, credentials, query/fragment destinations,
+  and `/room/new`.
 - **roomNavigation.ts** — active-match redirects based only on this room's response.
 - **privateRoomSession.ts** — stores only the non-sensitive current table ID.
 - **rejoinMatch.ts** — intentional-leave marker, scoped to a room and match.

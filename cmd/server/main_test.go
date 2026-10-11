@@ -60,7 +60,7 @@ func TestParseEventWindowEnv(t *testing.T) {
 }
 
 // TestRLAgentEventWindowDefaultsToZero pins that RL_AGENT_EVENT_WINDOW (the
-// primary serving contract's window, read once in main()) defaults to 0 —
+// primary serving contract's window, read once in configurePolicies()) defaults to 0 —
 // event-free, byte-identical to pre-event-contract behavior — same as
 // internal/api's reviewEventWindow, unlike RL_AGENT_SHADOW_EVENT_WINDOW which
 // defaults to defaultShadowEventWindow (128).
@@ -87,7 +87,7 @@ func TestRLAgentEventWindowDefaultsToZero(t *testing.T) {
 // matchmaking bot policy might not actually speak.
 //
 // resolveAIBotEventWindow itself takes the already-resolved effective RL URL
-// (computed once via rlEndpointURL, the same helper main() uses to pick
+// (computed once via rlEndpointURL, the same helper configurePolicies() uses to pick
 // rlPolicyURL) rather than re-deriving the fallback inline — see round 7,
 // Finding 1: duplicating the fallback logic is what let AI_BOT_POLICY_URL set
 // + RL_AGENT_POLICY_URL unset silently diverge from the real effective RL
@@ -172,8 +172,8 @@ func TestResolveAIBotEventWindow(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("AI_BOT_EVENT_WINDOW", tc.envAIBotWindow)
-			// Mirror main(): resolve the effective RL URL first via the same
-			// helper main() uses, then feed it (never the raw override) to
+			// Mirror configurePolicies(): resolve the effective RL URL first via the same
+			// helper configurePolicies() uses, then feed it (never the raw override) to
 			// resolveAIBotEventWindow.
 			effectiveRLURL, _ := rlEndpointURL(tc.rlPolicyURLOverride, tc.aiBotPolicyURL)
 			got := resolveAIBotEventWindow(tc.aiBotPolicyURL, effectiveRLURL, tc.rlEventWindow)

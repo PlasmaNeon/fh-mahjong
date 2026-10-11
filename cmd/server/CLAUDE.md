@@ -17,7 +17,8 @@ RL policies, registers routes, and serves on `:8080` (or `PORT`).
 ## Notes
 
 - Run the package: `go run ./cmd/server` (or `make run` / `make dev`). The file form
-  `go run cmd/server/main.go` omits `policy_autostart.go` and fails to compile.
+  `go run cmd/server/main.go` omits `policy_wiring.go` and `policy_autostart.go`, leaving
+  `configurePolicies` and `installSignalCleanup` undefined.
 - Database: `DATABASE_URL`, else `host=localhost port=5433 user=fh_admin dbname=fh_mahjong` (the
   docker-compose database).
 - Policy wiring (variables in [`docs/architecture.md`](../../docs/architecture.md)):

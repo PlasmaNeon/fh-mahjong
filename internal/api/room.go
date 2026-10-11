@@ -315,7 +315,7 @@ type closeableBotPolicy interface {
 //
 // Ownership: SeatPolicies is populated per-room by
 // Matchmaker.StartPrivateTable, which calls resolveSeatPolicy once per RL
-// seat — each call to cmd/server/main.go's SeatPolicyResolver constructs a
+// seat — each call to cmd/server/policy_wiring.go's SeatPolicyResolver constructs a
 // brand-new bot.NewShadowPolicy, so every closeable instance here is unique
 // to this room and this room alone is responsible for closing it (never
 // shared across seats or rooms). The one thing a ShadowPolicy wraps that IS
@@ -324,7 +324,7 @@ type closeableBotPolicy interface {
 // closes its own queue/worker, never the wrapped shadow or primary policy,
 // so this stays safe even though that policy is long-lived and shared.
 // BotPolicy (from BotPolicyFactory, when set) is, by contrast, a single
-// *remote.HTTPPolicy shared across every room/bot cmd/server/main.go's
+// *remote.HTTPPolicy shared across every room/bot cmd/server/policy_wiring.go's
 // AI_BOT_POLICY_URL factory ever hands out — unlike the RL primary above,
 // matchmaking-bot seats aren't paipu-attributed per instance, so sharing
 // it is safe. Either way it's a plain remote.HTTPPolicy, which doesn't
