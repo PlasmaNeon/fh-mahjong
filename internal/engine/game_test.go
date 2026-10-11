@@ -783,3 +783,38 @@ func TestLastDiscardFromDrawn_Tedashi(t *testing.T) {
 		t.Errorf("expected LastDiscardFromDrawn=false for tedashi")
 	}
 }
+
+// In the claim window a seat may only answer with an action type it was
+// offered (or pass). A stale DISCARD from a claimant must be rejected, not
+// queued as its response: queued, it counts toward the response quorum and is
+// recorded by the room's decision trace as a choice outside the legal set.
+func TestInterruptRejectsActionTypeNotOffered(t *testing.T) {
+	r := &rules.FenghuaRuleset{}
+	g := engine.NewGame("test-uuid", r, engine.MatchOptions{})
+	g.Start()
+
+	activePlayer := g.State.ActivePlayer
+	discardTile := g.State.Players[activePlayer].ClosedHand[0]
+	southSeat := (activePlayer + 1) % 4
+	clone1 := &pb.Tile{Id: discardTile.Id + 1000, Suit: discardTile.Suit, Value: discardTile.Value}
+	clone2 := &pb.Tile{Id: discardTile.Id + 2000, Suit: discardTile.Suit, Value: discardTile.Value}
+	g.State.Players[southSeat].ClosedHand = append(g.State.Players[southSeat].ClosedHand, clone1, clone2)
+	if err := g.ProcessPlayerAction(activePlayer, &pb.PlayerAction{Type: pb.ActionType_ACTION_DISCARD, Tile: discardTile}); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+	if g.State.Phase != pb.GamePhase_PHASE_WAIT_DISCARDS {
+		t.Fatalf("expected the claim window, got %v", g.State.Phase)
+	}
+
+	stale := &pb.PlayerAction{Type: pb.ActionType_ACTION_DISCARD, Tile: g.State.Players[southSeat].ClosedHand[0]}
+	if err := g.ProcessPlayerAction(southSeat, stale); err == nil {
+		t.Fatal("a DISCARD during the claim window was accepted as the claimant's response")
+	}
+	if g.State.Phase != pb.GamePhase_PHASE_WAIT_DISCARDS {
+		t.Fatalf("a rejected action resolved the claim window: phase %v", g.State.Phase)
+	}
+	// The offered claim still works afterwards.
+	if err := g.ProcessPlayerAction(southSeat, &pb.PlayerAction{Type: pb.ActionType_ACTION_PON, MeldTiles: []*pb.Tile{clone1, clone2}}); err != nil {
+		t.Fatalf("offered pon after a rejected action: %v", err)
+	}
+}

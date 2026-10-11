@@ -13,7 +13,9 @@ delegates every rule decision to the injected `RuleEngine`. Overview in
     and never changes.
   - `ProcessPlayerAction(seat, action)` — the single entry point for players and bots.
     `handleActiveTurnAction` (discard, kan, flower, tsumo), `handleInterruptAction` (pon, chii,
-    ron, kan during `WAIT_DISCARDS`).
+    ron, kan during `WAIT_DISCARDS`). A claim-window response must be a pass or an action type
+    in the seat's `ValidActions`; anything else is an error and is not queued, so it can neither
+    count toward the response quorum nor enter the paipu decision trace.
   - `ResolveInterrupts()` — priority resolution once every eligible seat has responded or the
     room's timer fires. After a pon/chii it refreshes the claimer's valid actions.
   - `ExecuteSystemDraw()` / `ExecuteDeadWallDraw()` — wall draws. A normal draw clears all
