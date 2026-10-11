@@ -52,7 +52,7 @@ func parseReviewEventWindowEnv(envVar string, defaultWindow uint32) uint32 {
 // reviewEventWindow resolves the event-history window for the review
 // client, which talks to POLICY_SERVER_URL (policyURL) — a server that may
 // serve a DIFFERENT checkpoint than the one RL_AGENT_POLICY_URL/
-// AI_BOT_POLICY_URL and RL_AGENT_EVENT_WINDOW describe in cmd/server/main.go
+// AI_BOT_POLICY_URL and RL_AGENT_EVENT_WINDOW describe in cmd/server/policy_wiring.go
 // (adversarial round 7, Finding 2).
 //
 // REVIEW_EVENT_WINDOW, when set (same parse/bound semantics as every other

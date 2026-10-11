@@ -8,7 +8,7 @@ import type { AuthRouteState } from '../auth/authRouteState'
 import { consumePlayIntent, rememberPlayIntent } from './playIntent'
 import { useI18n } from '../../i18n/I18nContext'
 import { errorMessage, readJsonBody } from '../../utils/apiJson'
-import { invitationRoomPath } from './invitationLink'
+import { invitationRoomPath } from '../room/invitationLink'
 
 type Ruleset = 'fenghua' | 'chongci-fh'
 

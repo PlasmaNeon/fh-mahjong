@@ -147,7 +147,7 @@ Quick map of what is where:
 | Bridge and environment | `bridge.py`, `env.py`, `envpool.py`, `searchpool.py` |
 | Model | `model.py` |
 | Training | `ppo.py`, `ach.py`, `oracle.py`, `train_b2b.py`, `train_state.py`, `offline_trainers.py`, `batched_selfplay.py`, `batched_b2b.py`, `parallel_rollouts.py`, `selfplay_loop.py` |
-| Data and storage | `data.py`, `buffer.py`, `streaming_buffer.py`, `storage.py`, `checkpoint_manifest.py` |
+| Data and storage | `data.py`, `buffer.py`, `streaming_buffer.py`, `storage.py`, `counterfactual_data.py`, `checkpoint_manifest.py` |
 | Policies, search, serving | `policies.py`, `search.py`, `serving.py` |
 | Evaluation and diagnostics | `evaluate.py`, `hand_stats.py`, `route_study.py`, `placement_bonus*.py`, `reward_calibration.py`, `global_ev*.py`, `paired_trace*.py`, `branch_c*.py`, `near_state_counterfactuals.py`, `risk_filter.py` |
 | Infrastructure | `mlflow_tracking.py`, `memprobe.py`, `fdlimit.py`, `generated/proto/` |
@@ -162,6 +162,8 @@ Quick map of what is where:
 - Multi-worker collection needs a raised fd limit; the training/bench/profile CLIs call
   `fdlimit.raise_file_descriptor_limit`.
 - CI does not run the Python suite: `uv run --project ai pytest ai/tests` before merging.
+  Build the Go bridge first on a fresh checkout (see `README.md`); collector parity tests
+  require `build/libfh_mahjong_bridge.dylib` on macOS or `.so` on Linux.
 
 ### Go is the authority
 - `fh-mj-serve-policy` is an inference boundary only; Go decodes and validates every returned
@@ -197,6 +199,9 @@ Quick map of what is where:
 - BC/AWBC load only current-observation arrays; IQL/offline-Q need next-state arrays and may need
   transition limits.
 - `--learning-seat-rule seed-mod-4` keeps one seat per episode before serialization.
+- `counterfactual_data.py` owns shared divergence selection and action-risk dataset creation;
+  library callers import it directly, while `scripts/build_counterfactual_risk_data.py` owns
+  CLI argument parsing and preserves the historical helper imports.
 - Shared helpers: `evaluate.parse_seed_windows` (seed-window expansion),
   `storage.write_json_report`, `storage.write_single_shard_dataset` (one shard + manifest; its
   provenance block is keyed `"counterfactual"` by default, which divergence-dataset readers

@@ -20,7 +20,7 @@ from fh_mahjong_ai.branch_counterfactuals import (
 from fh_mahjong_ai.bridge import build_bridge
 from fh_mahjong_ai.config import EnvConfig
 from fh_mahjong_ai.env import MahjongEnv
-from fh_mahjong_ai.scripts.build_counterfactual_risk_data import write_counterfactual_shard
+from fh_mahjong_ai.counterfactual_data import write_counterfactual_shard
 from fh_mahjong_ai.scripts.generate_data import current_git_commit
 from fh_mahjong_ai.scripts.generate_selfplay import (
     build_runtime_policies,

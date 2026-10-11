@@ -10,7 +10,8 @@ as binary protobuf over WebSocket.
 - **src/** — application source; see `src/CLAUDE.md`.
 - **public/** — static assets: tile SVGs in `Regular_shortnames/` (I.Mahjong-HK artwork; license
   and attribution in `SOURCE.md` and `LICENSE.hk.txt`), plus `mahjong.wasm` / `wasm_exec.js`,
-  which nothing loads.
+  which nothing loads. The unused browser WASM hook is removed; the optional Go WASM
+  build remains independent of the server-authoritative app.
 - **dist/** — build output (`npm run build`), embedded into the Go binary by `embed.go`. CI uses
   the tracked stub files so no frontend build is needed for Go tests.
 - **index.html** — the app entry; **ui-prototype.html** — a separate dev-only entry for the

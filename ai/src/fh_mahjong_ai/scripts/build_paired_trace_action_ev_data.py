@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from fh_mahjong_ai.paired_trace_action_ev import build_paired_trace_action_ev_arrays
-from fh_mahjong_ai.scripts.build_counterfactual_risk_data import write_counterfactual_shard
+from fh_mahjong_ai.counterfactual_data import write_counterfactual_shard
 
 
 def main() -> None:

@@ -14,13 +14,14 @@ uv manages the interpreter (`ai/.python-version`, CPython 3.12). Use uv for ever
 
 ```bash
 uv sync --project ai --extra dev
-uv run --project ai pytest ai/tests
 ```
 
-Build the Go bridge library:
+Build the Go bridge library before running the full suite (collector tests require it):
 
 ```bash
+mkdir -p build
 go build -buildmode=c-shared -o build/libfh_mahjong_bridge.dylib ./cmd/rlbridge   # .so on Linux
+uv run --project ai pytest ai/tests
 ```
 
 Set `FH_MAHJONG_BRIDGE_LIB` if it lives elsewhere. `fh-mj-selfplay-smoke` runs the package end to

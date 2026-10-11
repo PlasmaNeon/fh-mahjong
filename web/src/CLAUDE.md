@@ -22,14 +22,13 @@
 
 | Directory | Owns |
 |---|---|
-| `features/` | Route pages and their helpers: `auth`, `lobby`, `game`, `replay`, `calc`, `shanten`, `dev` |
+| `features/` | Route pages and their helpers: `auth`, `lobby`, `room`, `game`, `replay`, `calc`, `shanten`, `dev` |
 | `table/` | The shared tabletop presenter for live play and replay (`stage/`, `seat/`) |
 | `contexts/` | Auth, socket, and game-state providers |
 | `theme/` | Design tokens, base CSS, typed primitives, Direct play shells |
 | `i18n/` | English and Simplified Chinese resources (plus three reviewer-only languages) |
 | `utils/` | Tile display, the tile value-model, winds, API JSON helpers |
 | `proto/` | Generated protobuf bindings |
-| `hooks/` | `useMahjongWasm.ts`, unreferenced |
 | `test/` | Shared test helpers: `cssContract.ts`, `renderStatic.tsx`, `memoryStorage.ts` |
 
 There is no `pages/` directory.

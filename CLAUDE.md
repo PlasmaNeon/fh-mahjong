@@ -203,7 +203,8 @@ cd web && npm test
 ```
 
 - Use the package form `go run ./cmd/server`, never `go run cmd/server/main.go`: the file form
-  omits `policy_autostart.go` and fails with `undefined: maybeStartPolicyServer`.
+  omits `policy_wiring.go` and `policy_autostart.go`, leaving `configurePolicies` and
+  `installSignalCleanup` undefined.
 - `make dev` sets `MAHJONG_DEV_REVEAL_HANDS=1`, which disables opponent-hand redaction. Never set
   it in a deployed environment.
 - Python is always run through uv: `uv sync --project ai --extra dev`, then

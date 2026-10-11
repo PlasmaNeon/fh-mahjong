@@ -1,18 +1,33 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from fh_mahjong_ai.scripts.build_counterfactual_risk_data import (
+from fh_mahjong_ai import counterfactual_data
+from fh_mahjong_ai.scripts import build_counterfactual_risk_data as cli
+
+from fh_mahjong_ai.counterfactual_data import (
     build_counterfactual_risk_arrays,
     write_counterfactual_shard,
 )
 from fh_mahjong_ai.storage import read_transition_arrays
 
 
-def test_build_counterfactual_risk_arrays_from_tensor_trace(tmp_path: Path) -> None:
+@pytest.mark.parametrize("name", [
+    "build_counterfactual_risk_arrays", "selected_divergences", "write_counterfactual_shard",
+])
+def test_historical_script_exports(name: str) -> None:
+    assert name in cli.__all__
+    assert getattr(cli, name) is getattr(counterfactual_data, name)
+
+
+def test_build_counterfactual_risk_arrays_from_tensor_trace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
     report_path = tmp_path / "paired.json"
     planes = np.zeros((2, 3, 1), dtype=np.float32).tolist()
     scalars = np.linspace(0, 1, 4, dtype=np.float32).tolist()
@@ -93,6 +108,20 @@ def test_build_counterfactual_risk_arrays_from_tensor_trace(tmp_path: Path) -> N
     assert loaded["next_planes"].shape == (1, 2, 3, 1)
     assert loaded["rewards"].tolist() == [[0.0, 0.0, 0.0, 0.0]]
     assert loaded["terminated"].tolist() == [False]
+
+    cli_output = tmp_path / "cli-out"
+    monkeypatch.setattr(sys, "argv", [
+        "build_counterfactual_risk_data", "--report", str(report_path),
+        "--output-dir", str(cli_output), "--training-target-policy", "preferred",
+    ])
+    cli.main()
+    printed = json.loads(capsys.readouterr().out)
+    manifest = json.loads((cli_output / "manifest.json").read_text())
+    assert printed == manifest["counterfactual"]
+    assert printed["training_target_policy"] == "preferred"
+    assert printed["rows"] == 1
+    cli_arrays = read_transition_arrays(cli_output, keys=("action_ids",))
+    assert cli_arrays["action_ids"].tolist() == [0]
 
 
 def test_build_counterfactual_risk_arrays_uses_report_labels(tmp_path: Path) -> None:

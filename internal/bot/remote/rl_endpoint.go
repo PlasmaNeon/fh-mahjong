@@ -16,7 +16,7 @@ import (
 const DefaultRLPolicyURL = "http://127.0.0.1:8765/act"
 
 // EffectiveRLEndpointURL resolves the effective private-room RL endpoint
-// using the single fallback chain cmd/server's main() applies: an explicit
+// using the single fallback chain cmd/server's configurePolicies applies: an explicit
 // RL_AGENT_POLICY_URL override (rlOverride) wins, then AI_BOT_POLICY_URL
 // (botPolicyURL), then DefaultRLPolicyURL. isLocalDefault reports whether
 // neither override was set — the only case eligible for local-default-only
@@ -38,7 +38,7 @@ func EffectiveRLEndpointURL(rlOverride, botPolicyURL string) (endpoint string, i
 
 // EffectiveRLEndpointURLFromEnv is the env-reading convenience wrapper around
 // EffectiveRLEndpointURL, reading RL_AGENT_POLICY_URL and AI_BOT_POLICY_URL
-// directly (trimmed, same as cmd/server's main() and internal/api's
+// directly (trimmed, same as cmd/server's configurePolicies and internal/api's
 // reviewEventWindow already did before resolving the fallback chain).
 func EffectiveRLEndpointURLFromEnv() (endpoint string, isLocalDefault bool) {
 	rlOverride := strings.TrimSpace(os.Getenv("RL_AGENT_POLICY_URL"))

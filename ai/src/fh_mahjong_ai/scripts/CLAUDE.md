@@ -12,6 +12,11 @@ Each module here backs one console script declared in `ai/pyproject.toml`'s
 - **[`ai/MODULES.md`](../../../MODULES.md)** — per-script reference: flags, when to reach for
   each one, and what its output means.
 
+`build_counterfactual_risk_data` delegates to `../counterfactual_data.py`. Its historical
+helper imports are explicitly listed in `__all__` and remain available for external notebooks;
+new internal callers use the library. Compatibility and CLI output are covered in
+`ai/tests/test_build_counterfactual_risk_data.py`.
+
 Adding a script means adding it to `[project.scripts]` **and** giving it an entry in
 `MODULES.md` and a row in `CLAUDE.md`'s command tables — otherwise it is invisible to
 anyone reading the docs.
