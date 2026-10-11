@@ -1059,6 +1059,13 @@ func (g *Game) handleInterruptAction(seat uint32, action *pb.PlayerAction) error
 	if seat == g.State.ActivePlayer {
 		return errors.New("active player cannot interrupt their own discard")
 	}
+	// A response must be a pass or an action type this seat was offered. An
+	// unoffered type (e.g. a stale DISCARD from a client that still thinks it
+	// is its turn) would otherwise count as this seat's response and close the
+	// window as a silent pass.
+	if action.Type != pb.ActionType_ACTION_PASS && !offersActionType(g.State.Players[seat].ValidActions, action.Type) {
+		return fmt.Errorf("seat %d was not offered %v in the claim window", seat, action.Type)
+	}
 	// Add to queue
 	g.interruptQueue[seat] = action
 
@@ -1075,6 +1082,16 @@ func (g *Game) handleInterruptAction(seat uint32, action *pb.PlayerAction) error
 	}
 
 	return nil
+}
+
+// offersActionType reports whether valid contains an action of type t.
+func offersActionType(valid []*pb.PlayerAction, t pb.ActionType) bool {
+	for _, a := range valid {
+		if a.GetType() == t {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolveInterrupts is called by the server after the 3-second wait window expires.
