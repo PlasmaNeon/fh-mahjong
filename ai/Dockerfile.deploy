@@ -2,12 +2,12 @@
 # service). Unlike ai/Dockerfile (local docker-compose), this image:
 #   - installs CPU-only torch wheels: ai/uv.lock pins CUDA torch + nvidia-*
 #     packages, which are multi-GB and useless for batch-1 CPU inference;
-#   - bakes the deployed champion checkpoint from ai/checkpoints/deploy/ into
-#     the image, so no volume mount is needed;
+#   - bakes the deployed AI agents' checkpoints from ai/checkpoints/deploy/
+#     into the image, so no volume mount is needed, and serves the one
+#     FH_MJ_CHECKPOINT names;
 #   - serves GREEDY (temperature 0 = argmax; no --sample-* args) — the
 #     exploitability probe showed greedy is not exploitable, and sampling
-#     caused visible per-move blunders vs humans. Add --sample-* args back
-#     only for softening experiments.
+#     caused visible per-move blunders vs humans — and suit-averaged.
 #
 # Build context is the repo root: `docker build -f ai/Dockerfile.deploy .`
 FROM python:3.12-slim
@@ -30,14 +30,13 @@ RUN pip install --no-deps /app/ai && \
 
 EXPOSE 8765
 
+# One image serves every AI agent: each Zeabur policy service sets
+# FH_MJ_CHECKPOINT to its agent's checkpoint (deployed_ai_agents in
+# best-checkpoints.json); the defaults serve AI v4. Greedy (no --sample-*):
+# sampling produced visible per-move blunders vs humans. Suit-averaged: six
+# suit views per decision, ~15 ms on one CPU thread.
+ENV FH_MJ_CHECKPOINT=/app/ai/checkpoints/deploy/ai-v4-5d51e8e4.pt \
+    FH_MJ_SYMMETRY=suits
 # --manifest must be explicit: the installed package resolves the default
 # manifest path relative to site-packages, not /app/ai.
-# Greedy serving (no sampling flags): temperature 0 = argmax top-1. The
-# exploitability probe showed the greedy champion is not exploitable by a
-# trained best-response, and top-3/T=0.7 sampling produced visible per-move
-# blunders in human games (aggregate-neutral, individually costly).
-CMD ["fh-mj-serve-policy", \
-     "--manifest", "/app/ai/checkpoints/best-checkpoints.json", \
-     "--checkpoint", "/app/ai/checkpoints/deploy/selfplay-deep4-student-iter275-39ch.pt", \
-     "--host", "0.0.0.0", \
-     "--port", "8765"]
+CMD ["sh", "-c", "exec fh-mj-serve-policy --manifest /app/ai/checkpoints/best-checkpoints.json --checkpoint \"$FH_MJ_CHECKPOINT\" --symmetry-average \"$FH_MJ_SYMMETRY\" --host 0.0.0.0 --port 8765"]

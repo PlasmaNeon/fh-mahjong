@@ -4286,7 +4286,7 @@
     "promotion_rule": "reward-trained checkpoint must beat the BC fallback on mean_reward across independent 1000-seed windows without regressing deal-in rate; win rate is tracked as a secondary metric.",
     "serving_validation": "Python returns an action_id from visible SeatObservation inputs; Go must still decode and validate the action_id against current legal actions before applying it."
   },
-  "updated_at": "2026-07-04T22:30:08.752610+00:00",
+  "updated_at": "2026-10-11T09:11:04.000000+00:00",
   "gate_qualified_research_champion": {
     "checkpoint_path": "/root/fh-mahjong-runs/b2b-anchor075-restart/ckpt/iter_075.pt",
     "checkpoint_sha256": "ce9d867f803bb41acad30f1f4c137e82d7946ed2c4db769e265d0c9cd08f75d4",
@@ -4375,6 +4375,44 @@
         }
       ],
       "superseded_by": "chongci_b2b_anchor075_restart_iter075"
+    }
+  ],
+  "deployed_ai_agents": [
+    {
+      "id": "v4",
+      "label": "AI v4",
+      "checkpoint_path": "checkpoints/deploy/ai-v4-5d51e8e4.pt",
+      "sha256": "5d51e8e4b3fdce73ce5e76791ef6ad46992d73b8987991f18ab8b94ea8747c9e",
+      "symmetry": "suits",
+      "event_window": 128,
+      "source": "/root/fh-mahjong-runs/cont450-20261006/ckpt/iter_450.pt"
+    },
+    {
+      "id": "v3",
+      "label": "AI v3",
+      "checkpoint_path": "checkpoints/deploy/ai-v3-f9662491.pt",
+      "sha256": "f96624913d688cd021597bad09e0000faf4947688789b472595e436a896e1627",
+      "symmetry": "suits",
+      "event_window": 128,
+      "source": "/root/fh-mahjong-runs/lookahead-20261004/control/ckpt/iter_150.pt"
+    },
+    {
+      "id": "v2",
+      "label": "AI v2",
+      "checkpoint_path": "checkpoints/deploy/ai-v2-ea6d4d41.pt",
+      "sha256": "ea6d4d412f6a74d58e7e6dcad6e646c895bf2ba3c0957b696991f3c20c22cabe",
+      "symmetry": "suits",
+      "event_window": 128,
+      "source": "/root/fh-mahjong-runs/suit-distill-20261002/control/ckpt/iter_150.pt"
+    },
+    {
+      "id": "v1",
+      "label": "AI v1",
+      "checkpoint_path": "checkpoints/deploy/ai-v1-3fdfe246.pt",
+      "sha256": "3fdfe246bbe45bcf209e38e32447b7ce3d303229076de3fb59061e551c7086d2",
+      "symmetry": "suits",
+      "event_window": 128,
+      "source": "/root/fh-mahjong-runs/suit-augment-ext-20260930/aug/ckpt/iter_150.pt"
     }
   ]
 }
