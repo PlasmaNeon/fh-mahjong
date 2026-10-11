@@ -40,16 +40,37 @@ import (
 func main() {
 	baseURL := flag.String("base-url", "http://localhost:8080", "server base URL (http/https)")
 	mode := flag.String("mode", "classic", "match mode for the smoke table (classic = single hand, fastest)")
+	rlAgents := flag.String("rl-agents", "", "comma-separated RL agent ids to seat, cycled over the empty seats (empty = the server's default agent)")
 	timeout := flag.Duration("timeout", 10*time.Minute, "overall deadline for the whole smoke")
 	flag.Parse()
 
-	if err := run(*baseURL, *mode, *timeout); err != nil {
+	if err := run(*baseURL, *mode, splitAgents(*rlAgents), *timeout); err != nil {
 		log.Fatalf("SMOKE FAILED: %v", err)
 	}
 	fmt.Println("SMOKE PASSED")
 }
 
-func run(baseURL, mode string, timeout time.Duration) error {
+// seatAgentFor is the RL agent for the k-th RL seat: agents cycled in order,
+// "" (the server's default agent) when no list was given.
+func seatAgentFor(agents []string, k int) string {
+	if len(agents) == 0 {
+		return ""
+	}
+	return agents[k%len(agents)]
+}
+
+// splitAgents parses the -rl-agents flag (comma-separated, blanks dropped).
+func splitAgents(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func run(baseURL, mode string, agents []string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -93,18 +114,22 @@ func run(baseURL, mode string, timeout time.Duration) error {
 		return fmt.Errorf("set mode %s: %w", mode, err)
 	}
 
-	// 3. RL agents in every empty seat. This exercises the health-gated
-	// policy resolution — a down policy service fails the smoke here.
+	// 3. RL agents in every empty seat (the -rl-agents list cycled, else the
+	// server's default agent). This exercises the health-gated policy
+	// resolution — a down policy service fails the smoke here.
+	rlSeat := 0
 	for i, seat := range table.Seats {
 		if seat.GetKind() != "empty" {
 			continue
 		}
+		agent := seatAgentFor(agents, rlSeat)
+		rlSeat++
 		if err := postJSON(client, baseURL+"/api/v1/rooms/"+table.TableId+"/seat", map[string]any{
-			"seat": i, "kind": "bot", "difficulty": int(pb.Difficulty_DIFFICULTY_RL),
+			"seat": i, "kind": "bot", "difficulty": int(pb.Difficulty_DIFFICULTY_RL), "rlAgent": agent,
 		}, nil); err != nil {
-			return fmt.Errorf("seat RL agent at %d: %w", i, err)
+			return fmt.Errorf("seat RL agent %q at %d: %w", agent, i, err)
 		}
-		log.Printf("seat %d: RL agent", i)
+		log.Printf("seat %d: RL agent %q", i, agent)
 	}
 
 	// 4. Connect the host's WebSocket BEFORE starting: an all-humans-offline
