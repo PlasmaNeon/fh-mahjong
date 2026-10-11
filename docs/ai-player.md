@@ -224,9 +224,9 @@ Room ─► remote.HTTPPolicy ─► POST /act {seat, planes, scalars, action_ma
 |---|---|---|
 | Production | deep4 `iter275` student, 39 channels, no events, greedy | `ai/checkpoints/deploy/`, Zeabur `policy` |
 | Gate-qualified research champion | `anchor075` (`restart-iter075`, sha `ce9d867f…`) | `ai/checkpoints/anchors/` |
-| Strongest registered policy | look-ahead-lap control `iter_150` (`f9662491…`), suit-averaged | training box |
-| Running | 450-iteration continuation lap from `f9662491` (eval seeds 4,150,000+) | training box |
+| Strongest registered policy | continuation-lap `iter_450` (`5d51e8e4…`), suit-averaged | training box |
 
-At a strong table the strongest policy is about +0.15 placement better than production.
+At a strong table `f9662491` is about +0.15 placement better than production, and `iter_450` beats
+`f9662491` by a further +0.026.
 Shipping it needs the B2c rollout (event-window serving, already built) plus suit-averaged
 serving.

@@ -18,10 +18,12 @@ Protocol in [`ai-evaluation.md`](ai-evaluation.md), design in [`ai-player.md`](a
 | 6 | suit-augment `iter_150` (`c5ff807b`) | +0.0114 ± 0.0106 | both sides suit-averaged from here on |
 | 7 | extension `iter_150` (`3fdfe246`) | +0.0159 ± 0.0101 | |
 | 8 | control `iter_150` (`ea6d4d41`) | +0.0082 ± 0.0073 | |
-| 9 | control `iter_150` (`f9662491`) | +0.0074 ± 0.0071 | strongest registered policy |
+| 9 | control `iter_150` (`f9662491`) | +0.0074 ± 0.0071 | |
+| 10 | continuation `iter_450` (`5d51e8e4`) | +0.0182 ± 0.0073 | 450 iterations; strongest registered policy |
 
-Steps 6–9 are 150-iteration continuation laps of the same recipe (suit-augmented collection).
-Each confirmed a small gain; a 450-iteration lap from step 9 is running.
+Steps 6–10 are continuation laps of the same recipe (suit-augmented collection), 150 iterations
+each except step 10 (450). Every one confirmed a gain; 450 iterations gained about 2.3× a
+150-iteration lap.
 
 ## Results by lever
 
@@ -34,7 +36,7 @@ Each confirmed a small gain; a 450-iteration lap from step 9 is running.
 | Public event history (GRU) + privileged critic + aux heads (B2b) | +0.0408, tail significantly better |
 | Weight restart with fresh seeds | +0.0254 (a second restart was null) |
 | Suit-symmetry averaging at decision time | +0.0369, every tail metric better |
-| Continued training with suit-augmented collection | +0.011, +0.016, +0.008, +0.007 per 150 iterations |
+| Continued training with suit-augmented collection | +0.011, +0.016, +0.008, +0.007 per 150 iterations; +0.018 over 450 |
 | Observation fix: claimable discard double-counted in the seen-tile plane | Shipped unconditionally (+0.0069 ± 0.0176, not worse) |
 
 ### Did not work
@@ -96,10 +98,12 @@ matches ended slightly negative.
 Measured on the strongest policies; descriptive, not gates.
 
 - **Strength.** Suit-averaged `f9662491` vs three seats of production `iter275`: +0.149; vs
-  `anchor075`: +0.113. Its predecessor `ea6d4d41` vs the heuristic bots: +0.455 (52% firsts).
+  `anchor075`: +0.113. Suit-averaged `iter_450` vs three seats of `f9662491`: +0.026 ± 0.018 over
+  suit-averaged `f9662491` at the same table, 4th place −1.4 points, large-loss −1.3 points. Its predecessor `ea6d4d41` vs the heuristic bots: +0.455 (52% firsts).
 - **Style.** Against production the edge is hand value (same win rate, wins worth ~10% more);
   against `anchor075` it is win frequency. It makes Seven Pairs in ~0.7% of hands (production
-  1.2%) and more all-pung, Loner, and kong hands.
+  1.2%) and more all-pung, Loner, and kong hands. `iter_450` wins as often as `f9662491` (25.8%
+  vs 26.1%) with the same deal-in rate, but its wins are worth 3.6% more.
 - **Routes.** Independence (大大胡, 50 points) appears in about half of all wins for every policy.
   The policy goes Independence when its Independence shanten I ≤ 3 and then never calls; at I = 4
   only if the standard hand is 3+ shanten; at I ≥ 5 it plays standard. "Independence iff
@@ -107,7 +111,8 @@ Measured on the strongest policies; descriptive, not gates.
 - **Known blind spot: Mixed One Suit (混一色).** When cutting the one off-suit tile is free (equal
   speed, +70 points), the policy takes it only ~half the time. On its own self-play, taking the
   flush cut instead gains +26 ± 15 points per instance (~1 per game). Wilds near the off-suit tile
-  make it worse.
+  make it worse. `iter_450` makes 31% more Mixed One Suit wins per hand than `f9662491` (0.34% vs
+  0.26%), so continued training partly closes it.
 
 ## Not yet tried
 
