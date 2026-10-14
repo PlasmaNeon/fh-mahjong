@@ -36,3 +36,5 @@ import { Page, Shell, Card, PageHeader, Section, Button } from '../theme'
   <Section title="Thing" meta="0 / 4"><Button variant="primary">Go</Button></Section>
 </Card></Shell></Page>
 ```
+
+direct-shell.css also owns the responsive StatusScreen layout, actions and reduced-motion-aware loading indicator.

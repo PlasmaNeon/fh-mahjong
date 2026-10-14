@@ -6,11 +6,6 @@
   background: var(--night-ink);
 }
 
-.replay-error { display: grid; place-content: center; justify-items: center; gap: 0.75rem; padding: 1.5rem; text-align: center; }
-.replay-error__mark { width: 70px; height: 70px; display: grid; place-items: center; margin-bottom: 0.6rem; color: var(--brass-light); border: 1px solid rgba(210,168,95,0.45); border-radius: 18px 18px 5px 18px; font-family: var(--font-display); font-size: 2rem; transform: rotate(-5deg); }
-.replay-error__eyebrow { color: var(--seal-red); font-family: var(--mono); font-size: 0.67rem; letter-spacing: 0.14em; text-transform: uppercase; }
-.replay-error h1 { max-width: 34rem; margin: 0; color: var(--on-dark); font-family: var(--font-display); font-size: clamp(1.8rem,5vw,3rem); line-height: 1.05; }
-.replay-error__link { color: var(--brass-light); font-family: var(--mono); font-size: 0.72rem; text-underline-offset: 4px; }
 
 .replay-drawer {
   flex: 0 0 300px;

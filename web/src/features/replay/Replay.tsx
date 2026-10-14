@@ -8,7 +8,8 @@ import { tileObjectFromId } from './replayTypes'
 import { ReplayEngine, ReplayState } from './replayEngine'
 import { TableBoard } from '../../table/TableBoard'
 import { TableRoundResultOverlay } from '../../table/TableRoundResultOverlay'
-import { LoadingScreen } from '../../theme'
+import { Button, ButtonLink, LoadingScreen } from '../../theme'
+import StatusScreen from '../../theme/components/StatusScreen'
 import ReviewStudy, { defaultStudySettings, studyHidden } from './ReviewStudy'
 import type { StudySettings } from './ReviewStudy'
 import type { StudySource } from './studyClient'
@@ -70,6 +71,7 @@ export default function Replay() {
   const [paipu, setPaipu] = useState<Paipu | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const [, setVersion] = useState(0)
   const [viewSeat, setViewSeat] = useState(bookmarkIndex(initialQuery.current.get('seat'), 0, 3, 0))
   const [showAllHands, setShowAllHands] = useState(false)
@@ -131,7 +133,7 @@ export default function Replay() {
         }
       })
     return () => controller.abort()
-  }, [source.kind, source.id, apiFetch])
+  }, [source.kind, source.id, apiFetch, loadAttempt])
 
   useEffect(() => {
     if (autoAnalyze && authStatus === 'authenticated' && !loading) {
@@ -319,16 +321,11 @@ export default function Replay() {
 
   if (error || !engine || !paipu) {
     return (
-      <div className="ledger-page replay-error">
-        <div className="replay-error__mark" aria-hidden="true">
-          西
-        </div>
-        <div className="replay-error__eyebrow">{t('replay.closed')}</div>
-        <h1>{error || t('replay.failed')}</h1>
-        <a href="/" className="replay-error__link">
-          {t('replay.return')}
-        </a>
-      </div>
+      <StatusScreen title={t('replay.failed')} description={t('replay.recoveryHelp')}
+        actions={<>
+          <Button variant="primary" onClick={() => setLoadAttempt(attempt => attempt + 1)}>{t('common.tryAgain')}</Button>
+          <ButtonLink to="/replay">{t('replay.backToLibrary')}</ButtonLink>
+        </>} />
     )
   }
 
