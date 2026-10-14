@@ -32,10 +32,10 @@ Tests: `go test ./...`, `cd web && npm test`, `uv run --project ai pytest ai/tes
 
 `go run ./cmd/server` starts the local policy server (`uv run --project ai fh-mj-serve-policy`)
 in the background; private rooms offer it as an **AI** seat once it is healthy. Point it at a
-deployed checkpoint:
+deployed checkpoint, with the backend speaking its event window (128 for every deployed agent):
 
 ```bash
-FH_MAHJONG_AI_CHECKPOINT=ai/checkpoints/deploy/ai-v4-5d51e8e4.pt go run ./cmd/server
+RL_AGENT_EVENT_WINDOW=128 FH_MAHJONG_AI_CHECKPOINT=ai/checkpoints/deploy/ai-v4-5d51e8e4.pt go run ./cmd/server
 ```
 
 To offer several agents, run one `fh-mj-serve-policy` per checkpoint and set `RL_AGENTS` (see

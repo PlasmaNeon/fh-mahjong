@@ -26,7 +26,9 @@ RL policies, registers routes, and serves on `:8080` (or `PORT`).
   docker-compose database).
 - Policy wiring (variables in [`docs/architecture.md`](../../docs/architecture.md)):
   - `AI_BOT_POLICY_URL` routes public-queue bot seats through one shared `remote.HTTPPolicy`;
-    unset means the heuristic bot. `AI_BOT_EVENT_WINDOW` sets its window.
+    unset means the heuristic bot. `AI_BOT_EVENT_WINDOW` sets its window; it inherits
+    `RL_AGENT_EVENT_WINDOW` only for the same service as `RL_AGENT_POLICY_URL`, never from
+    `RL_AGENTS`, so set it when the bots use an agent service (128).
   - Private-room RL agents come from `RL_AGENTS`, a JSON array in menu order (first = default):
     `[{"id":"v4","label":"AI v4","url":"http://…/act","eventWindow":128}, …]`. Ids match
     `^[a-z0-9-]{1,32}$` and are unique; any invalid entry is fatal at startup. Unset, there is
@@ -40,7 +42,9 @@ RL policies, registers routes, and serves on `:8080` (or `PORT`).
     default agent's seats in a `bot.ShadowPolicy`.
   - One `remote.WarmupManager` warms exactly the agents a table seats (and the shadow with the
     default agent) before it starts; `RL_AGENT_WARMUP_TTL` (default `15m`; `0` = once per
-    process) re-warms after that long, because policy services restart independently.
+    process) re-warms after that long, because policy services restart independently. The hook
+    also refuses an agent whose health check fails, since a cached warm alone would pass an agent
+    that went down after another room warmed it.
   - The local policy server autostarts only for the legacy localhost agent (`RL_AGENTS` unset).
   - Every remote policy gets a background `/healthz` contract check at startup. A mismatch or an
     unreachable server logs `POLICY CONTRACT MISMATCH / server unreachable` but never blocks boot.

@@ -70,7 +70,8 @@ per-account limit with the plain review, so review load cannot starve live `/act
 - `POLICY_SERVER_URL` must point at a policy server, or build requests return 503.
   `POLICY_SERVER_TOKEN` must equal the server's `FH_MJ_EVALUATE_TOKEN`.
 - The event window comes from `REVIEW_EVENT_WINDOW`, or `RL_AGENT_EVENT_WINDOW` when both
-  point at the same service. The encoder and the client must use the same window.
+  point at the same service. The encoder and the client must use the same window. Under
+  `RL_AGENTS` nothing is inherited: set `REVIEW_EVENT_WINDOW` (128 for every deployed agent).
 - Reports are cached per (match, checkpoint sha); a new champion adds a row, a rollback serves
   the old row. Study builds are keyed by input, checkpoint sha, schema, event window, method, and
   config. `?force=1` rebuilds.
