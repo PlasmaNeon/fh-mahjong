@@ -18,8 +18,8 @@ func newWarmupTestMatchmaker() *Matchmaker {
 	hub := NewHub()
 	hub.BindRoom = make(chan RoomBind, 1)
 	m := NewMatchmaker(NewInMemoryQueue(), nil, hub)
-	m.RLAgentAvailable = func() bool { return true }
-	m.SeatPolicyResolver = func(d pb.Difficulty, _ string, _ uint32) (bot.Policy, error) {
+	m.RLAgents = func() []RLAgentInfo { return []RLAgentInfo{{ID: "rl", Label: "AI", Available: true}} }
+	m.SeatPolicyResolver = func(d pb.Difficulty, _, _ string, _ uint32) (bot.Policy, error) {
 		if d == pb.Difficulty_DIFFICULTY_RL {
 			return bot.NewHeuristicPolicy(), nil
 		}
@@ -37,7 +37,7 @@ func configureTable(t *testing.T, m *Matchmaker, tableID string, difficulties [3
 	}
 	if _, err := m.MutatePrivateTable(tableID, func(pt *PrivateTable) error {
 		for i, d := range difficulties {
-			if err := pt.setSeat(uint32(i+1), "bot", d); err != nil {
+			if err := pt.setSeat(uint32(i+1), "bot", d, ""); err != nil {
 				return err
 			}
 		}
@@ -53,7 +53,7 @@ func configureTable(t *testing.T, m *Matchmaker, tableID string, difficulties [3
 func TestStartPrivateTable_WarmsRLEndpointsBeforeAdmission(t *testing.T) {
 	m := newWarmupTestMatchmaker()
 	var warmCalls int32
-	m.WarmRLEndpoints = func(ctx context.Context) error {
+	m.WarmRLEndpoints = func(ctx context.Context, _ []string) error {
 		if _, ok := ctx.Deadline(); !ok {
 			t.Error("warmup hook should receive a context with the warmup budget as its deadline")
 		}
@@ -87,7 +87,7 @@ func TestStartPrivateTable_FailsCleanlyWhenWarmupFails(t *testing.T) {
 	m := newWarmupTestMatchmaker()
 	warmErr := errors.New("warmup status 503: cold")
 	var warmCalls int32
-	m.WarmRLEndpoints = func(context.Context) error {
+	m.WarmRLEndpoints = func(context.Context, []string) error {
 		atomic.AddInt32(&warmCalls, 1)
 		return warmErr
 	}
@@ -118,7 +118,7 @@ func TestStartPrivateTable_FailsCleanlyWhenWarmupFails(t *testing.T) {
 	}
 
 	// Retryable: once the hook succeeds, the same table starts.
-	m.WarmRLEndpoints = func(context.Context) error { return nil }
+	m.WarmRLEndpoints = func(context.Context, []string) error { return nil }
 	if _, err := m.StartPrivateTable("t-warm-fail", 101); err != nil {
 		t.Fatalf("retry after warmup recovery: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestStartPrivateTable_FailsCleanlyWhenWarmupFails(t *testing.T) {
 func TestStartPrivateTable_SkipsWarmupWithoutRLSeats(t *testing.T) {
 	m := newWarmupTestMatchmaker()
 	var warmCalls int32
-	m.WarmRLEndpoints = func(context.Context) error {
+	m.WarmRLEndpoints = func(context.Context, []string) error {
 		atomic.AddInt32(&warmCalls, 1)
 		return errors.New("policy service is down")
 	}
@@ -162,7 +162,7 @@ func TestStartPrivateTable_WarmupDoesNotHoldTableLock(t *testing.T) {
 	m := newWarmupTestMatchmaker()
 	warming := make(chan struct{}) // closed once the warm hook is running
 	release := make(chan struct{}) // closed to let the warm finish
-	m.WarmRLEndpoints = func(ctx context.Context) error {
+	m.WarmRLEndpoints = func(ctx context.Context, _ []string) error {
 		close(warming)
 		select {
 		case <-release:
@@ -213,7 +213,7 @@ func TestStartPrivateTable_RevalidatesAfterWarmup(t *testing.T) {
 	m := newWarmupTestMatchmaker()
 	warming := make(chan struct{})
 	release := make(chan struct{})
-	m.WarmRLEndpoints = func(ctx context.Context) error {
+	m.WarmRLEndpoints = func(ctx context.Context, _ []string) error {
 		close(warming)
 		<-release
 		return nil
@@ -232,7 +232,7 @@ func TestStartPrivateTable_RevalidatesAfterWarmup(t *testing.T) {
 	// Swap a seat while the warm is in flight (the host clicking around in
 	// another tab). This is only reachable BECAUSE the lock is released.
 	if _, err := m.MutatePrivateTable("t-warm-revalidate", func(pt *PrivateTable) error {
-		return pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_RL)
+		return pt.setSeat(2, "bot", pb.Difficulty_DIFFICULTY_RL, "")
 	}); err != nil {
 		t.Fatalf("reconfigure during warmup: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestStartPrivateTable_RevalidatesAfterWarmup(t *testing.T) {
 	}
 	// Retryable against the new configuration (re-warmed, this time without
 	// the blocking stub).
-	m.WarmRLEndpoints = func(context.Context) error { return nil }
+	m.WarmRLEndpoints = func(context.Context, []string) error { return nil }
 	if _, err := m.StartPrivateTable("t-warm-revalidate", 101); err != nil {
 		t.Fatalf("retry after reconfiguration: %v", err)
 	}

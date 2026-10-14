@@ -17,6 +17,7 @@ import { game } from '../../proto/game';
 import { ClubShell, Card, PageHeader, Section, ButtonRow, Button, Field, Note, Toggle } from '../../theme';
 import { useI18n } from '../../i18n/I18nContext';
 import { errorMessage, readJsonBody } from '../../utils/apiJson';
+import { parseRLAgents, type RLAgentInfo } from './rlAgents';
 
 type PrivateTableState = game.IPrivateTableState;
 type Difficulty = game.Difficulty;
@@ -30,7 +31,7 @@ export default function PrivateRoom() {
     const [tableState, setTableState] = useState<PrivateTableState | null>(null);
     const [activeMatchId, setActiveMatchId] = useState('');
     const [chongciDraft, setChongciDraft] = useState({ starting_score: 2000, bust_threshold: 0, max_hands: 50 });
-    const [rlAgentAvailable, setRlAgentAvailable] = useState(false);
+    const [rlAgents, setRlAgents] = useState<RLAgentInfo[]>([]);
     const [leftMarker, setLeftMarker] = useState<LeftMatchMarker | null>(() => loadLeftMatchMarker());
     const [shareState, setShareState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
@@ -81,10 +82,10 @@ export default function PrivateRoom() {
         }
     }, [roomId]);
 
-    // Whether the server can route a seat to a trained RL agent. Polled every
-    // 10s (the backend health check caches ~5s) so the option appears or
-    // disappears as the model server comes up or goes down, without a page
-    // refresh. Best-effort: on a transient error we keep the last known value.
+    // The RL agents the server offers, each with live availability. Polled every
+    // 10s (the backend health check caches ~5s) so an agent enables or disables
+    // as its model server comes up or goes down, without a page refresh.
+    // Best-effort: on a transient error we keep the last known list.
     useEffect(() => {
         let cancelled = false;
 
@@ -93,7 +94,7 @@ export default function PrivateRoom() {
                 const res = await fetch(getApiUrl('/api/v1/config'));
                 if (!res.ok) return;
                 const data = await res.json();
-                if (!cancelled) setRlAgentAvailable(Boolean(data?.rlAgentAvailable));
+                if (!cancelled) setRlAgents(parseRLAgents(data));
             } catch {
                 // capability probe is optional; keep the last known value
             }
@@ -186,13 +187,13 @@ export default function PrivateRoom() {
         return () => controller.abort();
     }, [authStatus, performJoin]);
 
-    const mutateSeat = useCallback(async (seat: number, kind: 'bot' | 'empty', difficulty?: Difficulty) => {
+    const mutateSeat = useCallback(async (seat: number, kind: 'bot' | 'empty', difficulty?: Difficulty, rlAgent?: string) => {
         if (!roomId || authStatus !== 'authenticated') return;
         try {
             const res = await apiFetch(`/api/v1/rooms/${roomId}/seat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ seat, kind, difficulty: difficulty ?? game.Difficulty.DIFFICULTY_UNSPECIFIED }),
+                body: JSON.stringify({ seat, kind, difficulty: difficulty ?? game.Difficulty.DIFFICULTY_UNSPECIFIED, rlAgent: rlAgent ?? '' }),
             });
             if (!res.ok) {
                 const data = await readJsonBody(res);
@@ -382,8 +383,8 @@ export default function PrivateRoom() {
                                     isHost={iAmHost}
                                     canEdit={iAmHost && seat.kind !== 'human'}
                                     hostUserId={hostUserId}
-                                    rlAgentAvailable={rlAgentAvailable}
-                                    onAssignBot={(s, d) => mutateSeat(s, 'bot', d)}
+                                    rlAgents={rlAgents}
+                                    onAssignBot={(s, d, a) => mutateSeat(s, 'bot', d, a)}
                                     onClearSeat={s => mutateSeat(s, 'empty')}
                                 />
                             ))}

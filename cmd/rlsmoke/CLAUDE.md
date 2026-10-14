@@ -10,7 +10,7 @@ It exercises the whole stack rather than mocking any of it:
 
 1. Registers a throwaway account.
 2. Creates a private table.
-3. Seats RL agents in every empty seat — exercising health-gated policy resolution plus the CSRF-protected REST flow.
+3. Seats RL agents in every empty seat (`-rl-agents` cycled, else the server's default agent) — exercising health-gated policy resolution plus the CSRF-protected REST flow.
 4. Starts a classic (single-hand) match.
 5. Plays the host seat over the real WebSocket protocol with `bot.NewHeuristicPolicy`, mirroring the server bot pump (heuristic action on turn/claim, `READY` at round end).
 6. Waits for `PHASE_MATCH_END`.
@@ -28,6 +28,7 @@ go run ./cmd/rlsmoke -base-url https://<prod-host> -timeout 15m
 |---|---|---|
 | `-base-url` | `http://localhost:8080` | Server base URL (http/https) |
 | `-mode` | `classic` | Match mode for the smoke table (classic = single hand, fastest) |
+| `-rl-agents` | (empty) | Comma-separated RL agent ids to seat, cycled over the empty seats; empty = the server's default agent |
 | `-timeout` | `10m` | Overall deadline for the whole smoke |
 
 ## The provenance gates

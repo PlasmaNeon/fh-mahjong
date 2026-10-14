@@ -90,3 +90,18 @@ func TestVerifyPaipuFailsEachGate(t *testing.T) {
 		})
 	}
 }
+
+func TestSeatAgentForCyclesTheList(t *testing.T) {
+	agents := []string{"v4", "v3"}
+	for k, want := range []string{"v4", "v3", "v4"} {
+		if got := seatAgentFor(agents, k); got != want {
+			t.Fatalf("seatAgentFor(%v, %d) = %q, want %q", agents, k, got, want)
+		}
+	}
+	if got := seatAgentFor(nil, 2); got != "" {
+		t.Fatalf("no list: got %q, want default (empty)", got)
+	}
+	if got := splitAgents(" v4, ,v1 "); len(got) != 2 || got[0] != "v4" || got[1] != "v1" {
+		t.Fatalf("splitAgents = %q", got)
+	}
+}

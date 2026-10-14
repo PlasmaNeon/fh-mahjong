@@ -58,38 +58,38 @@ type Matchmaker struct {
 	BotPolicyFactory func() bot.Policy
 	PaipuStore       func(matchID, paipuJSON string) // in-memory fallback when DB is nil
 
-	// SeatPolicyResolver builds the bot.Policy for a private-room seat of the
-	// given difficulty. When nil, resolveSeatPolicy falls back to
-	// bot.NewPolicy (heuristic-only). cmd/server installs a resolver that maps
-	// DIFFICULTY_RL to the remote HTTP policy. roomID and seat identify the
-	// private table and seat index this resolution is for — cmd/server uses
-	// them (adversarial round 3, Finding 2) to label any bot.ShadowPolicy it
-	// wraps the primary in, so concurrent rooms/seats are distinguishable in
-	// shared server logs; callers that don't need this may ignore both.
-	SeatPolicyResolver func(d pb.Difficulty, roomID string, seat uint32) (bot.Policy, error)
+	// SeatPolicyResolver builds the bot.Policy for a private-room bot seat.
+	// When nil, resolveSeatPolicy falls back to bot.NewPolicy (heuristic-only).
+	// cmd/server installs a resolver that maps DIFFICULTY_RL to the seat's
+	// agent's remote HTTP policy. agentID is the seat's RL agent, already
+	// resolved to a configured id for DIFFICULTY_RL ("" for every other
+	// difficulty). roomID and seat identify the private table and seat index —
+	// cmd/server uses them (adversarial round 3, Finding 2) to label any
+	// bot.ShadowPolicy it wraps the primary in, so concurrent rooms/seats are
+	// distinguishable in shared server logs.
+	SeatPolicyResolver func(d pb.Difficulty, agentID, roomID string, seat uint32) (bot.Policy, error)
 
-	// RLAgentAvailable reports whether the trained RL agent can currently be
-	// offered as a seat option. cmd/server wires this to a health-checked
-	// probe of the policy endpoint, so the option only appears when a model
-	// server is actually reachable. Nil means unavailable.
-	RLAgentAvailable func() bool
+	// RLAgents lists the private-room RL agents in menu order (first = the
+	// default) with their live availability. cmd/server wires it to one
+	// health-checked probe per agent, so an agent is only offered while its
+	// model server is reachable. Nil or empty means no RL agent is configured.
+	RLAgents func() []RLAgentInfo
 
-	// RLPolicyIdentity reports the identity of the policy currently served at
-	// the RL endpoint (e.g. "<checkpoint>@step<N>" from its /healthz payload,
-	// falling back to the endpoint URL). Captured per RL seat at match start
-	// and recorded in the paipu so the dataset knows which model played. Nil
-	// or empty means unknown.
-	RLPolicyIdentity func() string
+	// RLPolicyIdentity reports the identity of the policy agentID currently
+	// serves (e.g. "<checkpoint>@step<N>" from its /healthz payload). Captured
+	// per RL seat at match start and recorded in the paipu so the dataset
+	// knows which model played. Nil or empty means unknown.
+	RLPolicyIdentity func(agentID string) string
 
-	// WarmRLEndpoints, when set, must leave every configured policy endpoint
-	// (primary and, when configured, shadow) warm — i.e. each has taken a real
-	// forward pass — before an RL private room is admitted. cmd/server wires it
-	// to a remote.WarmupManager, so it is warm-once per process and a no-op on
-	// every table after the first. A non-nil error FAILS the table start: a
-	// room the host explicitly asked to be played by the RL agent must never
-	// silently degrade to the heuristic because the model server was still
-	// cold. Failures are retryable — the next start attempt warms again.
-	WarmRLEndpoints func(ctx context.Context) error
+	// WarmRLEndpoints, when set, must leave every listed agent's policy
+	// endpoint (plus the shadow candidate, when shadow mode wraps a listed
+	// agent) warm — i.e. each has taken a real forward pass — before an RL
+	// private room is admitted. The matchmaker lists exactly the agents the
+	// table seats. A non-nil error FAILS the table start: a room the host
+	// explicitly asked to be played by an RL agent must never silently degrade
+	// to the heuristic because the model server was still cold. Failures are
+	// retryable — the next start attempt warms again.
+	WarmRLEndpoints func(ctx context.Context, agentIDs []string) error
 
 	privateTablesMu     sync.RWMutex
 	activePrivateTables map[string]ActivePrivateTable
@@ -221,23 +221,76 @@ func (m *Matchmaker) DrainActiveRooms(timeout time.Duration) {
 }
 
 // resolveSeatPolicy builds the bot.Policy for a private-room seat of the given
-// difficulty. It uses the injected SeatPolicyResolver when present (so a
-// DIFFICULTY_RL seat can route to the trained endpoint) and otherwise the
-// heuristic-only bot.NewPolicy. It is the single point used by both seat
-// validation and the match-start loop, so an unsupported difficulty (e.g.
-// DIFFICULTY_RL when no resolver is installed) is rejected consistently.
-func (m *Matchmaker) resolveSeatPolicy(d pb.Difficulty, roomID string, seat uint32) (bot.Policy, error) {
+// difficulty and (for DIFFICULTY_RL) resolved agent id. It uses the injected
+// SeatPolicyResolver when present (so a DIFFICULTY_RL seat can route to its
+// agent's endpoint) and otherwise the heuristic-only bot.NewPolicy, so an
+// unsupported difficulty (e.g. DIFFICULTY_RL when no resolver is installed)
+// is rejected consistently.
+func (m *Matchmaker) resolveSeatPolicy(d pb.Difficulty, agentID, roomID string, seat uint32) (bot.Policy, error) {
 	if m.SeatPolicyResolver != nil {
-		return m.SeatPolicyResolver(d, roomID, seat)
+		return m.SeatPolicyResolver(d, agentID, roomID, seat)
 	}
 	return bot.NewPolicy(d)
 }
 
-// ValidateSeatDifficulty reports whether d is an assignable bot-seat
-// difficulty, WITHOUT constructing a policy for it. This is the validate-only
-// counterpart to resolveSeatPolicy, used by handlePrivateTableSeat when a
-// host merely picks a difficulty for a seat (no match has started, no Room
-// exists yet to ever own or close a constructed policy).
+// RLAgentInfo is one RL agent as offered to players: GET /api/v1/config lists
+// them in menu order, and an RL seat stores its ID.
+type RLAgentInfo struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	Available bool   `json:"available"`
+}
+
+// errUnknownRLAgent rejects a seat naming an agent id the registry does not know.
+var errUnknownRLAgent = errors.New("unknown RL agent")
+
+// rlAgents returns the configured RL agents in menu order (never nil, so the
+// config endpoint always serializes a JSON array). Nil-safe.
+func (m *Matchmaker) rlAgents() []RLAgentInfo {
+	if m == nil || m.RLAgents == nil {
+		return []RLAgentInfo{}
+	}
+	if agents := m.RLAgents(); agents != nil {
+		return agents
+	}
+	return []RLAgentInfo{}
+}
+
+// rlAgentAvailable reports whether any RL agent can currently be offered.
+func (m *Matchmaker) rlAgentAvailable() bool {
+	for _, a := range m.rlAgents() {
+		if a.Available {
+			return true
+		}
+	}
+	return false
+}
+
+// lookupRLAgent resolves agentID ("" = the default, i.e. the first agent)
+// against the registry, without checking availability.
+func (m *Matchmaker) lookupRLAgent(agentID string) (RLAgentInfo, error) {
+	agents := m.rlAgents()
+	if len(agents) == 0 {
+		return RLAgentInfo{}, errRLAgentUnavailable
+	}
+	if agentID == "" {
+		return agents[0], nil
+	}
+	for _, a := range agents {
+		if a.ID == agentID {
+			return a, nil
+		}
+	}
+	return RLAgentInfo{}, fmt.Errorf("%w %q", errUnknownRLAgent, agentID)
+}
+
+// ValidateSeat reports whether (d, agentID) is an assignable bot seat,
+// WITHOUT constructing a policy for it, and returns the agent id to store:
+// the resolved RL agent for DIFFICULTY_RL ("" picks the default), "" for every
+// other difficulty. This is the validate-only counterpart to
+// resolveSeatPolicy, used by handlePrivateTableSeat when a host merely picks a
+// bot for a seat (no match has started, no Room exists yet to ever own or
+// close a constructed policy).
 //
 // It deliberately never calls SeatPolicyResolver: cmd/server's resolver is
 // where a real DIFFICULTY_RL seat gets wrapped in a bot.NewShadowPolicy when
@@ -247,43 +300,56 @@ func (m *Matchmaker) resolveSeatPolicy(d pb.Difficulty, roomID string, seat uint
 // one goroutine+queue per seat-assignment request — an authenticated host
 // repeating the request could exhaust the server. Validation instead mirrors
 // resolveSeatPolicy's rejection rules using only side-effect-free checks:
-// DIFFICULTY_RL is acceptable iff the RL agent is currently available (the
-// same knowledge cmd/server's resolver closure would otherwise need to
-// consult before constructing anything), and every other difficulty is
-// acceptable iff bot.NewPolicy recognizes it (NewPolicy itself has no side
-// effects — it either errors or returns a plain, non-closeable
-// HeuristicPolicy). StartPrivateTable still calls resolveSeatPolicy to build
-// the real per-seat policy at match start, once a Room exists to own it.
-func (m *Matchmaker) ValidateSeatDifficulty(d pb.Difficulty) error {
+// DIFFICULTY_RL is acceptable iff the named agent exists and is currently
+// available, and every other difficulty is acceptable iff bot.NewPolicy
+// recognizes it (NewPolicy has no side effects — it either errors or returns
+// a plain, non-closeable HeuristicPolicy). StartPrivateTable still calls
+// resolveSeatPolicy to build the real per-seat policy at match start, once a
+// Room exists to own it.
+func (m *Matchmaker) ValidateSeat(d pb.Difficulty, agentID string) (string, error) {
 	if d == pb.Difficulty_DIFFICULTY_RL {
-		if !m.rlAgentAvailable() {
-			return errRLAgentUnavailable
+		agent, err := m.lookupRLAgent(agentID)
+		if err != nil {
+			return "", err
 		}
+		if !agent.Available {
+			return "", errRLAgentUnavailable
+		}
+		return agent.ID, nil
+	}
+	if _, err := bot.NewPolicy(d); err != nil {
+		return "", err
+	}
+	return "", nil
+}
+
+// tableRLAgents returns the distinct RL agent ids the table seats, in seat
+// order, with a legacy empty RLAgent (a seat configured before the agent
+// registry) resolved to the default agent. An id the registry no longer knows
+// is returned as is, so the warmup fails on it instead of the room silently
+// starting. Caller must hold table.mu.
+func (m *Matchmaker) tableRLAgents(table *PrivateTable) []string {
+	if table == nil {
 		return nil
 	}
-	_, err := bot.NewPolicy(d)
-	return err
-}
-
-// rlAgentAvailable reports whether the trained RL agent can currently be
-// offered. It is nil-safe (both for the receiver and the probe) and consults
-// the health-checked RLAgentAvailable function installed by cmd/server.
-func (m *Matchmaker) rlAgentAvailable() bool {
-	return m != nil && m.RLAgentAvailable != nil && m.RLAgentAvailable()
-}
-
-// tableHasRLSeat reports whether any seat of the table is a DIFFICULTY_RL bot.
-// Caller must hold table.mu.
-func tableHasRLSeat(table *PrivateTable) bool {
-	if table == nil {
-		return false
-	}
+	var ids []string
+	seen := map[string]bool{}
 	for _, s := range table.Seats {
-		if s.Kind == "bot" && s.Difficulty == pb.Difficulty_DIFFICULTY_RL {
-			return true
+		if s.Kind != "bot" || s.Difficulty != pb.Difficulty_DIFFICULTY_RL {
+			continue
+		}
+		id := s.RLAgent
+		if id == "" {
+			if agent, err := m.lookupRLAgent(""); err == nil {
+				id = agent.ID
+			}
+		}
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
 		}
 	}
-	return false
+	return ids
 }
 
 // seatSignature renders the seat configuration as a comparable string, used to
@@ -295,7 +361,7 @@ func seatSignature(table *PrivateTable) string {
 	}
 	var b strings.Builder
 	for _, s := range table.Seats {
-		fmt.Fprintf(&b, "%s/%d/%d|", s.Kind, s.UserID, int32(s.Difficulty))
+		fmt.Fprintf(&b, "%s/%d/%d/%s|", s.Kind, s.UserID, int32(s.Difficulty), s.RLAgent)
 	}
 	return b.String()
 }
@@ -315,9 +381,9 @@ func validateStartLocked(table *PrivateTable, requesterUserID uint) error {
 	return table.canStart()
 }
 
-// warmRLEndpoints blocks (up to rlWarmupBudget) until every configured policy
-// endpoint is warm. It must be called WITHOUT holding table.mu: a cold warm
-// costs seconds, and holding the table lock across it would stall every
+// warmRLEndpoints blocks (up to rlWarmupBudget) until every listed agent's
+// policy endpoint is warm. It must be called WITHOUT holding table.mu: a cold
+// warm costs seconds, and holding the table lock across it would stall every
 // join/seat/state handler for that table (and serialize N impatient Start
 // clicks into N sequential waits). tableID is for telemetry only.
 //
@@ -325,13 +391,13 @@ func validateStartLocked(table *PrivateTable, requesterUserID uint) error {
 // a 503 instead of starting a room whose "RL" seats would fall back to the
 // heuristic. The wrapped detail (which can name the internal policy endpoint)
 // is for logs — the HTTP layer sanitizes it, see handlePrivateTableStart.
-func (m *Matchmaker) warmRLEndpoints(tableID string) error {
+func (m *Matchmaker) warmRLEndpoints(tableID string, agentIDs []string) error {
 	if m == nil || m.WarmRLEndpoints == nil {
 		return nil
 	}
 	warmCtx, cancel := context.WithTimeout(context.Background(), rlWarmupBudget)
 	defer cancel()
-	if err := m.WarmRLEndpoints(warmCtx); err != nil {
+	if err := m.WarmRLEndpoints(warmCtx, agentIDs); err != nil {
 		log.Printf("policy warmup: refusing RL table %s start: %v", tableID, err)
 		return fmt.Errorf("%w: %w", ErrRLWarmupFailed, err)
 	}
@@ -339,19 +405,21 @@ func (m *Matchmaker) warmRLEndpoints(tableID string) error {
 }
 
 // prepareStartUnderLock does the cheap start validation under table.mu and
-// reports whether the table needs an RL warmup, along with the seat signature
-// observed while the lock was held. The caller warms with the lock RELEASED
-// and then re-validates against this signature.
-func (m *Matchmaker) prepareStartUnderLock(table *PrivateTable, requesterUserID uint) (needWarm bool, signature string, err error) {
+// returns the RL agents the table needs warmed (nil when none), along with the
+// seat signature observed while the lock was held. The caller warms with the
+// lock RELEASED and then re-validates against this signature.
+func (m *Matchmaker) prepareStartUnderLock(table *PrivateTable, requesterUserID uint) (agentIDs []string, signature string, err error) {
 	table.mu.Lock()
 	defer table.mu.Unlock()
 	if verr := validateStartLocked(table, requesterUserID); verr != nil {
-		return false, "", verr
+		return nil, "", verr
 	}
 	// Tables with no RL seat never touch the policy service at all, so they
 	// must neither pay for — nor fail on — a warmup.
-	needWarm = m != nil && m.WarmRLEndpoints != nil && tableHasRLSeat(table)
-	return needWarm, seatSignature(table), nil
+	if m != nil && m.WarmRLEndpoints != nil {
+		agentIDs = m.tableRLAgents(table)
+	}
+	return agentIDs, seatSignature(table), nil
 }
 
 // legacyRulesetAliases maps deprecated ruleset queue keys to their current
@@ -638,12 +706,12 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 	// (4) re-acquire and re-validate everything below. Holding the lock across
 	// the warm would freeze that table's join/seat/state handlers for the full
 	// budget and serialize repeated Start clicks into sequential waits.
-	needWarm, startSignature, err := m.prepareStartUnderLock(table, requesterUserID)
+	warmAgents, startSignature, err := m.prepareStartUnderLock(table, requesterUserID)
 	if err != nil {
 		return nil, err
 	}
-	if needWarm {
-		if werr := m.warmRLEndpoints(tableID); werr != nil {
+	if len(warmAgents) > 0 {
+		if werr := m.warmRLEndpoints(tableID, warmAgents); werr != nil {
 			return nil, werr
 		}
 	}
@@ -695,14 +763,24 @@ func (m *Matchmaker) StartPrivateTable(tableID string, requesterUserID uint) (*P
 				humanSeats[seat] = s.UserID
 				seatInfos[seat] = SeatInfo{Kind: "human", Name: s.Username, UserID: s.UserID}
 			case "bot":
-				policy, perr := m.resolveSeatPolicy(s.Difficulty, tableID, seat)
+				// An RL seat plays its own agent; a seat configured before the
+				// agent registry (empty RLAgent) plays the default agent.
+				agentID, agentLabel := "", ""
+				if s.Difficulty == pb.Difficulty_DIFFICULTY_RL {
+					agent, aerr := m.lookupRLAgent(s.RLAgent)
+					if aerr != nil {
+						return fmt.Errorf("seat %d: %w", i, aerr)
+					}
+					agentID, agentLabel = agent.ID, agent.Label
+				}
+				policy, perr := m.resolveSeatPolicy(s.Difficulty, agentID, tableID, seat)
 				if perr != nil {
 					return fmt.Errorf("seat %d: %w", i, perr)
 				}
 				seatPolicies[seat] = policy
-				info := SeatInfo{Kind: "bot", Difficulty: s.Difficulty}
-				if s.Difficulty == pb.Difficulty_DIFFICULTY_RL && m.RLPolicyIdentity != nil {
-					info.PolicyID = m.RLPolicyIdentity()
+				info := SeatInfo{Kind: "bot", Difficulty: s.Difficulty, AgentLabel: agentLabel}
+				if agentID != "" && m.RLPolicyIdentity != nil {
+					info.PolicyID = m.RLPolicyIdentity(agentID)
 				}
 				seatInfos[seat] = info
 			default:

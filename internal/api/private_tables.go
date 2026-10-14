@@ -35,6 +35,7 @@ type SeatConfig struct {
 	UserID     uint          `json:"userId,omitempty"`     // human
 	Username   string        `json:"username,omitempty"`   // human
 	Difficulty pb.Difficulty `json:"difficulty,omitempty"` // bot
+	RLAgent    string        `json:"rlAgent,omitempty"`    // bot, DIFFICULTY_RL only
 }
 
 // PrivateTable holds the configuration of a /room/:roomId waiting room
@@ -94,8 +95,9 @@ func (t *PrivateTable) claimNextHumanSeat(userID uint, username string) (uint32,
 }
 
 // setSeat applies a host seat-config change. The target seat must not be
-// held by a human (you can only mutate empty or bot seats).
-func (t *PrivateTable) setSeat(seat uint32, kind string, difficulty pb.Difficulty) error {
+// held by a human (you can only mutate empty or bot seats). rlAgent is kept
+// only for a DIFFICULTY_RL bot.
+func (t *PrivateTable) setSeat(seat uint32, kind string, difficulty pb.Difficulty, rlAgent string) error {
 	if seat > 3 {
 		return fmt.Errorf("seat %d out of range", seat)
 	}
@@ -107,7 +109,10 @@ func (t *PrivateTable) setSeat(seat uint32, kind string, difficulty pb.Difficult
 	case "empty":
 		t.Seats[seat] = SeatConfig{Kind: "empty"}
 	case "bot":
-		t.Seats[seat] = SeatConfig{Kind: "bot", Difficulty: difficulty}
+		if difficulty != pb.Difficulty_DIFFICULTY_RL {
+			rlAgent = ""
+		}
+		t.Seats[seat] = SeatConfig{Kind: "bot", Difficulty: difficulty, RLAgent: rlAgent}
 	default:
 		return fmt.Errorf("unsupported seat kind %q", kind)
 	}
@@ -180,6 +185,7 @@ func (t *PrivateTable) toProto() *pb.PrivateTableState {
 			sc.Username = s.Username
 		case "bot":
 			sc.Difficulty = s.Difficulty
+			sc.RlAgent = s.RLAgent
 		}
 		seats[i] = sc
 	}
@@ -351,6 +357,7 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 		Seat       uint32        `json:"seat"`
 		Kind       string        `json:"kind"`
 		Difficulty pb.Difficulty `json:"difficulty"`
+		RLAgent    string        `json:"rlAgent"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondError(c, http.StatusBadRequest, err.Error())
@@ -364,17 +371,20 @@ func (s *Server) handlePrivateTableSeat(c *gin.Context) {
 		if t.State != "configuring" {
 			return ErrPrivateTableAlreadyStarted
 		}
+		rlAgent := ""
 		if req.Kind == "bot" {
 			// Validate only — never construct a policy here. There is no Room
 			// yet to own (and later close) whatever the resolver would build,
-			// so calling it purely to check the difficulty risks leaking a
-			// closeable policy's background resources (see
-			// ValidateSeatDifficulty's doc comment).
-			if perr := s.Matchmaker.ValidateSeatDifficulty(req.Difficulty); perr != nil {
+			// so calling it purely to check the seat risks leaking a closeable
+			// policy's background resources (see ValidateSeat's doc comment).
+			// An RL seat stores its resolved agent ("" picks the default).
+			resolved, perr := s.Matchmaker.ValidateSeat(req.Difficulty, req.RLAgent)
+			if perr != nil {
 				return perr
 			}
+			rlAgent = resolved
 		}
-		return t.setSeat(req.Seat, req.Kind, req.Difficulty)
+		return t.setSeat(req.Seat, req.Kind, req.Difficulty, rlAgent)
 	})
 	if err != nil {
 		status := http.StatusBadRequest

@@ -146,7 +146,8 @@ session. Origins are checked against `FRONTEND_ORIGINS` for both HTTP and WebSoc
 | `DATABASE_URL` | Postgres DSN (default: the docker-compose database on `localhost:5433`) |
 | `FRONTEND_ORIGINS`, `TRUSTED_PROXIES` | CORS/WebSocket origin allowlist; trusted proxies (default none) |
 | `ADMIN_SECRET` | Enables admin paipu upload |
-| `RL_AGENT_POLICY_URL`, `RL_AGENT_EVENT_WINDOW` | Private-room RL seat endpoint and its event window |
+| `RL_AGENTS` | Private-room RL agents: JSON `[{"id","label","url","eventWindow"}]`, menu order, first = default |
+| `RL_AGENT_POLICY_URL`, `RL_AGENT_EVENT_WINDOW` | The single legacy RL agent when `RL_AGENTS` is unset |
 | `RL_AGENT_AUTOSTART`, `RL_AGENT_SERVE_CMD`, `RL_AGENT_CHECKPOINT_ID` | Local policy-server autostart (on by default for the localhost endpoint) |
 | `RL_AGENT_SHADOW_POLICY_URL`, `RL_AGENT_SHADOW_EVENT_WINDOW`, `RL_AGENT_SHADOW_POLICY_TOKEN` | Shadow candidate that mirrors RL decisions without affecting play |
 | `RL_AGENT_WARMUP_TTL` | Re-warm interval for policy endpoints (default 15m) |
@@ -165,9 +166,9 @@ session. Origins are checked against `FRONTEND_ORIGINS` for both HTTP and WebSoc
   declares), POSTs `/act`, and decodes the returned `action_id` through `rl.DecodeActionID`.
   Any failure — timeout, bad JSON, illegal id, contract mismatch — falls back to the heuristic
   and is counted.
-- The RL seat is health-gated: `/api/v1/config` reports `rlAgentAvailable` from the policy
-  server's `/healthz`. A private table with an RL seat warms every endpoint (`/warmup`) before it
-  starts and refuses to start (503) if warmup fails.
+- RL agents are health-gated per agent: `/api/v1/config` lists `rlAgents` (`id`, `label`,
+  `available` from each policy server's `/healthz`), and a host seats one by id. A private table
+  warms the agents it seats (`/warmup`) before it starts and refuses to start (503) if any fails.
 - `ShadowPolicy` runs a candidate model beside the primary on a background worker, records
   agreement and latency, and never affects the action.
 
@@ -209,10 +210,12 @@ are in [`ai-player.md`](ai-player.md).
 - **Single service.** The root `Dockerfile` builds `web/dist`, embeds it (`web/embed.go`), and
   serves the SPA from the Go binary for non-API routes. Pass `GIT_COMMIT` as a build arg to stamp
   paipu with the server commit.
-- **Zeabur (production).** Services: the Go backend (root `Dockerfile`), Postgres, and `policy`
-  (`ai/Dockerfile.deploy`, CPU torch, the checkpoint in `ai/checkpoints/deploy/` baked in, served
-  greedy, private network only). Pushing to `main` redeploys every git-linked service. A
-  `policy-candidate` service serves the research champion for shadow comparison.
+- **Zeabur (production).** Services: the Go backend (root `Dockerfile`), Postgres, and one policy
+  service per RL agent — `policy` (AI v4), `policy-candidate` (AI v3), `policy-v2`, `policy-v1` —
+  all built from `ai/Dockerfile.deploy` (CPU torch, the agents' checkpoints from
+  `ai/checkpoints/deploy/` baked in, served greedy and suit-averaged, private network only), each
+  picking its checkpoint with `FH_MJ_CHECKPOINT`. The backend's `RL_AGENTS` lists them. Pushing to
+  `main` redeploys every git-linked service.
 - **docker-compose.** `db` by default; `--profile rl` adds the policy server; `--profile full`
   adds the production server image.
 

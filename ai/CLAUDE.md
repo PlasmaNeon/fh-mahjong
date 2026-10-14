@@ -267,6 +267,8 @@ Full protocol and the spent-window registry: [`docs/ai-evaluation.md`](../docs/a
 - **Serve greedy.** Sampling caused visible blunders against humans, and the greedy champion was
   not exploitable. `--sample-*` flags are for experiments.
 - `--symmetry-average suits` serves the suit-averaged policy (~3× the CPU latency of plain).
+  Production serves AI v4/v3/v2/v1 this way: `Dockerfile.deploy` reads `FH_MJ_CHECKPOINT` and
+  `FH_MJ_SYMMETRY`, one Zeabur service per agent (`deployed_ai_agents` in the manifest).
 - Serving defaults to `ai/checkpoints/best-checkpoints.json`; override with `--checkpoint` or
   `FH_MAHJONG_AI_CHECKPOINT`.
 - `FH_MJ_EVALUATE_TOKEN` is required in production; `/evaluate` is disabled without it.

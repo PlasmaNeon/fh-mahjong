@@ -31,18 +31,20 @@ Tests: `go test ./...`, `cd web && npm test`, `uv run --project ai pytest ai/tes
 ### RL agent seat
 
 `go run ./cmd/server` starts the local policy server (`uv run --project ai fh-mj-serve-policy`)
-in the background; private rooms show an **RL Agent** seat once it is healthy. Point it at the
+in the background; private rooms offer it as an **AI** seat once it is healthy. Point it at a
 deployed checkpoint:
 
 ```bash
-FH_MAHJONG_AI_CHECKPOINT=ai/checkpoints/deploy/selfplay-deep4-student-iter275-39ch.pt \
-  go run ./cmd/server
+FH_MAHJONG_AI_CHECKPOINT=ai/checkpoints/deploy/ai-v4-5d51e8e4.pt go run ./cmd/server
 ```
+
+To offer several agents, run one `fh-mj-serve-policy` per checkpoint and set `RL_AGENTS` (see
+`cmd/server/CLAUDE.md`); production offers AI v4, v3, v2 and v1.
 
 Set `RL_AGENT_AUTOSTART=0` to opt out. For the full containerized stack:
 
 ```bash
-RL_CHECKPOINT_FILE=deploy/selfplay-deep4-student-iter275-39ch.pt docker compose --profile full up
+RL_CHECKPOINT_FILE=deploy/ai-v4-5d51e8e4.pt docker compose --profile full up
 ```
 
 Swap models without restarting anything:

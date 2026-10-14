@@ -38,12 +38,12 @@ func TestNewRLWarmupHook_WarmsPrimaryAndTokenedShadow(t *testing.T) {
 	}))
 	defer shadow.Close()
 
-	hook := newRLWarmupHook(remote.NewWarmupManager(nil), primary.URL+"/act", shadow.URL+"/act", "tok123")
-	if err := hook(context.Background()); err != nil {
+	hook := newRLAgentSet([]rlAgentConfig{legacyRLAgent(primary.URL+"/act", 0)}, nil, nil, "").WarmHook(remote.NewWarmupManager(nil), shadow.URL+"/act", "tok123")
+	if err := hook(context.Background(), []string{"rl"}); err != nil {
 		t.Fatalf("warmup hook: %v", err)
 	}
 	// Warm-once: a second admission does no HTTP at all.
-	if err := hook(context.Background()); err != nil {
+	if err := hook(context.Background(), []string{"rl"}); err != nil {
 		t.Fatalf("second warmup hook call: %v", err)
 	}
 	if got := primaryHits.Load(); got != 1 {
@@ -70,8 +70,8 @@ func TestNewRLWarmupHook_FailsOnShadowFailure(t *testing.T) {
 	}))
 	defer shadow.Close()
 
-	hook := newRLWarmupHook(remote.NewWarmupManager(nil), primary.URL+"/act", shadow.URL+"/act", "")
-	err := hook(context.Background())
+	hook := newRLAgentSet([]rlAgentConfig{legacyRLAgent(primary.URL+"/act", 0)}, nil, nil, "").WarmHook(remote.NewWarmupManager(nil), shadow.URL+"/act", "")
+	err := hook(context.Background(), []string{"rl"})
 	if err == nil {
 		t.Fatal("expected the hook to fail when the shadow endpoint refuses warmup")
 	}
@@ -88,8 +88,8 @@ func TestNewRLWarmupHook_NoShadowConfigured(t *testing.T) {
 	}))
 	defer primary.Close()
 
-	hook := newRLWarmupHook(remote.NewWarmupManager(nil), primary.URL+"/act", "", "")
-	if err := hook(context.Background()); err != nil {
+	hook := newRLAgentSet([]rlAgentConfig{legacyRLAgent(primary.URL+"/act", 0)}, nil, nil, "").WarmHook(remote.NewWarmupManager(nil), "", "")
+	if err := hook(context.Background(), []string{"rl"}); err != nil {
 		t.Fatalf("warmup hook: %v", err)
 	}
 	if got := hits.Load(); got != 1 {

@@ -924,6 +924,7 @@ type SeatInfo struct {
 	UserID     uint   // humans only
 	Difficulty pb.Difficulty
 	PolicyID   string // RL seats: serving checkpoint identity
+	AgentLabel string // RL seats: the agent's player-facing label (e.g. "AI v4")
 }
 
 // difficultyLabel maps a proto difficulty to the stable string stored in the
@@ -940,13 +941,17 @@ func difficultyLabel(d pb.Difficulty) string {
 }
 
 // botDisplayName renders the paipu display name for an automated seat, e.g.
-// "Bot 2 (RL)". Difficulty-less bots stay plain "Bot 2".
-func botDisplayName(seat uint32, d pb.Difficulty) string {
+// "Bot 2 (AI v4)" for an RL agent seat or "Bot 2 (Heuristic)". An RL seat with
+// no agent label stays "Bot 2 (RL)"; difficulty-less bots stay plain "Bot 2".
+func botDisplayName(seat uint32, d pb.Difficulty, agentLabel string) string {
 	name := fmt.Sprintf("Bot %d", seat+1)
 	switch d {
 	case pb.Difficulty_DIFFICULTY_HEURISTIC:
 		return name + " (Heuristic)"
 	case pb.Difficulty_DIFFICULTY_RL:
+		if agentLabel != "" {
+			return name + " (" + agentLabel + ")"
+		}
 		return name + " (RL)"
 	default:
 		return name
@@ -979,7 +984,7 @@ func (r *Room) registerPaipuPlayers() {
 		// No composition info at all: an automated seat of unknown difficulty.
 		r.Engine.Recorder.AddPlayerInfo(engine.PaipuPlayer{
 			Seat: seat,
-			Name: botDisplayName(seat, pb.Difficulty_DIFFICULTY_UNSPECIFIED),
+			Name: botDisplayName(seat, pb.Difficulty_DIFFICULTY_UNSPECIFIED, ""),
 			Kind: "bot",
 		})
 	}
@@ -992,7 +997,7 @@ func (r *Room) paipuPlayerForSeatInfo(seat uint32, info SeatInfo) engine.PaipuPl
 	}
 	return engine.PaipuPlayer{
 		Seat:       seat,
-		Name:       botDisplayName(seat, info.Difficulty),
+		Name:       botDisplayName(seat, info.Difficulty, info.AgentLabel),
 		Kind:       "bot",
 		Difficulty: difficultyLabel(info.Difficulty),
 		PolicyID:   info.PolicyID,

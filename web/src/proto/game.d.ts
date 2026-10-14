@@ -3244,6 +3244,9 @@ export namespace game {
 
         /** SeatConfig difficulty */
         difficulty?: (game.Difficulty|undefined);
+
+        /** SeatConfig rlAgent */
+        rlAgent?: (string|undefined);
     }
 
     /** Represents a SeatConfig. */
@@ -3266,6 +3269,9 @@ export namespace game {
 
         /** SeatConfig difficulty. */
         public difficulty: game.Difficulty;
+
+        /** SeatConfig rlAgent. */
+        public rlAgent: string;
 
         /**
          * Creates a new SeatConfig instance using the specified properties.

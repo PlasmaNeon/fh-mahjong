@@ -45,8 +45,9 @@ uv run --project ai mlflow ui --backend-store-uri sqlite:///$PWD/ai/mlflow.db
 - `checkpoints/best-checkpoints.json` — the manifest. `current_chongci_reward_trained_best` is the
   served champion; `gate_qualified_research_champion` the strongest checkpoint committed to the
   repo. Paths in it are training-box paths.
-- `checkpoints/deploy/selfplay-deep4-student-iter275-39ch.pt` — the served checkpoint, baked into
-  `Dockerfile.deploy`. Replace it and the Dockerfile's `--checkpoint` in the same PR.
+- `checkpoints/deploy/ai-v{4,3,2,1}-<sha8>.pt` — the served AI agents (`deployed_ai_agents` in the
+  manifest), baked into `Dockerfile.deploy`; each production policy service picks one with
+  `FH_MJ_CHECKPOINT`.
 - `checkpoints/anchors/b2b-anchor075-restart-iter075.pt` — the research champion, used as a
   training anchor; not served.
 
@@ -57,7 +58,7 @@ uv run --project ai mlflow ui --backend-store-uri sqlite:///$PWD/ai/mlflow.db
 
 ```bash
 uv run --project ai fh-mj-serve-policy \
-  --checkpoint ai/checkpoints/deploy/selfplay-deep4-student-iter275-39ch.pt \
+  --checkpoint ai/checkpoints/deploy/ai-v4-5d51e8e4.pt --symmetry-average suits \
   --host 127.0.0.1 --port 8765
 ```
 
