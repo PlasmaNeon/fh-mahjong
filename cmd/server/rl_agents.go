@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -46,6 +47,11 @@ func parseRLAgents(raw string) ([]rlAgentConfig, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&entries); err != nil {
 		return nil, fmt.Errorf("RL_AGENTS: %w", err)
+	}
+	// Decode stops after the first value: an entry pasted after the closing
+	// bracket would otherwise boot with that agent silently missing.
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, fmt.Errorf("RL_AGENTS: unexpected data after the agent list")
 	}
 	if len(entries) == 0 {
 		return nil, fmt.Errorf("RL_AGENTS: empty list")
@@ -166,14 +172,19 @@ func (s *rlAgentSet) Resolver() func(pb.Difficulty, string, string, uint32) (bot
 // token, which leaves /warmup open), and the shadow candidate (with
 // shadowToken) when the default agent is listed and shadow mode is
 // configured — a cold shadow candidate would time out on its first mirrored
-// decision and pollute the shadow-error count. An unknown id fails the warmup,
-// so the room never starts.
+// decision and pollute the shadow-error count. An unknown or unhealthy agent
+// fails the warmup, so the room never starts: the manager trusts a warm for
+// its TTL, which alone would pass an agent that went down after another room
+// warmed it and seat it as the heuristic.
 func (s *rlAgentSet) WarmHook(manager *remote.WarmupManager, shadowURL, shadowToken string) func(context.Context, []string) error {
 	return func(ctx context.Context, agentIDs []string) error {
 		for _, id := range agentIDs {
 			a, ok := s.byID[id]
 			if !ok {
 				return fmt.Errorf("unknown RL agent %q", id)
+			}
+			if !a.health.Healthy() {
+				return fmt.Errorf("RL agent %s is unavailable", id)
 			}
 			if err := manager.Warm(ctx, a.cfg.URL, ""); err != nil {
 				return fmt.Errorf("RL agent %s endpoint: %w", id, err)

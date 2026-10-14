@@ -16,6 +16,16 @@ import (
 const warmupOKJSON = `{"warmed":true,"checkpoint_path":"/ckpt/iter_075.pt","checkpoint_step":75,` +
 	`"checkpoint_sha256":"abc123","contract_version":1,"event_window":128,"latency_ms":12.5}`
 
+// answerHealthz serves serve_policy's /healthz for a fake agent, which the warm
+// hook probes before warming; it reports whether it answered.
+func answerHealthz(w http.ResponseWriter, r *http.Request) bool {
+	if r.URL.Path != "/healthz" {
+		return false
+	}
+	fmt.Fprint(w, `{"ok":true}`)
+	return true
+}
+
 // TestNewRLWarmupHook_WarmsPrimaryAndTokenedShadow pins the wiring contract:
 // both endpoints are warmed before an RL room is admitted, the primary
 // tokenless and the shadow with RL_AGENT_SHADOW_POLICY_TOKEN.
@@ -26,6 +36,9 @@ func TestNewRLWarmupHook_WarmsPrimaryAndTokenedShadow(t *testing.T) {
 	shadowAuth.Store("")
 
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerHealthz(w, r) {
+			return
+		}
 		primaryHits.Add(1)
 		primaryAuth.Store(r.Header.Get("Authorization"))
 		fmt.Fprint(w, warmupOKJSON)
@@ -62,6 +75,9 @@ func TestNewRLWarmupHook_WarmsPrimaryAndTokenedShadow(t *testing.T) {
 
 func TestNewRLWarmupHook_FailsOnShadowFailure(t *testing.T) {
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerHealthz(w, r) {
+			return
+		}
 		fmt.Fprint(w, warmupOKJSON)
 	}))
 	defer primary.Close()
@@ -83,6 +99,9 @@ func TestNewRLWarmupHook_FailsOnShadowFailure(t *testing.T) {
 func TestNewRLWarmupHook_NoShadowConfigured(t *testing.T) {
 	var hits atomic.Int64
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerHealthz(w, r) {
+			return
+		}
 		hits.Add(1)
 		fmt.Fprint(w, warmupOKJSON)
 	}))

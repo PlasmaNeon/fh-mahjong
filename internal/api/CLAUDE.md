@@ -91,8 +91,8 @@ never fall back to it and return the file or 404.
 - Server policy factories and their event-window configuration live in
   `cmd/server/policy_wiring.go`; the API consumes them through Matchmaker hooks.
 - **Review event window.** `REVIEW_EVENT_WINDOW` wins; otherwise `RL_AGENT_EVENT_WINDOW` is
-  inherited only when `POLICY_SERVER_URL` names the same service as the RL endpoint. An invalid
-  value means 0, never a clamp. The encoder and the client must use the same window.
+  inherited only when `POLICY_SERVER_URL` names the same service as the RL endpoint
+  (`RL_AGENT_POLICY_URL`; under `RL_AGENTS` it never is). An invalid value means 0, never a clamp. The encoder and the client must use the same window.
 - **Training reads.** Any future training-data extractor must read server-recorded
   `matches.paipu_json` from Postgres directly — never `loadPaipuJSON`, which an admin upload can
   override.

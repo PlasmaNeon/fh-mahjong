@@ -17,10 +17,12 @@ services:
   # `docker compose --profile full up` (policy + Go backend). The default
   # `docker compose up` still brings up only db.
   #
-  # The deployed champion ships in ai/checkpoints/deploy/:
+  # The deployed agents ship in ai/checkpoints/deploy/ (event window 128,
+  # served suit-averaged like production):
   #   RL_CHECKPOINT_FILE=deploy/ai-v4-5d51e8e4.pt \
   #   docker compose --profile full up
-  # To serve another checkpoint, set RL_CHECKPOINT_DIR to its host directory.
+  # To serve another checkpoint, set RL_CHECKPOINT_DIR to its host directory,
+  # and RL_AGENT_EVENT_WINDOW to its window (0 for a pre-B2b model).
   policy:
     build:
       context: .
@@ -31,6 +33,8 @@ services:
       - "/app/ai/checkpoints/best-checkpoints.json"
       - "--checkpoint"
       - "/checkpoints/${RL_CHECKPOINT_FILE:-model.pt}"
+      - "--symmetry-average"
+      - "suits"
     volumes:
       - "${RL_CHECKPOINT_DIR:-./ai/checkpoints}:/checkpoints:ro"
     ports:
@@ -55,6 +59,7 @@ services:
     environment:
       DATABASE_URL: "host=db user=fh_admin password=fh_password dbname=fh_mahjong port=5432 sslmode=disable TimeZone=UTC"
       RL_AGENT_POLICY_URL: "http://policy:8765/act"
+      RL_AGENT_EVENT_WINDOW: "${RL_AGENT_EVENT_WINDOW:-128}"
       RL_AGENT_AUTOSTART: "0"
       PORT: "8080"
       # NOTE: redaction is fail-closed and intentionally NOT disabled here — this
