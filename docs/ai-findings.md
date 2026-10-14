@@ -23,7 +23,8 @@ Protocol in [`ai-evaluation.md`](ai-evaluation.md), design in [`ai-player.md`](a
 
 Steps 6–10 are continuation laps of the same recipe (suit-augmented collection), 150 iterations
 each except step 10 (450). Every one confirmed a gain; 450 iterations gained about 2.3× a
-150-iteration lap.
+150-iteration lap. A further 450 iterations from step 10 did not (+0.0015 ± 0.0074, 4th place +0.4 points
+worse): the recipe has plateaued, and an entropy bonus did not lift it.
 
 ## Results by lever
 
@@ -36,7 +37,7 @@ each except step 10 (450). Every one confirmed a gain; 450 iterations gained abo
 | Public event history (GRU) + privileged critic + aux heads (B2b) | +0.0408, tail significantly better |
 | Weight restart with fresh seeds | +0.0254 (a second restart was null) |
 | Suit-symmetry averaging at decision time | +0.0369, every tail metric better |
-| Continued training with suit-augmented collection | +0.011, +0.016, +0.008, +0.007 per 150 iterations; +0.018 over 450 |
+| Continued training with suit-augmented collection | +0.011, +0.016, +0.008, +0.007 per 150 iterations; +0.018 over 450; then plateau (below) |
 | Observation fix: claimable discard double-counted in the seen-tile plane | Shipped unconditionally (+0.0069 ± 0.0176, not worse) |
 
 ### Did not work
@@ -49,6 +50,8 @@ each except step 10 (450). Every one confirmed a gain; 450 iterations gained abo
 | GRP placement-value reward, entropy/lr changes | Parity |
 | ACH regret objective (LuckyJ family) | −1.06 ± 0.08 vs PPO; never sharpened (4-player regret dynamics need not converge) |
 | Snapshot-pool opponents | Parity (−0.031 ± 0.069) |
+| A second 450-iteration continuation lap from step 10 | +0.0015 ± 0.0074; 4th place +0.4 points worse |
+| Entropy bonus 0.01 for 300 iterations from step 10 (policy entropy 0.18 → 0.31) | +0.0043 ± 0.0074; 4th place +0.5 and large-loss +0.3 points worse; 6% fewer wins, each worth 7.5% more |
 | deep8 (8 blocks) | Champion parity at 2× inference cost |
 | Determinized test-time search (pMCPA-style) | −0.04 at K=16; −0.08 (worse) at K=32 |
 | Perfect information at inference (51-channel net) | Parity with the 39-channel student: hidden information is worth ~0 to this policy |
@@ -112,12 +115,12 @@ Measured on the strongest policies; descriptive, not gates.
   speed, +70 points), the policy takes it only ~half the time. On its own self-play, taking the
   flush cut instead gains +26 ± 15 points per instance (~1 per game). Wilds near the off-suit tile
   make it worse. `iter_450` makes 31% more Mixed One Suit wins per hand than `f9662491` (0.34% vs
-  0.26%), so continued training partly closes it.
+  0.26%), so continued training partly closes it. An entropy bonus adds another 32% but wins 6%
+  less often, for no net gain.
 
 ## Not yet tried
 
 - Transformer or hierarchical sequence models (DTQN, GTrXL, Tjong-style decision hierarchy).
-- An exploration lap (entropy > 0) or per-discard pattern-value features aimed at the flush blind
-  spot.
+- Per-discard pattern-value features aimed at the flush blind spot.
 - Training on human games: production paipu v2 now records clean per-decision provenance, but
   the corpus is small and no extraction pipeline exists.
