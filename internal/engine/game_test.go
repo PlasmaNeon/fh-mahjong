@@ -333,6 +333,15 @@ func TestDirectKong_BuddingPersistsAcrossDiscard(t *testing.T) {
 
 	southSeat := (activePlayer + 1) % 4
 	south := g.State.Players[southSeat]
+	// South must hold exactly three copies: with a natural copy of the face
+	// too, the hand would hold four or five and the rules offer no direct kan.
+	kept := south.ClosedHand[:0]
+	for _, tile := range south.ClosedHand {
+		if tile.Suit != discardTile.Suit || tile.Value != discardTile.Value {
+			kept = append(kept, tile)
+		}
+	}
+	south.ClosedHand = kept
 	c1 := &pb.Tile{Id: discardTile.Id + 100, Suit: discardTile.Suit, Value: discardTile.Value}
 	c2 := &pb.Tile{Id: discardTile.Id + 200, Suit: discardTile.Suit, Value: discardTile.Value}
 	c3 := &pb.Tile{Id: discardTile.Id + 300, Suit: discardTile.Suit, Value: discardTile.Value}
