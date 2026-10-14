@@ -30,3 +30,5 @@
   `disabled` is explicit, not derived from `dimmed`: shanten disables exhausted palette tiles,
   calc dims the selected tile but keeps it clickable. Passing `usedCounts` switches on the shanten
   behavior. Tool pages must extend these, not re-implement them.
+
+StatusScreen.tsx provides responsive route-level loading/recovery content inside DirectShell. LoadingScreen delegates to it; retry/offline states omit the progress spinner.

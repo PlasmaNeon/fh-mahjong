@@ -53,3 +53,5 @@ Feature definitions (recommendation, evaluation, agreement, rating, risk):
 - Imported replays never enter public match storage, history, or training data.
 - `vitest` runs in a node environment without a DOM, so component tests render with
   `react-dom/server` (`renderToStaticMarkup`) and assert on the HTML.
+
+Replay loading and failure states use the shared Direct play StatusScreen, including navigation and localized retry/library actions; raw transport errors are not displayed as the page heading.

@@ -65,3 +65,13 @@
   .direct-shell .seat-card { min-height: 140px; }
   .direct-shell .ldg-page-head__nav { margin-top: 16px; }
 }
+
+/* Quiet recovery states, using the same surface and type as ordinary pages. */
+.direct-status { width: min(100%, 560px); margin: clamp(24px, 10vh, 100px) auto; padding: clamp(24px, 5vw, 48px); border: 1px solid var(--rule); border-radius: 16px; background: var(--surface); }
+.direct-status h1 { margin: 0; color: var(--ink); font: 700 clamp(24px, 4vw, 32px)/1.25 var(--font); letter-spacing: -.025em; overflow-wrap: anywhere; }
+.direct-status p { margin: 16px 0 0; color: var(--ink-2); font: 400 16px/1.65 var(--font); overflow-wrap: anywhere; }
+.direct-status__actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+.direct-status__spinner { display: block; width: 28px; height: 28px; margin-bottom: 24px; border: 3px solid var(--rule); border-top-color: var(--accent); border-radius: 50%; animation: direct-status-spin 1s linear infinite; }
+@keyframes direct-status-spin { to { transform: rotate(360deg); } }
+@media (max-width: 480px) { .direct-status__actions > * { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { .direct-status__spinner { animation: none; } }
