@@ -40,6 +40,9 @@ func TestParseRLAgentsRejectsInvalidEntries(t *testing.T) {
 		"missing label":  `[{"id":"v4","label":"","url":"http://a/act","eventWindow":0}]`,
 		"window too big": `[{"id":"v4","label":"a","url":"http://a/act","eventWindow":513}]`,
 		"unknown field":  `[{"id":"v4","label":"a","url":"http://a/act","eventWindow":0,"extra":1}]`,
+		"second array":   `[{"id":"v4","label":"a","url":"http://a/act","eventWindow":0}] [{"id":"v3","label":"b","url":"http://b/act","eventWindow":0}]`,
+		"entry after ]":  `[{"id":"v4","label":"a","url":"http://a/act","eventWindow":0}],{"id":"v3","label":"b","url":"http://b/act","eventWindow":0}`,
+		"trailing text":  `[{"id":"v4","label":"a","url":"http://a/act","eventWindow":0}] garbage`,
 	}
 	for name, raw := range cases {
 		if _, err := parseRLAgents(raw); err == nil {
@@ -87,10 +90,14 @@ func TestRLAgentSetWarmHookWarmsEachListedAgentOnce(t *testing.T) {
 	// /warmup sits at the endpoint's host root, so each agent gets its own server.
 	newServer := func(hits *int) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			if r.URL.Path == "/healthz" {
+				_, _ = w.Write([]byte(`{"ok":true}`))
+				return
+			}
 			if r.URL.Path == "/warmup" {
 				*hits++
 			}
-			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"warmed":true,"event_window":0}`))
 		}))
 	}
@@ -111,6 +118,35 @@ func TestRLAgentSetWarmHookWarmsEachListedAgentOnce(t *testing.T) {
 	}
 	if err := warm(context.Background(), []string{"v9"}); err == nil {
 		t.Fatal("warming an unknown agent succeeded")
+	}
+}
+
+func TestRLAgentSetWarmHookRefusesUnhealthyAgentWhileWarmIsCached(t *testing.T) {
+	// The warmup manager trusts a warm for its TTL (15 min), so an agent that
+	// went down after another room warmed it would pass a cached warm and
+	// play its seats as the heuristic. The hook must check live health too.
+	healthy := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" && !healthy {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		if r.URL.Path == "/healthz" {
+			_, _ = w.Write([]byte(`{"ok":true}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"warmed":true,"event_window":0}`))
+	}))
+	defer srv.Close()
+	manager := remote.NewWarmupManager(nil)
+	if err := manager.Warm(context.Background(), srv.URL+"/act", ""); err != nil {
+		t.Fatalf("first warm: %v", err)
+	}
+	healthy = false
+	set := newRLAgentSet([]rlAgentConfig{{ID: "v3", Label: "AI v3", URL: srv.URL + "/act"}}, &http.Client{}, nil, "")
+	if err := set.WarmHook(manager, "", "")(context.Background(), []string{"v3"}); err == nil {
+		t.Fatal("warm hook passed an unhealthy agent on a cached warm")
 	}
 }
 
