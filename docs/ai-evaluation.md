@@ -74,7 +74,7 @@ On promotion, update `ai/checkpoints/best-checkpoints.json` and the current-stat
 manifest's `deployed_ai_agents`, `ai/Dockerfile.deploy`'s default `FH_MJ_CHECKPOINT` and the
 backend's `RL_AGENTS` in the same rollout, gated by `fh-mj-serving-parity` per checkpoint.
 
-## Seed windows (as of 2026-10-13)
+## Seed windows (as of 2026-10-19)
 
 Screening: `--start-seed 910000`, 120 seeds, reusable, never cited for promotion.
 
@@ -93,10 +93,11 @@ Spent evaluation windows (never reuse):
 | 4,200,000–4,203,999, 4,210,000–4,212,499 | strong-table benchmark: `iter_450` vs 3× f9662491 |
 | 4,450,000–4,459,999 | second 450-iteration continuation lap (from `iter_450`) |
 | 4,600,000–4,609,999 | entropy exploration lap (from `iter_450`, entropy 0.01) |
+| 4,800,000–4,809,999 | lower-LR lap (from `iter_450`, lr 1e-5) |
 
 Reserved but unspent: 1,300,000–1,301,499 (placement-reshape, never run); 3,300,000+ (a
-throughput session). Training ranges in use go up to 4,595,999 (4,500,000–4,595,999: entropy lap). Pick the next window
-above 4,610,000 and record it here when registering.
+throughput session). Training ranges in use go up to 4,795,999 (4,700,000–4,795,999: lower-LR lap). Pick the next window
+above 4,810,000 and record it here when registering.
 
 ## Training box
 
