@@ -24,7 +24,7 @@ Protocol in [`ai-evaluation.md`](ai-evaluation.md), design in [`ai-player.md`](a
 Steps 6–10 are continuation laps of the same recipe (suit-augmented collection), 150 iterations
 each except step 10 (450). Every one confirmed a gain; 450 iterations gained about 2.3× a
 150-iteration lap. A further 450 iterations from step 10 did not (+0.0015 ± 0.0074, 4th place +0.4 points
-worse): the recipe has plateaued, and an entropy bonus did not lift it.
+worse): the recipe has plateaued, and neither an entropy bonus nor a halved learning rate lifted it.
 
 ## Results by lever
 
@@ -52,6 +52,7 @@ worse): the recipe has plateaued, and an entropy bonus did not lift it.
 | Snapshot-pool opponents | Parity (−0.031 ± 0.069) |
 | A second 450-iteration continuation lap from step 10 | +0.0015 ± 0.0074; 4th place +0.4 points worse |
 | Entropy bonus 0.01 for 300 iterations from step 10 (policy entropy 0.18 → 0.31) | +0.0043 ± 0.0074; 4th place +0.5 and large-loss +0.3 points worse; 6% fewer wins, each worth 7.5% more |
+| Halved learning rate (1e-5) for 300 iterations from step 10 | +0.0027 ± 0.0069; tail unchanged |
 | deep8 (8 blocks) | Champion parity at 2× inference cost |
 | Determinized test-time search (pMCPA-style) | −0.04 at K=16; −0.08 (worse) at K=32 |
 | Perfect information at inference (51-channel net) | Parity with the 39-channel student: hidden information is worth ~0 to this policy |
